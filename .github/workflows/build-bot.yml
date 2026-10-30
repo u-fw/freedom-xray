@@ -23,6 +23,10 @@ jobs:
           go-version: '1.24'
           cache-dependency-path: bot/go.sum
 
+      - name: Verify Bot before publishing
+        working-directory: bot
+        run: go test ./...
+
       - name: Build Binaries
         shell: bash
         run: |
