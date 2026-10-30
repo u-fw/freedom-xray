@@ -74,77 +74,8 @@ func managedUserIDs(inbounds []map[string]any,name string) (map[string]bool,erro
 }
 
 func applyManagedUserChange(root map[string]any,change UserChange) (string,error) {
- if !managedUserName.MatchString(change.User) {return "",errors.New("用户名称必须为 1–48 位英文字母、数字、_、.、@ 或 -")}
- inbounds,err:=usableInbounds(root);if err!=nil{return "",err}
- ids,err:=managedUserIDs(inbounds,change.User);if err!=nil{return "",err}
- if len(ids)>1{return "",errors.New("同名用户在不同节点使用多个 UUID，拒绝批量修改，请先在本机统一")}
- exists:=len(ids)==1
- var oldID string;for k:=range ids {oldID=k}
- switch change.Kind {
- case "add":
-  if exists{return "",errors.New("用户已存在")}
-  if len(inbounds)==0{return "",errors.New("不存在可用的 VLESS 入站")}
-  uuid,err:=newManagedUUID();if err!=nil{return "",err}
-  selected:=0
-  for _,in:=range inbounds {
-   tag,_:=in["tag"].(string)
-   if change.Node!="" && change.Node!="all" && change.Node!=tag {continue}
-   settings,_:=getMap(in["settings"]); list,_:=clientList(in)
-   client:=map[string]any{"id":uuid,"email":change.User}
-   if len(list)>0 {if c,ok:=getMap(list[0]);ok {if flow,ok:=c["flow"].(string);ok && flow!="" {client["flow"]=flow}}}
-   settings["clients"]=append(list,client);selected++
-  }
-  if selected==0 {return "",errors.New("指定节点不存在")}
-  return "新增用户 "+change.User+"，UUID: "+uuid,nil
- case "rename":
-  if !exists{return "",errors.New("找不到用户")}
-  if !managedUserName.MatchString(change.NewName) {return "",errors.New("新名称格式无效")}
-  newIDs,err:=managedUserIDs(inbounds,change.NewName);if err!=nil{return "",err}
-  if len(newIDs)>0{return "",errors.New("新名称已存在")}
-  for _,in:=range inbounds {list,_:=clientList(in);for _,v:=range list {c,_:=getMap(v);if c["email"]==change.User && c["id"]==oldID {c["email"]=change.NewName}}}
-  return "用户已改名为 "+change.NewName,nil
- case "rotate":
-  if !exists{return "",errors.New("找不到用户")}
-  uuid,err:=newManagedUUID();if err!=nil{return "",err}
-  for _,in:=range inbounds {list,_:=clientList(in);for _,v:=range list {c,_:=getMap(v);if c["email"]==change.User && c["id"]==oldID {c["id"]=uuid}}}
-  return "UUID 已轮换，新 UUID: "+uuid,nil
- case "delete":
-  if !exists{return "",errors.New("找不到用户")}
-  for _,in:=range inbounds {
-   settings,_:=getMap(in["settings"]);list,_:=clientList(in)
-   next:=make([]any,0,len(list))
-   for _,v:=range list {c,_:=getMap(v);if c["email"]!=change.User {next=append(next,v)}}
-   if len(next)==0{return "",fmt.Errorf("入站 %v 仅有此用户；为避免误断开全部连接，拒绝删除",in["tag"])}
-   settings["clients"]=next
-  }
-  return "已从所有关联入站删除用户 "+change.User,nil
- case "assign":
-  if !exists{return "",errors.New("用户不存在，请先新增")}
-  for _,in:=range inbounds {
-   if in["tag"]!=change.Node {continue}
-   settings,_:=getMap(in["settings"]);list,_:=clientList(in)
-   for _,v:=range list {c,_:=getMap(v);if c["email"]==change.User {return "",errors.New("用户已分配到该节点")}}
-   nc:=map[string]any{"id":oldID,"email":change.User}
-   if len(list)>0 {if first,ok:=getMap(list[0]);ok {if f,ok:=first["flow"].(string);ok && f!="" {nc["flow"]=f}}}
-   settings["clients"]=append(list,nc)
-   return "已分配 "+change.User+" 到 "+change.Node,nil
-  }
-  return "",errors.New("目标入站不存在")
- case "unassign":
-  if !exists{return "",errors.New("用户不存在")}
-  for _,in:=range inbounds {
-   if in["tag"]!=change.Node {continue}
-   settings,_:=getMap(in["settings"]);list,_:=clientList(in)
-   next:=make([]any,0,len(list));found:=false
-   for _,v:=range list {c,_:=getMap(v);if c["email"]==change.User && c["id"]==oldID {found=true}else{next=append(next,v)}}
-   if !found{return "",errors.New("用户未分配到该节点")}
-   if len(next)==0{return "",errors.New("无法移除节点的最后一位用户")}
-   settings["clients"]=next
-   return "已从 "+change.Node+" 移除 "+change.User,nil
-  }
-  return "",errors.New("目标入站不存在")
- }
- return "",errors.New("未知操作")
+ dir,err:=directoryFromConfig(root);if err!=nil{return "",err}
+ return applyDirectoryUserChange(root,&dir,change)
 }
 
 func runChecked(command string,args ...string) error {
@@ -173,7 +104,7 @@ func writeAtomically(path string,data []byte,perm os.FileMode) error {
 // ChangeUserConfig serializes local Bot changes, validates before restart,
 // writes an owner-readable backup and rolls back if restart or health check fails.
 func ChangeUserConfig(configPath,xrayBinary string,change UserChange) (string,error) {
- return commitManagedConfig(configPath,xrayBinary,func(root map[string]any)(string,error){return applyManagedUserChange(root,change)})
+ return changeDirectoryUser(configPath,xrayBinary,change)
 }
 
 func commitManagedConfig(configPath,xrayBinary string,apply func(map[string]any)(string,error)) (string,error) {
