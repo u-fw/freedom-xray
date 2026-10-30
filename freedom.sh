@@ -3347,7 +3347,7 @@ configure_freedom_bot_interactive() {
   local cur_proxy=""
   local cur_hours=12
   local cur_mutations=false
-  local cur_updates=false cur_core_updates=false
+  local cur_updates=false cur_core_updates=false cur_sensitive_backup=false
 
   if [[ -f "$BOT_CONFIG_PATH" ]]; then
     cur_token="$(jq -r '.token // ""' "$BOT_CONFIG_PATH" 2>/dev/null || true)"
@@ -3357,6 +3357,7 @@ configure_freedom_bot_interactive() {
     cur_mutations="$(jq -r '.allow_mutations // false' "$BOT_CONFIG_PATH" 2>/dev/null || echo false)"
     cur_updates="$(jq -r '.allow_updates // false' "$BOT_CONFIG_PATH" 2>/dev/null || echo false)"
     cur_core_updates="$(jq -r '.allow_core_updates // false' "$BOT_CONFIG_PATH" 2>/dev/null || echo false)"
+    cur_sensitive_backup="$(jq -r '.allow_sensitive_backup // false' "$BOT_CONFIG_PATH" 2>/dev/null || echo false)"
   fi
 
   local cur_token_display="未设置"
@@ -3419,6 +3420,15 @@ configure_freedom_bot_interactive() {
   esac
   if [[ "$final_updates" != "true" ]]; then final_core_updates=false; fi
 
+  local in_sensitive_backup final_sensitive_backup="$cur_sensitive_backup"
+  read -r -p "允许 TG 发送包含私钥的完整 Xray 配置备份？[y/N；当前 ${cur_sensitive_backup}]（建议关闭）: " in_sensitive_backup || in_sensitive_backup=""
+  case "$in_sensitive_backup" in
+    y|Y|yes|YES) final_sensitive_backup=true ;;
+    n|N|no|NO) final_sensitive_backup=false ;;
+    "") ;;
+    *) warn "敏感备份权限选项无效"; return 1 ;;
+  esac
+
   install -d -m 755 "$CONFIG_DIR"
 
   # 原子写入并校验：避免 jq 失败时把 bot.json 清空成 0 字节
@@ -3431,6 +3441,7 @@ configure_freedom_bot_interactive() {
     --argjson mutations "$final_mutations" \
     --argjson updates "$final_updates" \
     --argjson core_updates "$final_core_updates" \
+    --argjson sensitive_backup "$final_sensitive_backup" \
     --arg xray_cfg "$CONFIG_PATH" \
     --arg xray_bin "$BIN" \
     '{
@@ -3441,6 +3452,7 @@ configure_freedom_bot_interactive() {
       allow_mutations: $mutations,
       allow_updates: $updates,
       allow_core_updates: $core_updates,
+      allow_sensitive_backup: $sensitive_backup,
       xray_config_path: $xray_cfg,
       xray_bin_path: $xray_bin,
       stats_api_server: "127.0.0.1:10085"
