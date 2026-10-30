@@ -153,6 +153,7 @@ func (s *BotService) handleUpdate(update tgbotapi.Update) {
 }
 
 func (s *BotService) handleMessage(msg *tgbotapi.Message) {
+	if s.handleWizardMessage(msg) { return }
 	text := strings.TrimSpace(msg.Text)
 	cmd := msg.Command()
 	if s.handleUserManagementCommand(msg) { return }
@@ -211,6 +212,16 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 		s.sendNodesCard(chatID, msgID)
 	case data == "menu_users":
 		s.sendUsersCard(chatID, msgID)
+	case data == "manage_add":
+		s.beginUserWizard(chatID,cb.From.ID,msgID,"name","")
+	case strings.HasPrefix(data,"manage_scope:"):
+		s.handleWizardScope(cb)
+	case strings.HasPrefix(data,"manage_rename:"):
+		nodes,err:=LoadXrayInbounds(s.cfg.XrayConfigPath)
+		if err!=nil{s.sendAlert(chatID,"读取用户失败");return}
+		email:=lookupManagedUserEmail(nodes,strings.TrimPrefix(data,"manage_rename:"))
+		if email==""{s.sendAlert(chatID,"用户不存在");return}
+		s.beginUserWizard(chatID,cb.From.ID,msgID,"rename",email)
 	case data == "menu_restart_ask":
 		s.askRestart(chatID, msgID)
 	case data == "menu_restart_confirm":
@@ -556,6 +567,7 @@ func (s *BotService) sendUsersCard(chatID int64, msgID int) {
 			tgbotapi.NewInlineKeyboardButtonData("🔗 导出", "user_links:"+key),
 		))
 	}
+	rows = append([][]tgbotapi.InlineKeyboardButton{tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("➕ 新增用户", "manage_add"))}, rows...)
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 		tgbotapi.NewInlineKeyboardButtonData("🔙 返回主菜单", "menu_main"),
 	))
