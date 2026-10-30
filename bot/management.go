@@ -173,6 +173,10 @@ func writeAtomically(path string,data []byte,perm os.FileMode) error {
 // ChangeUserConfig serializes local Bot changes, validates before restart,
 // writes an owner-readable backup and rolls back if restart or health check fails.
 func ChangeUserConfig(configPath,xrayBinary string,change UserChange) (string,error) {
+ return commitManagedConfig(configPath,xrayBinary,func(root map[string]any)(string,error){return applyManagedUserChange(root,change)})
+}
+
+func commitManagedConfig(configPath,xrayBinary string,apply func(map[string]any)(string,error)) (string,error) {
  lockPath:=filepath.Join(filepath.Dir(configPath),".freedom-config.lock")
  lock,err:=os.OpenFile(lockPath,os.O_CREATE|os.O_RDWR,0600);if err!=nil{return "",err}
  defer lock.Close()
@@ -183,7 +187,7 @@ func ChangeUserConfig(configPath,xrayBinary string,change UserChange) (string,er
  var root map[string]any
  decoder:=json.NewDecoder(bytes.NewReader(original));decoder.UseNumber()
  if err=decoder.Decode(&root);err!=nil{return "",err}
- msg,err:=applyManagedUserChange(root,change);if err!=nil{return "",err}
+ msg,err:=apply(root);if err!=nil{return "",err}
  next,err:=json.MarshalIndent(root,"","  ");if err!=nil{return "",err}
  next=append(next,'\n')
  if bytes.Equal(original,next) {return "",errors.New("配置未发生变化")}
