@@ -172,6 +172,8 @@ func (s *BotService) handleMessage(msg *tgbotapi.Message) {
 		s.askRestart(msg.Chat.ID, 0)
 	case "backup":
 		s.sendBackupFile(msg.Chat.ID)
+	case "update":
+		s.showUpdatesMenu(msg.Chat.ID,0)
 	case "help":
 		s.sendAlert(msg.Chat.ID, "用户管理命令：\n/adduser <名称> [节点标签|all]\n/renameuser <旧名> <新名>\n/rotateuser <名称>\n/removeuser <名称>\n/assignuser <名称> <节点标签>\n/unassignuser <名称> <节点标签>\n\n所有修改均需管理员私聊和二次确认，默认关闭远程写入。")
 	default:
@@ -215,6 +217,14 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 		s.doRestart(chatID, msgID)
 	case data == "menu_backup":
 		s.sendBackupFile(chatID)
+	case data == "menu_update":
+		s.showUpdatesMenu(chatID,msgID)
+	case strings.HasPrefix(data,"update_ask:"):
+		s.askUpdate(cb,strings.TrimPrefix(data,"update_ask:"))
+	case strings.HasPrefix(data,"update_confirm:"):
+		s.resolveUpdate(cb,true)
+	case strings.HasPrefix(data,"update_cancel:"):
+		s.resolveUpdate(cb,false)
 	case data == "traffic_reset_ask":
 		s.askTrafficReset(chatID, msgID)
 	case data == "traffic_reset_confirm":
@@ -353,6 +363,9 @@ func (s *BotService) sendMainMenu(chatID int64, msgID int) {
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🔄 重启 Xray", "menu_restart_ask"),
 			tgbotapi.NewInlineKeyboardButtonData("💾 备份配置", "menu_backup"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("⬆️ 软件更新", "menu_update"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("⚡ 刷新主面板", "menu_main"),
