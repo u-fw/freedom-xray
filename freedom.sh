@@ -28,7 +28,7 @@ NC='\033[0m'
 
 export PATH="$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
 
-SCRIPT_VERSION="v13.0-modular-manager"
+SCRIPT_VERSION="v13.1-user-bot-manager"
 DEFAULT_SNI="www.nvidia.com"
 DEFAULT_PORT="443"
 DEFAULT_NODE_NAME="Premium-Node"
@@ -957,6 +957,26 @@ backup_existing_config() {
 
 # 原子化写入配置：先校验 JSON 合法性，再落盘。
 # 杜绝 jq 失败时 `> CONFIG_PATH` 把用户配置写成空文件的事故。
+# Match the real Xray systemd identity before tightening config permissions.
+# A root:root 0640 config otherwise breaks services running as nobody.
+set_xray_config_permissions() {
+  local target="${1:-$CONFIG_PATH}"
+  [[ -f "$target" ]] || return 0
+  local service_user service_group
+  service_user="$(systemctl show "$SERVICE_NAME" -p User --value 2>/dev/null || true)"
+  service_group="$(systemctl show "$SERVICE_NAME" -p Group --value 2>/dev/null || true)"
+  if [[ -n "$service_user" && "$service_user" != "root" ]]; then
+    [[ -n "$service_group" ]] || service_group="$(id -gn "$service_user" 2>/dev/null || true)"
+    if [[ -z "$service_group" ]]; then
+      warn "无法确定 Xray 运行用户 ${service_user} 的组，拒绝写入可能无法读取的密钥配置。"
+      return 1
+    fi
+    chown "root:${service_group}" "$target" || return 1
+  else
+    chown root:root "$target" || return 1
+  fi
+  chmod 640 "$target" || return 1
+}
 commit_config() {
   local new_json="$1"
   if [[ -z "$new_json" ]]; then
@@ -974,6 +994,11 @@ commit_config() {
     return 1
   fi
   chmod 640 "$tmp_file" 2>/dev/null || true
+  if ! set_xray_config_permissions "$tmp_file"; then
+    rm -f "$tmp_file"
+    warn "配置文件权限设置失败，原配置未变更。"
+    return 1
+  fi
   if ! mv -f "$tmp_file" "$CONFIG_PATH"; then
     rm -f "$tmp_file"
     warn "配置替换失败，原配置保持不变。"
@@ -1400,7 +1425,7 @@ ensure_config_scaffold() {
     fatal "脚手架配置生成失败（jq 输出非法 JSON）。"
   fi
   mv -f "${CONFIG_PATH}.tmp.$$" "$CONFIG_PATH"
-  chmod 640 "$CONFIG_PATH"
+  set_xray_config_permissions "$CONFIG_PATH" || fatal "配置文件权限初始化失败"
   ok "基础架构配置脚手架已就绪。"
 }
 
@@ -3322,12 +3347,14 @@ configure_freedom_bot_interactive() {
   local cur_admins=""
   local cur_proxy=""
   local cur_hours=12
+  local cur_mutations=false
 
   if [[ -f "$BOT_CONFIG_PATH" ]]; then
     cur_token="$(jq -r '.token // ""' "$BOT_CONFIG_PATH" 2>/dev/null || true)"
     cur_admins="$(jq -r '(.admin_ids // []) | join(",")' "$BOT_CONFIG_PATH" 2>/dev/null || true)"
     cur_proxy="$(jq -r '.socks5_proxy // ""' "$BOT_CONFIG_PATH" 2>/dev/null || true)"
     cur_hours="$(jq -r '.report_hours // 12' "$BOT_CONFIG_PATH" 2>/dev/null || echo 12)"
+    cur_mutations="$(jq -r '.allow_mutations // false' "$BOT_CONFIG_PATH" 2>/dev/null || echo false)"
   fi
 
   local cur_token_display="未设置"
@@ -3364,6 +3391,15 @@ configure_freedom_bot_interactive() {
     return 1
   fi
 
+  local in_mutations final_mutations="$cur_mutations"
+  read -r -p "允许 Telegram 私聊管理员修改 Xray 用户配置？[y/N；当前 ${cur_mutations}]（建议先关闭）: " in_mutations || in_mutations=""
+  case "$in_mutations" in
+    y|Y|yes|YES) final_mutations=true ;;
+    n|N|no|NO) final_mutations=false ;;
+    "") ;;
+    *) warn "远程写入选项无效，配置未保存。"; return 1 ;;
+  esac
+
   install -d -m 755 "$CONFIG_DIR"
 
   # 原子写入并校验：避免 jq 失败时把 bot.json 清空成 0 字节
@@ -3373,6 +3409,7 @@ configure_freedom_bot_interactive() {
     --argjson admins "$json_admins" \
     --arg proxy "$final_proxy" \
     --argjson hours "$final_hours" \
+    --argjson mutations "$final_mutations" \
     --arg xray_cfg "$CONFIG_PATH" \
     --arg xray_bin "$BIN" \
     '{
@@ -3380,6 +3417,7 @@ configure_freedom_bot_interactive() {
       admin_ids: $admins,
       socks5_proxy: $proxy,
       report_hours: $hours,
+      allow_mutations: $mutations,
       xray_config_path: $xray_cfg,
       xray_bin_path: $xray_bin,
       stats_api_server: "127.0.0.1:10085"
