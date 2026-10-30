@@ -80,9 +80,8 @@ func currentComponentVersion(component,xrayBinary string) string {
  switch component {
  case "script":
   b,err:=os.ReadFile("/usr/local/bin/freedom");if err!=nil{return "未安装"}
-  for _,line:=range strings.Split(string(b),"
-") {
-   if strings.HasPrefix(line,"SCRIPT_VERSION="){return strings.Trim(line[len("SCRIPT_VERSION="):],""' ")}
+  for _,line:=range strings.Split(string(b),"\n") {
+   if strings.HasPrefix(line,"SCRIPT_VERSION="){return strings.TrimSpace(line[len("SCRIPT_VERSION="):])}
   }
   return "未知"
  case "bot": return Version
@@ -96,8 +95,7 @@ func currentComponentVersion(component,xrayBinary string) string {
 func verifiedDigest(payload,checksum []byte,expectedName string) error {
  // GitHub release checksums: either sha256sum format or SHA256=... .dgst.
  var hash string
- for _,line:=range strings.Split(string(checksum),"
-") {
+ for _,line:=range strings.Split(string(checksum),"\n") {
   l:=strings.TrimSpace(line)
   if len(l)==0 {continue}
   kv:=strings.SplitN(l,"=",2)
