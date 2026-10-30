@@ -215,3 +215,25 @@ func checkedCoreUpdate(ctx context.Context,target,configPath,tag string) (string
  }
  return "已更新 Xray-core 至 "+tag+"；旧核心："+backup+"（请验证真实客户端握手）",nil
 }
+
+
+func checkedCoreRollback(target,configPath string) (string,error) {
+ previousPath:=target+".previous"
+ old,err:=os.ReadFile(previousPath);if err!=nil{return "",fmt.Errorf("没有可用的上一版核心备份: %w",err)}
+ current,err:=os.ReadFile(target);if err!=nil{return "",err}
+ tmp,err:=os.CreateTemp(filepath.Dir(target),".xray-rollback-*");if err!=nil{return "",err}
+ defer os.Remove(tmp.Name())
+ if err=tmp.Chmod(0755);err!=nil{tmp.Close();return "",err}
+ if _,err=tmp.Write(old);err!=nil{tmp.Close();return "",err}
+ if err=tmp.Close();err!=nil{return "",err}
+ if err=runChecked(tmp.Name(),"run","-test","-config",configPath);err!=nil{return "",fmt.Errorf("上一版核心与现有配置不兼容: %w",err)}
+ if err=writeAtomically(target,old,0755);err!=nil{return "",err}
+ if err=runChecked("systemctl","restart","xray");err==nil{err=runChecked("systemctl","is-active","--quiet","xray")}
+ if err!=nil {
+  _=writeAtomically(target,current,0755)
+  restoreErr:=runChecked("systemctl","restart","xray")
+  return "",fmt.Errorf("旧版本回滚失败，已尝试恢复当前版本 (服务状态: %v): %w",restoreErr,err)
+ }
+ if err=writeAtomically(previousPath,current,0755);err!=nil{return "已回滚核心，但无法更新 previous 备份："+err.Error(),nil}
+ return "已恢复上一版 Xray-core；如需返回新版本，可再次执行回滚。",nil
+}
