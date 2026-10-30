@@ -285,7 +285,7 @@ func (s *BotService) handleUserLinksCallback(chatID int64, payload string) {
 		return
 	}
 
-	nodes, loadErr := LoadXrayInbounds(s.cfg.XrayConfigPath)
+	_, loadErr := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if loadErr != nil {
 		s.sendAlert(chatID, "❌ 读取用户列表失败: "+loadErr.Error())
 		return
@@ -558,7 +558,7 @@ func (s *BotService) sendNodesCard(chatID int64, msgID int) {
 }
 
 func (s *BotService) sendUsersCard(chatID int64, msgID int) {
-	nodes, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
+	_, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if err != nil {
 		s.sendOrEdit(chatID, msgID, "❌ 读取用户列表失败: "+mdEsc(err.Error()), backToMainMarkup())
 		return
