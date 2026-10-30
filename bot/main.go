@@ -17,11 +17,25 @@ var (
 func main() {
 	configPath := flag.String("c", "/usr/local/etc/xray/bot.json", "path to bot.json configuration file")
 	showVersion := flag.Bool("v", false, "display version and exit")
+	localAction := flag.String("local-user-action", "", "offline CLI user action: disable or enable (root only)")
+	localUser := flag.String("local-user", "", "user email/name for offline action")
 	flag.Parse()
 
 	if *showVersion {
 		fmt.Printf("freedom-bot %s (build %s)\n", Version, BuildTime)
 		os.Exit(0)
+	}
+
+	if *localAction != "" {
+		if *localAction != "disable" && *localAction != "enable" { log.Fatal("unsupported local user action") }
+		if os.Geteuid()!=0 { log.Fatal("local user modification requires root") }
+		if *localUser == "" { log.Fatal("-local-user is required") }
+		cfg,err:=LoadConfig(*configPath)
+		if err!=nil {log.Fatalf("load bot config: %v",err)}
+		result,err:=changeManagedUser(cfg.XrayConfigPath,cfg.XrayBinPath,UserChange{Kind:*localAction,User:*localUser})
+		if err!=nil {log.Fatalf("local user action failed: %v",err)}
+		fmt.Println(result)
+		return
 	}
 
 	// Fallback to local ./bot.json if default does not exist but local does
