@@ -139,6 +139,9 @@ func (s *BotService) sendUserManageCard(chatID int64,msgID int,key string) {
  }
  rows=append(rows,tgbotapi.NewInlineKeyboardRow(
   tgbotapi.NewInlineKeyboardButtonData("🔗 导出链接","user_links:"+key),
+  tgbotapi.NewInlineKeyboardButtonData("✏️ 改名","manage_rename:"+key),
+ ))
+ rows=append(rows,tgbotapi.NewInlineKeyboardRow(
   tgbotapi.NewInlineKeyboardButtonData("🔐 重置 UUID","manage_rotate:"+key),
  ))
  rows=append(rows,tgbotapi.NewInlineKeyboardRow(
