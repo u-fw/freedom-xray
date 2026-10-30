@@ -450,11 +450,15 @@ func (node *InboundDetails) GenerateVlessURI(client XrayClient, serverHost strin
 			}
 		}
 
+		if node.Network=="xhttp" && encryption=="none" && flow!="" {
+			// XHTTP without VLESS Encryption cannot use Vision. Do not
+			// export a misleading flow; warn about the server-side mismatch.
+			log.Printf("[Xray] node %s has unsupported XHTTP Vision without VLESS Encryption; inspect server client settings",node.Tag)
+			flow=""
+		}
 		switch node.Network {
 		case "tcp":
-			if flow == "" {
-				flow = "xtls-rprx-vision"
-			}
+			// Export exactly the flow configured on this client, never infer it.
 		case "xhttp":
 			if node.XHTTPPath != "" {
 				q.Set("path", node.XHTTPPath)
