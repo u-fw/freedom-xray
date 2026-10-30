@@ -662,6 +662,10 @@ func (s *BotService) doRestart(chatID int64, msgID int) {
 }
 
 func (s *BotService) sendBackupFile(chatID int64) {
+  if !s.cfg.AllowSensitiveBackup {
+    s.sendAlert(chatID,"🔒 完整配置包含 REALITY 与 VLESS 密钥。Telegram 发送默认关闭；如确需远程备份，请在 VPS 上显式开启 allow_sensitive_backup。")
+    return
+  }
 	if _, err := os.Stat(s.cfg.XrayConfigPath); err != nil {
 		s.sendAlert(chatID, "❌ 配置文件不存在: "+s.cfg.XrayConfigPath)
 		return
