@@ -212,6 +212,10 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 		s.sendNodesCard(chatID, msgID)
 	case data == "menu_users":
 		s.sendUsersCard(chatID, msgID)
+	case data == "menu_disabled_users":
+		s.sendDisabledUsersCard(chatID,msgID)
+	case strings.HasPrefix(data,"manage_enable:"):
+		s.enableDisabledUserCallback(cb)
 	case data == "manage_add":
 		s.beginUserWizard(chatID,cb.From.ID,msgID,"name","")
 	case strings.HasPrefix(data,"manage_scope:"):
@@ -247,7 +251,7 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 	case strings.HasPrefix(data, "manage_cancel:"):
 		s.resolveUserChange(cb, false)
 	case strings.HasPrefix(data, "manage_user:") || strings.HasPrefix(data, "manage_rotate:") ||
-		strings.HasPrefix(data, "manage_delete:") || strings.HasPrefix(data, "manage_node:"):
+		strings.HasPrefix(data, "manage_delete:") || strings.HasPrefix(data, "manage_disable:") || strings.HasPrefix(data, "manage_node:"):
 		s.handleManagedUserCallback(cb)
 	}
 }
@@ -567,7 +571,9 @@ func (s *BotService) sendUsersCard(chatID int64, msgID int) {
 			tgbotapi.NewInlineKeyboardButtonData("🔗 导出", "user_links:"+key),
 		))
 	}
-	rows = append([][]tgbotapi.InlineKeyboardButton{tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("➕ 新增用户", "manage_add"))}, rows...)
+	rows = append([][]tgbotapi.InlineKeyboardButton{
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("➕ 新增用户","manage_add"), tgbotapi.NewInlineKeyboardButtonData("⏸ 停用用户","menu_disabled_users")),
+	}, rows...)
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 		tgbotapi.NewInlineKeyboardButtonData("🔙 返回主菜单", "menu_main"),
 	))
