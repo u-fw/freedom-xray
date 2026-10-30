@@ -368,10 +368,12 @@ func (s *BotService) sendOrEdit(chatID int64, msgID int, text string, markup tgb
 func (s *BotService) sendMainMenu(chatID int64,msgID int) {
  nodes,_:=LoadXrayInbounds(s.cfg.XrayConfigPath)
  userCount:=len(sortedEmails(nodes))
+ hostname,_:=os.Hostname()
+ if hostname==""{hostname="unknown"}
  status:=CheckXrayServiceStatus()
  state:="🔴";if status=="active"{state="🟢"}
  updateState:="🔒 更新权限关闭";if s.cfg.AllowUpdates{updateState="✅ 更新可用"}
- content:=fmt.Sprintf("🏠 *Freedom Bot 控制台*\n\n%s Xray：`%s` | 节点：`%d` | 用户：`%d`\n🤖 Bot 版本：`%s`\n%s\n\n选择要执行的操作：",state,mdCode(status),len(nodes),userCount,mdCode(Version),updateState)
+ content:=fmt.Sprintf("🏠 *Freedom Bot 控制台*\n\n🖥️ 服务器：`%s`\n%s Xray：`%s` | 节点：`%d` | 用户：`%d`\n🤖 Bot 版本：`%s`\n%s\n\n选择要执行的操作：",mdCode(hostname),state,mdCode(status),len(nodes),userCount,mdCode(Version),updateState)
  keyboard:=tgbotapi.NewInlineKeyboardMarkup(
   tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("👥 用户管理","menu_users"),tgbotapi.NewInlineKeyboardButtonData("📡 节点管理","menu_nodes")),
   tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("📈 流量统计","menu_traffic"),tgbotapi.NewInlineKeyboardButtonData("🖥️ 运行状态","menu_status")),
