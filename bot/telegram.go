@@ -181,8 +181,10 @@ func (s *BotService) handleMessage(msg *tgbotapi.Message) {
 		s.sendBackupFile(msg.Chat.ID)
 	case "update":
 		s.showUpdatesMenu(msg.Chat.ID,0)
+	case "version", "versions":
+		s.sendVersionCard(msg.Chat.ID,0)
 	case "help":
-		s.sendAlert(msg.Chat.ID, "用户管理命令：\n/adduser <名称> [节点标签|all]\n/renameuser <旧名> <新名>\n/rotateuser <名称>\n/removeuser <名称>\n/assignuser <名称> <节点标签>\n/unassignuser <名称> <节点标签>\n\n所有修改均需管理员私聊和二次确认，默认关闭远程写入。")
+		s.sendHelpCard(msg.Chat.ID,0)
 	default:
 		if strings.HasPrefix(text, "/") {
 			reply := tgbotapi.NewMessage(msg.Chat.ID, "未知命令，输入 /menu 或 /start 查看控制中心。")
@@ -248,6 +250,10 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 		s.sendBackupFile(chatID)
 	case data == "menu_update":
 		s.showUpdatesMenu(chatID,msgID)
+	case data == "menu_version":
+		s.sendVersionCard(chatID,msgID)
+	case data == "menu_help":
+		s.sendHelpCard(chatID,msgID)
 	case strings.HasPrefix(data,"update_ask:"):
 		s.askUpdate(cb,strings.TrimPrefix(data,"update_ask:"))
 	case strings.HasPrefix(data,"update_confirm:"):
@@ -358,52 +364,22 @@ func (s *BotService) sendOrEdit(chatID int64, msgID int, text string, markup tgb
 	}
 }
 
-func (s *BotService) sendMainMenu(chatID int64, msgID int) {
-	nodes, _ := LoadXrayInbounds(s.cfg.XrayConfigPath)
-	userCount := len(sortedEmails(nodes))
-
-	xrayStatus := CheckXrayServiceStatus()
-	statusIcon := "🟢"
-	if xrayStatus != "active" {
-		statusIcon = "🔴"
-	}
-
-	text := fmt.Sprintf(
-		"🤖 *freedom.sh 控制中心 (Freedom Bot)*\n\n"+
-			"🖥️ *Xray 运行状态:* %s `%s`\n"+
-			"📋 *活跃业务节点:* `%d` 个\n"+
-			"👥 *托管同步用户:* `%d` 个\n"+
-			"⏱️ *Bot 运行时间:* `%s`\n\n"+
-			"请选择下方操作：",
-		statusIcon, mdCode(xrayStatus),
-		len(nodes), userCount,
-		formatDuration(time.Since(botStartTime)),
-	)
-
-	markup := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("📊 系统状态", "menu_status"),
-			tgbotapi.NewInlineKeyboardButtonData("📈 流量统计", "menu_traffic"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("📋 节点列表", "menu_nodes"),
-			tgbotapi.NewInlineKeyboardButtonData("👥 用户管理", "menu_users"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🔄 重启 Xray", "menu_restart_ask"),
-			tgbotapi.NewInlineKeyboardButtonData("💾 备份配置", "menu_backup"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("⬆️ 软件更新", "menu_update"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("⚡ 刷新主面板", "menu_main"),
-		),
-	)
-
-	s.sendOrEdit(chatID, msgID, text, markup)
+func (s *BotService) sendMainMenu(chatID int64,msgID int) {
+ nodes,_:=LoadXrayInbounds(s.cfg.XrayConfigPath)
+ userCount:=len(sortedEmails(nodes))
+ status:=CheckXrayServiceStatus()
+ state:="🔴";if status=="active"{state="🟢"}
+ updateState:="🔒 更新权限关闭";if s.cfg.AllowUpdates{updateState="✅ 更新可用"}
+ content:=fmt.Sprintf("🏠 *Freedom Bot 控制台*\n\n%s Xray：`%s` | 节点：`%d` | 用户：`%d`\n🤖 Bot 版本：`%s`\n%s\n\n选择要执行的操作：",state,mdCode(status),len(nodes),userCount,mdCode(Version),updateState)
+ keyboard:=tgbotapi.NewInlineKeyboardMarkup(
+  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("👥 用户管理","menu_users"),tgbotapi.NewInlineKeyboardButtonData("📡 节点管理","menu_nodes")),
+  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("📈 流量统计","menu_traffic"),tgbotapi.NewInlineKeyboardButtonData("🖥️ 运行状态","menu_status")),
+  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⬆️ 软件更新","menu_update"),tgbotapi.NewInlineKeyboardButtonData("🧩 版本检测","menu_version")),
+  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("🔄 重启 Xray","menu_restart_ask"),tgbotapi.NewInlineKeyboardButtonData("💾 配置备份","menu_backup")),
+  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("📖 使用帮助","menu_help"),tgbotapi.NewInlineKeyboardButtonData("↻ 刷新面板","menu_main")),
+ )
+ s.sendOrEdit(chatID,msgID,content,keyboard)
 }
-
 func (s *BotService) sendStatusCard(chatID int64, msgID int) {
 	stats, err := GetSystemStats()
 	if err != nil {
