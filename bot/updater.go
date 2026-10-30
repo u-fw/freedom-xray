@@ -39,10 +39,52 @@ var updateHTTPClient = &http.Client{
  },
 }
 var githubSHA = regexp.MustCompile("^[a-f0-9]{40}$")
+var botReleaseCommit = regexp.MustCompile(`(?m)^Commit: ([a-f0-9]{40})\s*package main
+
+import (
+ "archive/zip"
+ "bytes"
+ "context"
+ "crypto/sha256"
+ _ "embed"
+ "encoding/hex"
+ "encoding/json"
+ "errors"
+ "fmt"
+ "io"
+ "net/http"
+ "os"
+ "os/exec"
+ "path/filepath"
+ "regexp"
+ "runtime"
+ "strings"
+ "time"
+)
+
+//go:embed update-watchdog.sh
+var updateWatchdog []byte
+
+const (
+ scriptRepo = "u-fw/freedom-xray"
+ coreRepo = "XTLS/Xray-core"
+ maxUpdateBytes = 80 << 20
+)
+
+var updateHTTPClient = &http.Client{
+ Timeout: 90*time.Second,
+ CheckRedirect: func(req *http.Request,via []*http.Request) error {
+  if req.URL.Scheme!="https"{return errors.New("禁止更新下载重定向至非 HTTPS")}
+  if len(via)>8{return errors.New("更新下载重定向次数过多")}
+  return nil
+ },
+}
+)
 var safeTag = regexp.MustCompile("^v[0-9]+[.][0-9]+([.][0-9]+)?([a-zA-Z0-9.-]+)?$")
 
 type githubRelease struct {
  TagName string `json:"tag_name"`
+ Body string `json:"body"`
 }
 type githubCommit struct {
  SHA string `json:"sha"`
@@ -76,7 +118,9 @@ func remoteComponentVersion(ctx context.Context,component string) (string,error)
   err:=apiJSON(ctx,"https://api.github.com/repos/"+scriptRepo+"/releases/tags/bot-latest",&release)
   if err!=nil{return "",err}
   if release.TagName!="bot-latest"{return "",errors.New("Bot Release 名称异常")}
-  return release.TagName,nil
+  match:=botReleaseCommit.FindStringSubmatch(release.Body)
+  if len(match)==2{return match[1][:12],nil}
+  return release.TagName,nil // legacy release without a build commit in its body
  case "core":
   var release githubRelease
   err:=apiJSON(ctx,"https://api.github.com/repos/"+coreRepo+"/releases/latest",&release)
