@@ -3776,7 +3776,7 @@ main_menu() {
       3) locked_config_operation delete_node_interactive || true ;;
       4) locked_config_operation modify_node_interactive || true ;;
       5) user_management_menu || true ;;
-      6) locked_config_operation benchmark_and_diagnose_system_tuning || true ;;
+      6) benchmark_and_diagnose_system_tuning || true ;;
       7) service_operations_menu || true ;;
       8) system_update_center_menu || true ;;
       9) telegram_bot_management_menu || true ;;
