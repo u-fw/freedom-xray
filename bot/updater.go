@@ -26,7 +26,14 @@ const (
  maxUpdateBytes = 80 << 20
 )
 
-var updateHTTPClient = &http.Client{Timeout: 90*time.Second}
+var updateHTTPClient = &http.Client{
+ Timeout: 90*time.Second,
+ CheckRedirect: func(req *http.Request,via []*http.Request) error {
+  if req.URL.Scheme!="https"{return errors.New("禁止更新下载重定向至非 HTTPS")}
+  if len(via)>8{return errors.New("更新下载重定向次数过多")}
+  return nil
+ },
+}
 var githubSHA = regexp.MustCompile("^[a-f0-9]{40}$")
 var safeTag = regexp.MustCompile("^v[0-9]+[.][0-9]+([.][0-9]+)?([a-zA-Z0-9.-]+)?$")
 
