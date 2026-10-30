@@ -164,6 +164,7 @@ func (s *BotService) handleMessage(msg *tgbotapi.Message) {
 
 	switch cmd {
 	case "start", "menu":
+		s.registerAdminCommands(msg.Chat.ID)
 		s.sendMainMenu(msg.Chat.ID, 0)
 	case "status":
 		s.sendStatusCard(msg.Chat.ID, 0)
