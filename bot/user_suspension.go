@@ -1,7 +1,6 @@
 package main
 
 import (
- "bytes"
  "encoding/json"
  "errors"
  "fmt"
@@ -113,11 +112,9 @@ func changeUserSuspension(configPath,xrayBinary string,change UserChange) (strin
  if err=json.Unmarshal(original,&root);err!=nil{return "",err}
  message,err:=applyUserSuspension(root,&store,change);if err!=nil{return "",err}
  next,err:=json.MarshalIndent(root,"","  ");if err!=nil{return "",err}
- next=append(next,'
-')
+ next=append(next,10)
  newState,err:=json.MarshalIndent(store,"","  ");if err!=nil{return "",err}
- newState=append(newState,'
-')
+ newState=append(newState,10)
  // Check a staged config before modifying either original.
  check,err:=os.CreateTemp(filepath.Dir(configPath),".freedom-check-*.json");if err!=nil{return "",err}
  defer os.Remove(check.Name())
@@ -176,4 +173,3 @@ func isSuspendedUser(configPath,name string) bool {
  return ok
 }
 
-var _ = bytes.Equal
