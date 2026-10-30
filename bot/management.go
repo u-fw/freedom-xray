@@ -12,7 +12,6 @@ import (
  "path/filepath"
  "regexp"
  "strings"
- "syscall"
  "time"
 )
 
@@ -177,11 +176,8 @@ func ChangeUserConfig(configPath,xrayBinary string,change UserChange) (string,er
 }
 
 func commitManagedConfig(configPath,xrayBinary string,apply func(map[string]any)(string,error)) (string,error) {
- lockPath:=filepath.Join(filepath.Dir(configPath),".freedom-config.lock")
- lock,err:=os.OpenFile(lockPath,os.O_CREATE|os.O_RDWR,0600);if err!=nil{return "",err}
- defer lock.Close()
- if err=syscall.Flock(int(lock.Fd()),syscall.LOCK_EX);err!=nil{return "",err}
- defer syscall.Flock(int(lock.Fd()),syscall.LOCK_UN)
+ lock,err:=acquireConfigLock(configPath,20*time.Second);if err!=nil{return "",err}
+ defer releaseConfigLock(lock)
  original,err:=os.ReadFile(configPath);if err!=nil{return "",err}
  stat,err:=os.Stat(configPath);if err!=nil{return "",err}
  var root map[string]any
