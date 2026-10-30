@@ -36,6 +36,36 @@ sudo bash ./freedom.sh
 
 不实现 3x-ui 的所有功能是有意的：个人、小规模 VPS 管理优先减少攻击面和维护复杂性。
 
+## 为什么 GitHub 更新了，Telegram 还是旧菜单？
+
+GitHub 源码、`bot-latest` 二进制 Release 和 VPS 当前运行的 systemd 进程是三个不同状态。更改仓库不会自动替换 VPS 上正在运行的旧 Bot。旧版本不认识 `/update`，第一次必须在服务器上手动升级。
+
+```bash
+# 仅在 VPS 执行：下载最新管理脚本，先做语法检查和必要审阅
+curl --proto "=https" -fsSLo /tmp/freedom-latest.sh https://raw.githubusercontent.com/u-fw/freedom-xray/main/freedom.sh
+bash -n /tmp/freedom-latest.sh
+less /tmp/freedom-latest.sh
+sudo install -m 755 /tmp/freedom-latest.sh /usr/local/bin/freedom
+sudo freedom
+```
+
+在主菜单选择「9. Telegram 机器人」→「2. 安装 / 升级 freedom-bot」，等待下载校验和自动重启完成；再进入「1. 配置机器人」启用 `allow_updates`。**不要为了更新 Bot 而选择升级 Xray-core**。
+
+若仍显示旧菜单，请分别检查磁盘版本与 systemd 进程：
+
+```bash
+sudo /usr/local/bin/freedom-bot -v
+sudo systemctl status freedom-bot --no-pager
+sudo systemctl show freedom-bot -p ExecStart -p MainPID --no-pager
+sudo journalctl -u freedom-bot -n 50 --no-pager
+```
+
+更新成功的 Bot 在 Telegram 发送 `/start` 应显示服务器主机名和 Bot Git 提交版本，还能识别 `/version`、`/update`，并向管理员私人聊天注册 Telegram 命令菜单。
+
+每台 VPS 应优先使用**不同的 Telegram Bot Token**。同一个 Bot Token 被多台服务器的 `getUpdates` 进程同时使用，会发生冲突，可能造成某台旧程序接管回复。共享 Token 的多 VPS 控制需要独立的中心控制 Bot，而不是多个轮询实例。
+
+Bot Release 构建现在先运行 Go 测试；发布前检查最新源码树，并限制并发构建。正常升级仍需要核实服务器运行的版本，不能仅凭 GitHub Actions 绿色判断服务器已部署。
+
 ## Telegram Bot
 
 Bot 只响应管理员 User ID 在私人聊天中的操作。默认关闭远程配置修改、远程软件更新以及包含完整私钥的备份发送。
