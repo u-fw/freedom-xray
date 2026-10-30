@@ -7,6 +7,10 @@ on:
       - '.github/workflows/build-bot.yml'
   workflow_dispatch:
 
+concurrency:
+  group: freedom-bot-release-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
@@ -56,9 +60,23 @@ jobs:
           path: dist/*
           retention-days: 7
 
+      - name: Verify Bot source has not been superseded
+        id: latest
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --quiet --depth=1 origin main
+          built_tree="$(git rev-parse HEAD:bot)"
+          latest_tree="$(git rev-parse FETCH_HEAD:bot)"
+          if [[ "$built_tree" == "$latest_tree" ]]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping stale Bot artifact release: bot source has changed."
+          fi
       - name: Publish Release
         uses: softprops/action-gh-release@v2
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && steps.latest.outputs.publish == 'true'
         with:
           tag_name: bot-latest
           name: Freedom Bot Latest Release
