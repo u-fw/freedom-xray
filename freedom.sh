@@ -3384,12 +3384,18 @@ install_or_update_freedom_bot() {
   rm -rf "$tmp_dir"
   ok "Freedom Bot 已就绪: $BOT_BIN_PATH (${bot_ver})"
 
-  # 若服务存在且已配置，则自动重载
+  # 首次升级旧 Bot 必须真正重启服务，才能加载新的菜单和 /update。
   if [[ -f "$BOT_CONFIG_PATH" ]] && [[ -f "$BOT_SERVICE_FILE" ]]; then
-    if systemctl restart "$BOT_SERVICE" 2>/dev/null; then
-      ok "freedom-bot 守护进程已自动重新加载。"
+    if systemctl restart "$BOT_SERVICE" && sleep 2 && systemctl is-active --quiet "$BOT_SERVICE"; then
+      ok "freedom-bot 已重启，正在运行新版程序：$("$BOT_BIN_PATH" -v 2>/dev/null)"
     else
-      warn "freedom-bot 自动重载失败，请在机器人菜单中查看日志。"
+      warn "新 Bot 启动检测失败，尝试恢复旧版二进制。"
+      if [[ -s "${BOT_BIN_PATH}.previous" ]]; then
+        install -m 755 "${BOT_BIN_PATH}.previous" "$BOT_BIN_PATH" || return 1
+        systemctl restart "$BOT_SERVICE" || warn "旧版 Bot 恢复启动失败，请检查 systemctl/journalctl。"
+      fi
+      warn "查看日志：journalctl -u freedom-bot -n 50 --no-pager"
+      return 1
     fi
   fi
 }
