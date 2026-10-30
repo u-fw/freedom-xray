@@ -588,64 +588,51 @@ func (s *BotService) sendUsersCard(chatID int64, msgID int) {
 	s.sendOrEdit(chatID, msgID, text, markup)
 }
 
+// Export links as separate plain-text messages: REALITY parameters can exceed
+// Telegram's photo caption limit (1024 characters) and Markdown escaping can
+// invalidate long VLESS URIs. QR is an optional attachment, never the only copy.
 func (s *BotService) sendUserLinksAndQRs(chatID int64, email string) {
-	nodes, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
-	if err != nil {
-		s.sendAlert(chatID, "❌ 无法生成节点配置: "+err.Error())
-		return
-	}
-
-	publicIP := GetPublicIP()
-	found := false
-
-	s.sendOrEdit(chatID, 0, fmt.Sprintf("📦 正在为用户 *%s* 生成节点与二维码...", mdEsc(email)),
-		tgbotapi.InlineKeyboardMarkup{})
-
-	for _, n := range nodes {
-		for _, c := range n.Clients {
-			if c.Email == email {
-				found = true
-				vlessURI := n.GenerateVlessURI(c, publicIP)
-
-				// 1. Send URI Text
-				caption := fmt.Sprintf(
-					"🌐 *节点: %s* (端口: `%d`)\n"+
-						"• 协议: `%s + %s + %s`\n"+
-						"• 用户: `%s`\n\n"+
-						"```\n%s\n```",
-					mdEsc(n.Tag), n.Port,
-					mdCode(strings.ToUpper(n.Protocol)), mdCode(strings.ToUpper(n.Network)), mdCode(strings.ToUpper(n.Security)),
-					mdCode(email),
-					vlessURI,
-				)
-
-				// 2. Generate and Send QR Code
-				qrBytes, qrErr := GenerateQRCodePNG(vlessURI, 280)
-				if qrErr != nil {
-					log.Printf("[Bot] generate QR failed for %s: %v", n.Tag, qrErr)
-					s.sendOrEdit(chatID, 0, caption, tgbotapi.InlineKeyboardMarkup{})
-					continue
-				}
-
-				photo := tgbotapi.NewPhoto(chatID, tgbotapi.FileBytes{
-					Name:  fmt.Sprintf("%s-%d.png", n.Tag, n.Port),
-					Bytes: qrBytes,
-				})
-				photo.Caption = caption
-				photo.ParseMode = "Markdown"
-				if _, err := s.bot.Send(photo); err != nil {
-					log.Printf("[Bot] send QR failed for %s: %v", n.Tag, err)
-					// Photo delivery can fail (size, network); the link text is
-					// the actual payload, so fall back to a text message.
-					s.sendOrEdit(chatID, 0, caption, tgbotapi.InlineKeyboardMarkup{})
-				}
-			}
-		}
-	}
-
-	if !found {
-		s.sendAlert(chatID, fmt.Sprintf("未找到用户 %s 的匹配节点信息。", email))
-	}
+ nodes,err:=LoadXrayInbounds(s.cfg.XrayConfigPath)
+ if err!=nil {s.sendAlert(chatID,"无法读取节点配置："+err.Error());return}
+ publicIP:=GetPublicIP()
+ count:=0
+ for _,node:=range nodes {
+  for _,client:=range node.Clients {
+   if client.Email!=email {continue}
+   count++
+   uri:=node.GenerateVlessURI(client,publicIP)
+   label:=fmt.Sprintf("节点：%s (%d)\n用户：%s\n传输：%s / %s\n",node.Tag,node.Port,email,node.Network,node.Security)
+   if node.Security=="reality" && node.PublicKey=="" && node.PrivateKey=="" {
+    s.sendAlert(chatID,label+"REALITY 公钥缺失；链接无法保证可用，请检查服务端配置。")
+    continue
+   }
+   if node.Security=="reality" && strings.Contains(uri,"@127.0.0.1:") {
+    label+="警告：未获取到公网 IP，请检查服务器网络和连接地址。\n"
+   }
+   // Telegram messages permit 4096 characters; the URI is sent unchanged,
+   // without ParseMode and without re-encoding its query parameters.
+   textMessage:=tgbotapi.NewMessage(chatID,label+"复制以下完整 VLESS 链接导入 v2rayN/v2rayNG：\n"+uri)
+   textMessage.DisableWebPagePreview=true
+   if _,sendErr:=s.bot.Send(textMessage);sendErr!=nil {
+    log.Printf("[Bot] plain link send failed for %s: %v",node.Tag,sendErr)
+    s.sendAlert(chatID,fmt.Sprintf("节点 %s (%d) 的文本链接发送失败：%v",node.Tag,node.Port,sendErr))
+   }
+   qrBytes,qrErr:=GenerateQRCodePNG(uri,512)
+   if qrErr!=nil {
+    log.Printf("[Bot] qr failed for %s (URI bytes %d): %v",node.Tag,len(uri),qrErr)
+    s.sendAlert(chatID,fmt.Sprintf("节点 %s (%d)：链接已尝试作为文本发送，但二维码无法生成（URI 长度 %d 字节，可能超过二维码容量）：%v。请复制上方文本导入。",node.Tag,node.Port,len(uri),qrErr))
+    continue
+   }
+   photo:=tgbotapi.NewPhoto(chatID,tgbotapi.FileBytes{Name:fmt.Sprintf("node-%d.png",node.Port),Bytes:qrBytes})
+   photo.Caption=fmt.Sprintf("节点 %s:%d · %s（二维码，仅供扫码；完整链接见上方文本）",node.Tag,node.Port,email)
+   // Do not use Markdown on user-supplied node tags/captions.
+   if _,err=s.bot.Send(photo);err!=nil {
+    log.Printf("[Bot] QR photo send failed for %s: %v",node.Tag,err)
+    s.sendAlert(chatID,fmt.Sprintf("节点 %s (%d)：二维码上传失败：%v。完整链接已在上方作为文本发送。",node.Tag,node.Port,err))
+   }
+  }
+ }
+ if count==0 {s.sendAlert(chatID,fmt.Sprintf("用户 %s 当前未绑定任何节点。请从用户详情中分配节点。",email))}
 }
 
 func (s *BotService) askRestart(chatID int64, msgID int) {
