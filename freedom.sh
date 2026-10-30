@@ -3290,40 +3290,39 @@ install_or_update_freedom_bot() {
 
   local bin_name="freedom-bot-linux-${arch}"
   local dl_url="https://github.com/${GITHUB_REPO}/releases/download/bot-latest/${bin_name}"
-  local proxy_dl_url="https://ghproxy.net/${dl_url}"
-
-  info "目标架构: linux/${arch}，准备拉取最新预编译二进制..."
-  local tmp_bin="/tmp/${bin_name}.tmp"
-  rm -f "$tmp_bin"
-
-  if curl -fsSL -m 30 "$proxy_dl_url" -o "$tmp_bin" 2>/dev/null; then
-    ok "通过加速镜像下载完成。"
-  elif curl -fsSL -m 30 "$dl_url" -o "$tmp_bin" 2>/dev/null; then
-    ok "通过 GitHub 直连下载完成。"
-  else
-    warn "未能直接从 GitHub Release 下载预编译包。"
-    warn "可能 Release 正在编译打包中，或者网络受限。"
-    rm -f "$tmp_bin"
+  info "目标架构: linux/${arch}，从官方 GitHub Release 拉取二进制与 SHA-256..."
+  local tmp_dir
+  tmp_dir="$(mktemp -d)" || return 1
+  local tmp_bin="$tmp_dir/$bin_name" sums_file="$tmp_dir/${bin_name}.sha256"
+  if ! curl --proto "=https" -fsSL --retry 2 -m 60 "$dl_url" -o "$tmp_bin" || \
+     ! curl --proto "=https" -fsSL --retry 2 -m 30 "${dl_url}.sha256" -o "$sums_file"; then
+    warn "无法从 GitHub 官方 Release 获取二进制及校验值；为安全起见不使用第三方加速镜像。"
+    rm -rf "$tmp_dir"
     return 1
   fi
-
-  chmod +x "$tmp_bin"
-  # 严格校验下载产物：必须是 Linux ELF 且能正常输出版本，防止把 CDN 错误页当二进制安装
-  local magic
+  local expected actual
+  expected="$(awk -v name="$bin_name" '$2 == name { print $1; exit }' "$sums_file")"
+  actual="$(sha256sum "$tmp_bin" | awk '{print $1}')"
+  if ! [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || [[ "$expected" != "$actual" ]]; then
+    warn "Bot 发布包 SHA-256 校验失败，拒绝安装。"
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  chmod 755 "$tmp_bin"
+  local magic bot_ver
   magic="$(head -c 4 "$tmp_bin" 2>/dev/null | od -An -tx1 | tr -d ' \n')"
-  if [[ "$magic" != "7f454c46" ]]; then
-    warn "下载文件不是合法的 Linux ELF 可执行程序（可能是网络错误页），已放弃安装。"
-    rm -f "$tmp_bin"
+  if [[ "$magic" != "7f454c46" ]] || ! bot_ver="$("$tmp_bin" -v 2>/dev/null)"; then
+    warn "下载的程序不是可执行的 ELF Bot。"
+    rm -rf "$tmp_dir"
     return 1
   fi
-  local bot_ver=""
-  if ! bot_ver="$("$tmp_bin" -v 2>/dev/null)"; then
-    warn "下载的二进制无法执行（架构不匹配或依赖缺失），已放弃安装。"
-    rm -f "$tmp_bin"
+  [[ ! -f "$BOT_BIN_PATH" ]] || cp -a "$BOT_BIN_PATH" "${BOT_BIN_PATH}.previous"
+  if ! install -m 755 "$tmp_bin" "${BOT_BIN_PATH}.next" || ! mv -f "${BOT_BIN_PATH}.next" "$BOT_BIN_PATH"; then
+    warn "安装 Bot 程序失败；保留备份。"
+    rm -rf "$tmp_dir"
     return 1
   fi
-  mv "$tmp_bin" "$BOT_BIN_PATH"
-  chmod 755 "$BOT_BIN_PATH"
+  rm -rf "$tmp_dir"
   ok "Freedom Bot 已就绪: $BOT_BIN_PATH (${bot_ver})"
 
   # 若服务存在且已配置，则自动重载
