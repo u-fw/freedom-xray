@@ -1,0 +1,18 @@
+# Binaries
+bot/freedom-bot*
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Output files
+1stream.dat
+1stream.dat.sha256
+1stream-tags.md
+source-info.json
+
+# Temporary and local config files
+*.tmp
+*.log
+bot.json
