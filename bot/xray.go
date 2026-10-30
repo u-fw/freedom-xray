@@ -459,12 +459,15 @@ func (node *InboundDetails) GenerateVlessURI(client XrayClient, serverHost strin
 			if node.XHTTPPath != "" {
 				q.Set("path", node.XHTTPPath)
 			}
-			q.Set("host", sni)
+			if node.XHTTPHost != "" {
+				q.Set("host", node.XHTTPHost)
+			}
 			mode := node.XHTTPMode
 			if mode == "" {
 				mode = "auto"
 			}
 			q.Set("mode", mode)
+			q.Set("extra", `{"xPaddingBytes":"100-1000"}`)
 		}
 	case "tls":
 		// CDN-friendly: address the node through its certificate domain
@@ -476,7 +479,10 @@ func (node *InboundDetails) GenerateVlessURI(client XrayClient, serverHost strin
 		host = domain
 		q.Set("fp", "chrome")
 		q.Set("sni", domain)
-		q.Set("host", domain)
+		q.Set("alpn", "h2")
+		if node.XHTTPHost != "" {
+			q.Set("host", node.XHTTPHost)
+		}
 		if node.Network == "xhttp" {
 			if node.XHTTPPath != "" {
 				q.Set("path", node.XHTTPPath)
@@ -486,6 +492,7 @@ func (node *InboundDetails) GenerateVlessURI(client XrayClient, serverHost strin
 				mode = "auto"
 			}
 			q.Set("mode", mode)
+			q.Set("extra", `{"xPaddingBytes":"100-1000"}`)
 		}
 	default:
 		if node.SNI != "" {
