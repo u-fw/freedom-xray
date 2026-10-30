@@ -944,6 +944,21 @@ get_xray_core_version() {
   echo "Xray unknown"
 }
 
+# Shared with the Go Bot via flock(2): covers each entire read/modify/write/restart action.
+# The dashboard does not hold the lock while waiting for a menu choice.
+locked_config_operation() (
+  install -d -m 755 "$CONFIG_DIR" || exit 1
+  if ! command -v flock >/dev/null 2>&1; then
+    warn "缺少 util-linux flock，已拒绝无锁修改配置。"
+    exit 1
+  fi
+  exec 9>"$CONFIG_DIR/.freedom-config.lock" || exit 1
+  if ! flock -w 20 9; then
+    warn "已有其他 CLI/Bot 正在修改 Xray 配置，20 秒内未取得锁。请稍后重试。"
+    exit 1
+  fi
+  "$@"
+)
 backup_existing_config() {
   install -d -m 755 "$CONFIG_DIR"
   BACKUP_FILE=""
@@ -2172,11 +2187,11 @@ manage_single_user_interactive() {
     case "$action" in
       1) show_user_node_links "$selected_email" "$selected_uuid" ;;
       2)
-        rename_managed_user "$selected_email" "$selected_uuid" || true
+        locked_config_operation rename_managed_user "$selected_email" "$selected_uuid" || true
         return 0
         ;;
       3)
-        rotate_managed_user_uuid "$selected_email" "$selected_uuid" || true
+        locked_config_operation rotate_managed_user_uuid "$selected_email" "$selected_uuid" || true
         return 0
         ;;
       0|"") return 0 ;;
@@ -2304,7 +2319,7 @@ toggle_user_status_interactive() {
   esac
 }
 user_management_menu() {
-  ensure_stats_api_scaffold || warn "统计模块初始化失败，流量看板可能不可用（原配置保持不变）。"
+  locked_config_operation ensure_stats_api_scaffold || warn "统计模块初始化失败，流量看板可能不可用（原配置保持不变）。"
   while true; do
     local stats_data
     stats_data="$(get_xray_stats_json)"
@@ -2367,9 +2382,9 @@ user_management_menu() {
     read -r -p "请选择操作 [0-7]: " u_sel || u_sel="0"
     case "${u_sel:-0}" in
       1) show_user_node_links || true ;;
-      2) add_new_user_interactive || true ;;
-      3) delete_user_interactive || true ;;
-      4) reset_traffic_stats_interactive || true ;;
+      2) locked_config_operation add_new_user_interactive || true ;;
+      3) locked_config_operation delete_user_interactive || true ;;
+      4) locked_config_operation reset_traffic_stats_interactive || true ;;
       5) ;;
       6) manage_single_user_interactive || true ;;
       7) toggle_user_status_interactive || true ;;
@@ -3757,11 +3772,11 @@ main_menu() {
     read -r -p "请选择 [0-10]: " menu_choice || menu_choice="0"
     case "${menu_choice:-0}" in
       1) list_and_show_nodes || true ;;
-      2) add_new_node_interactive || true ;;
-      3) delete_node_interactive || true ;;
-      4) modify_node_interactive || true ;;
+      2) locked_config_operation add_new_node_interactive || true ;;
+      3) locked_config_operation delete_node_interactive || true ;;
+      4) locked_config_operation modify_node_interactive || true ;;
       5) user_management_menu || true ;;
-      6) benchmark_and_diagnose_system_tuning || true ;;
+      6) locked_config_operation benchmark_and_diagnose_system_tuning || true ;;
       7) service_operations_menu || true ;;
       8) system_update_center_menu || true ;;
       9) telegram_bot_management_menu || true ;;
@@ -3778,7 +3793,7 @@ main() {
   install_base_deps
   sync_time_best_effort
   ensure_xray_installed
-  ensure_config_scaffold
+  locked_config_operation ensure_config_scaffold || fatal "初始化配置时未能获得独占锁。"
 
   # 自动注册或更新系统全局快捷指令 freedom
   if [[ -f "$0" && "$0" != "/dev/fd/"* ]]; then
@@ -3798,8 +3813,8 @@ main() {
   if ((initial_nodes == 0)); then
     clear || true
     echo -e "  ${BOLD}检测到当前尚未配置任何 Xray 业务节点，将引导您初始化创建第 1 个节点${NC}"
-    tune_linux_kernel_network
-    add_new_node_interactive || true
+    locked_config_operation tune_linux_kernel_network
+    locked_config_operation add_new_node_interactive || true
   fi
 
   # 之后进入全功能控制台主菜单
