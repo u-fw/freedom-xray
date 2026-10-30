@@ -3348,6 +3348,7 @@ configure_freedom_bot_interactive() {
   local cur_proxy=""
   local cur_hours=12
   local cur_mutations=false
+  local cur_updates=false cur_core_updates=false
 
   if [[ -f "$BOT_CONFIG_PATH" ]]; then
     cur_token="$(jq -r '.token // ""' "$BOT_CONFIG_PATH" 2>/dev/null || true)"
@@ -3355,6 +3356,8 @@ configure_freedom_bot_interactive() {
     cur_proxy="$(jq -r '.socks5_proxy // ""' "$BOT_CONFIG_PATH" 2>/dev/null || true)"
     cur_hours="$(jq -r '.report_hours // 12' "$BOT_CONFIG_PATH" 2>/dev/null || echo 12)"
     cur_mutations="$(jq -r '.allow_mutations // false' "$BOT_CONFIG_PATH" 2>/dev/null || echo false)"
+    cur_updates="$(jq -r '.allow_updates // false' "$BOT_CONFIG_PATH" 2>/dev/null || echo false)"
+    cur_core_updates="$(jq -r '.allow_core_updates // false' "$BOT_CONFIG_PATH" 2>/dev/null || echo false)"
   fi
 
   local cur_token_display="未设置"
@@ -3400,6 +3403,23 @@ configure_freedom_bot_interactive() {
     *) warn "远程写入选项无效，配置未保存。"; return 1 ;;
   esac
 
+  local in_updates in_core_updates final_updates="$cur_updates" final_core_updates="$cur_core_updates"
+  read -r -p "允许 Telegram 私聊管理员检查并更新脚本/Bot？[y/N；当前 ${cur_updates}]: " in_updates || in_updates=""
+  case "$in_updates" in
+    y|Y|yes|YES) final_updates=true ;;
+    n|N|no|NO) final_updates=false ;;
+    "") ;;
+    *) warn "更新权限选项无效"; return 1 ;;
+  esac
+  read -r -p "额外允许远程升级 Xray-core？[y/N；当前 ${cur_core_updates}]（可能引入协议兼容性变化）: " in_core_updates || in_core_updates=""
+  case "$in_core_updates" in
+    y|Y|yes|YES) final_core_updates=true ;;
+    n|N|no|NO) final_core_updates=false ;;
+    "") ;;
+    *) warn "核心更新权限选项无效"; return 1 ;;
+  esac
+  if [[ "$final_updates" != "true" ]]; then final_core_updates=false; fi
+
   install -d -m 755 "$CONFIG_DIR"
 
   # 原子写入并校验：避免 jq 失败时把 bot.json 清空成 0 字节
@@ -3410,6 +3430,8 @@ configure_freedom_bot_interactive() {
     --arg proxy "$final_proxy" \
     --argjson hours "$final_hours" \
     --argjson mutations "$final_mutations" \
+    --argjson updates "$final_updates" \
+    --argjson core_updates "$final_core_updates" \
     --arg xray_cfg "$CONFIG_PATH" \
     --arg xray_bin "$BIN" \
     '{
@@ -3418,6 +3440,8 @@ configure_freedom_bot_interactive() {
       socks5_proxy: $proxy,
       report_hours: $hours,
       allow_mutations: $mutations,
+      allow_updates: $updates,
+      allow_core_updates: $core_updates,
       xray_config_path: $xray_cfg,
       xray_bin_path: $xray_bin,
       stats_api_server: "127.0.0.1:10085"
@@ -3512,7 +3536,7 @@ telegram_bot_management_menu() {
       echo -e "  版本: ${b_ver}"
     fi
     echo "————————————————————————————————————————————————"
-    echo -e "  ${GREEN}1.${NC} 配置机器人（Token / 管理员 / 代理 / 定时报告）"
+    echo -e "  ${GREEN}1.${NC} 配置机器人（权限 / 更新 / 管理员 / 定时报告）"
     echo -e "  ${GREEN}2.${NC} 安装 / 升级 freedom-bot"
     echo -e "  ${GREEN}3.${NC} 启动服务"
     echo -e "  ${GREEN}4.${NC} 停止服务"
