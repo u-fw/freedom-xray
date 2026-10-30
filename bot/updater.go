@@ -5,6 +5,7 @@ import (
  "bytes"
  "context"
  "crypto/sha256"
+ _ "embed"
  "encoding/hex"
  "encoding/json"
  "errors"
@@ -19,6 +20,9 @@ import (
  "strings"
  "time"
 )
+
+//go:embed update-watchdog.sh
+var updateWatchdog []byte
 
 const (
  scriptRepo = "u-fw/freedom-xray"
@@ -169,14 +173,25 @@ func checkedBotUpdate(ctx context.Context) (string,error) {
  backup:=target+".previous"
  if err=writeAtomically(backup,old,0755);err!=nil{return "",err}
  if err=writeAtomically(target,binary,0755);err!=nil{return "",err}
- // Restart from a transient systemd timer instead of killing the process
- // handling the current callback.
- nameUnit:=fmt.Sprintf("freedom-bot-restart-%d",time.Now().Unix())
- if err=runChecked("systemd-run","--unit="+nameUnit,"--on-active=3s","/usr/bin/systemctl","restart","freedom-bot.service");err!=nil{
+ // A detached watchdog handles both restart and rollback; it survives even
+ // if the replacement cannot launch or authenticate to Telegram.
+ watchdog,err:=os.CreateTemp("/run","freedom-bot-watchdog-*.sh")
+ if err!=nil{_ =writeAtomically(target,old,0755);return "",fmt.Errorf("无法建立独立恢复任务: %w",err)}
+ watchdogPath:=watchdog.Name()
+ if err=watchdog.Chmod(0700);err==nil {_,err=watchdog.Write(updateWatchdog)}
+ if err==nil {err=watchdog.Sync()}
+ if closeErr:=watchdog.Close();err==nil {err=closeErr}
+ if err!=nil {os.Remove(watchdogPath);_ =writeAtomically(target,old,0755);return "",fmt.Errorf("恢复任务准备失败: %w",err)}
+ sum:=sha256.Sum256(binary)
+ expected:=hex.EncodeToString(sum[:])
+ nameUnit:=fmt.Sprintf("freedom-bot-update-%d",time.Now().UnixNano())
+ err=runChecked("systemd-run","--unit="+nameUnit,"--on-active=3s","/bin/sh",watchdogPath,target,backup,expected)
+ if err!=nil{
+  os.Remove(watchdogPath)
   _=writeAtomically(target,old,0755)
-  return "",fmt.Errorf("无法注册 Bot 重启任务，已恢复旧文件: %w",err)
+  return "",fmt.Errorf("无法启动外部恢复任务，已回滚二进制: %w",err)
  }
- return "Bot 更新已安装并登记 systemd 重启；如果新进程启动失败，可用 VPS 上的 previous 备份回滚。",nil
+ return "新 Bot 已写入。独立 systemd 任务将重启并进行两次健康检查；失败时自动恢复 previous。",nil
 }
 
 func extractCoreExecutable(archive []byte) ([]byte,error) {
