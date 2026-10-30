@@ -160,6 +160,9 @@ func writeAtomically(path string,data []byte,perm os.FileMode) error {
  f,err:=os.CreateTemp(filepath.Dir(path),".freedom-write-*");if err!=nil{return err}
  name:=f.Name()
  defer os.Remove(name)
+ if original,statErr:=os.Stat(path);statErr==nil {
+  if st,ok:=original.Sys().(*syscall.Stat_t);ok { if err=f.Chown(int(st.Uid),int(st.Gid));err!=nil {f.Close();return err} }
+ }
  if err=f.Chmod(perm);err!=nil{f.Close();return err}
  if _,err=f.Write(data);err!=nil{f.Close();return err}
  if err=f.Sync();err!=nil{f.Close();return err}
