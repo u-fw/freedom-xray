@@ -46,6 +46,8 @@ func (s *BotService) offerUserChange(chatID,adminID int64,messageID int,change U
  case "delete": description=fmt.Sprintf("删除 %s 在所有入站的账号；链接立即失效",change.User)
  case "assign": description=fmt.Sprintf("将 %s 加入节点 %s",change.User,change.Node)
  case "unassign": description=fmt.Sprintf("从节点 %s 移除 %s",change.Node,change.User)
+  case "disable": description=fmt.Sprintf("停用用户 %s 并使当前节点链接失效，原 UUID 保留在本机",change.User)
+  case "enable": description=fmt.Sprintf("恢复用户 %s 的原 UUID 和全部关联节点",change.User)
  default: s.sendAlert(chatID,"未知修改操作");return
  }
  markup:=tgbotapi.NewInlineKeyboardMarkup(
@@ -73,7 +75,7 @@ func (s *BotService) resolveUserChange(cb *tgbotapi.CallbackQuery,confirm bool) 
  }
  if !confirm {s.sendOrEdit(chatID,msgID,"已取消修改。",backToMainMarkup());return}
  if !s.cfg.AllowMutations {s.sendOrEdit(chatID,msgID,"远程写入已关闭。",backToMainMarkup());return}
- msg,err:=ChangeUserConfig(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,request.Change)
+ msg,err:=changeManagedUser(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,request.Change)
  if err!=nil {
   log.Printf("[Bot] management %s failed: %v",request.Change.Kind,err)
   s.sendOrEdit(chatID,msgID,"❌ 修改失败：\n"+err.Error(),backToMainMarkup())
@@ -88,7 +90,7 @@ func (s *BotService) resolveUserChange(cb *tgbotapi.CallbackQuery,confirm bool) 
 
 func (s *BotService) handleUserManagementCommand(msg *tgbotapi.Message) bool {
  cmd:=msg.Command()
- if cmd!="adduser" && cmd!="renameuser" && cmd!="rotateuser" && cmd!="removeuser" && cmd!="assignuser" && cmd!="unassignuser" {return false}
+ if cmd!="adduser" && cmd!="renameuser" && cmd!="rotateuser" && cmd!="removeuser" && cmd!="assignuser" && cmd!="unassignuser" && cmd!="disableuser" && cmd!="enableuser" {return false}
  parts:=strings.Fields(msg.CommandArguments())
  change:=UserChange{}
  switch cmd {
@@ -99,6 +101,10 @@ func (s *BotService) handleUserManagementCommand(msg *tgbotapi.Message) bool {
  case "renameuser":
   if len(parts)!=2{s.sendAlert(msg.Chat.ID,"用法: /renameuser <旧名称> <新名称>");return true}
   change=UserChange{Kind:"rename",User:parts[0],NewName:parts[1]}
+ case "disableuser", "enableuser":
+  if len(parts)!=1 {s.sendAlert(msg.Chat.ID,"用法: /"+cmd+" <用户名>");return true}
+  kind:="disable";if cmd=="enableuser"{kind="enable"}
+  change=UserChange{Kind:kind,User:parts[0]}
  case "rotateuser":
   if len(parts)!=1{s.sendAlert(msg.Chat.ID,"用法: /rotateuser <用户名>");return true}
   change=UserChange{Kind:"rotate",User:parts[0]}
@@ -145,6 +151,9 @@ func (s *BotService) sendUserManageCard(chatID int64,msgID int,key string) {
   tgbotapi.NewInlineKeyboardButtonData("🔐 重置 UUID","manage_rotate:"+key),
  ))
  rows=append(rows,tgbotapi.NewInlineKeyboardRow(
+  tgbotapi.NewInlineKeyboardButtonData("⏸ 停用用户","manage_disable:"+key),
+ ))
+ rows=append(rows,tgbotapi.NewInlineKeyboardRow(
   tgbotapi.NewInlineKeyboardButtonData("🗑 删除用户","manage_delete:"+key),
   tgbotapi.NewInlineKeyboardButtonData("🔙 用户列表","menu_users"),
  ))
@@ -163,10 +172,10 @@ func (s *BotService) handleManagedUserCallback(cb *tgbotapi.CallbackQuery) {
  switch parts[0] {
  case "manage_user":
   s.sendUserManageCard(chatID,msgID,parts[1]);return
- case "manage_rotate","manage_delete":
+ case "manage_rotate","manage_delete","manage_disable":
   email:=lookupManagedUserEmail(nodes,parts[1])
   if email==""{s.sendAlert(chatID,"用户已不存在");return}
-  kind:="rotate";if parts[0]=="manage_delete"{kind="delete"}
+  kind:="rotate";if parts[0]=="manage_delete"{kind="delete"};if parts[0]=="manage_disable"{kind="disable"}
   s.offerUserChange(chatID,cb.From.ID,msgID,UserChange{Kind:kind,User:email})
  case "manage_node":
   if len(parts)!=4{return}
@@ -180,4 +189,35 @@ func (s *BotService) handleManagedUserCallback(cb *tgbotapi.CallbackQuery) {
   }
   s.sendAlert(chatID,"节点已不存在")
  }
+}
+
+func (s *BotService) sendDisabledUsersCard(chatID int64,msgID int) {
+ names,err:=disabledUserNames(s.cfg.XrayConfigPath)
+ if err!=nil {s.sendOrEdit(chatID,msgID,"停用用户记录读取失败："+err.Error(),backToMainMarkup());return}
+ rows:=[][]tgbotapi.InlineKeyboardButton{}
+ for _,name:=range names {
+  rows=append(rows,tgbotapi.NewInlineKeyboardRow(
+   tgbotapi.NewInlineKeyboardButtonData("▶ 恢复 "+truncateLabel(name,40),"manage_enable:"+userCallbackKey(name)),
+  ))
+ }
+ rows=append(rows,tgbotapi.NewInlineKeyboardRow(
+  tgbotapi.NewInlineKeyboardButtonData("🔙 用户管理","menu_users"),
+ ))
+ message:="⏸ 已停用用户\n\n恢复会写回原 UUID 和关联入站，并重启 Xray。"
+ if len(names)==0 {message="目前没有停用用户。"}
+ s.sendOrEdit(chatID,msgID,message,tgbotapi.NewInlineKeyboardMarkup(rows...))
+}
+
+func (s *BotService) enableDisabledUserCallback(cb *tgbotapi.CallbackQuery) {
+ if cb.Message==nil{return}
+ names,err:=disabledUserNames(s.cfg.XrayConfigPath)
+ if err!=nil {s.sendAlert(cb.Message.Chat.ID,"停用用户记录损坏");return}
+ key:=strings.TrimPrefix(cb.Data,"manage_enable:")
+ for _,name:=range names {
+  if userCallbackKey(name)==key {
+   s.offerUserChange(cb.Message.Chat.ID,cb.From.ID,cb.Message.MessageID,UserChange{Kind:"enable",User:name})
+   return
+  }
+ }
+ s.sendAlert(cb.Message.Chat.ID,"找不到停用用户，请刷新列表")
 }
