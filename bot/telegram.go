@@ -133,6 +133,14 @@ func (s *BotService) handleUpdate(update tgbotapi.Update) {
 		return
 	}
 
+	// Never expose keys or permit management from group chats.
+	// In a private Telegram chat, chat ID equals the authorized user's ID.
+	if chatID != senderID || (update.Message != nil && !update.Message.Chat.IsPrivate()) ||
+		(update.CallbackQuery != nil && update.CallbackQuery.Message != nil && !update.CallbackQuery.Message.Chat.IsPrivate()) {
+		if isCallback { _,_ = s.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "仅允许管理员私聊操作")) }
+		return
+	}
+
 	// 2. Dispatch
 	if isCallback {
 		s.handleCallback(update.CallbackQuery)
@@ -147,6 +155,7 @@ func (s *BotService) handleUpdate(update tgbotapi.Update) {
 func (s *BotService) handleMessage(msg *tgbotapi.Message) {
 	text := strings.TrimSpace(msg.Text)
 	cmd := msg.Command()
+	if s.handleUserManagementCommand(msg) { return }
 
 	switch cmd {
 	case "start", "menu":
@@ -163,6 +172,8 @@ func (s *BotService) handleMessage(msg *tgbotapi.Message) {
 		s.askRestart(msg.Chat.ID, 0)
 	case "backup":
 		s.sendBackupFile(msg.Chat.ID)
+	case "help":
+		s.sendAlert(msg.Chat.ID, "用户管理命令：\n/adduser <名称> [节点标签|all]\n/renameuser <旧名> <新名>\n/rotateuser <名称>\n/removeuser <名称>\n/assignuser <名称> <节点标签>\n/unassignuser <名称> <节点标签>\n\n所有修改均需管理员私聊和二次确认，默认关闭远程写入。")
 	default:
 		if strings.HasPrefix(text, "/") {
 			reply := tgbotapi.NewMessage(msg.Chat.ID, "未知命令，输入 /menu 或 /start 查看控制中心。")
@@ -210,6 +221,13 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 		s.doTrafficReset(chatID, msgID)
 	case strings.HasPrefix(data, "user_links:"):
 		s.handleUserLinksCallback(chatID, strings.TrimPrefix(data, "user_links:"))
+	case strings.HasPrefix(data, "manage_confirm:"):
+		s.resolveUserChange(cb, true)
+	case strings.HasPrefix(data, "manage_cancel:"):
+		s.resolveUserChange(cb, false)
+	case strings.HasPrefix(data, "manage_user:") || strings.HasPrefix(data, "manage_rotate:") ||
+		strings.HasPrefix(data, "manage_delete:") || strings.HasPrefix(data, "manage_node:"):
+		s.handleManagedUserCallback(cb)
 	}
 }
 
@@ -330,7 +348,7 @@ func (s *BotService) sendMainMenu(chatID int64, msgID int) {
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("📋 节点列表", "menu_nodes"),
-			tgbotapi.NewInlineKeyboardButtonData("👥 导出链接与二维码", "menu_users"),
+			tgbotapi.NewInlineKeyboardButtonData("👥 用户管理", "menu_users"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🔄 重启 Xray", "menu_restart_ask"),
@@ -453,7 +471,11 @@ func (s *BotService) doTrafficReset(chatID int64, msgID int) {
 		return
 	}
 
-	text := "✅ *用户流量统计已成功清零！*"
+	if err := resetTrafficStore(s.cfg.XrayConfigPath); err != nil {
+		s.sendOrEdit(chatID,msgID,"⚠️ Xray 内存计数器已清零，但本地累计流量重置失败: "+mdEsc(err.Error()),backToMainMarkup())
+		return
+	}
+	text := "✅ *用户流量计数器和本地累计流量均已清零！*"
 	markup := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("📊 查看流量统计", "menu_traffic"),
@@ -515,18 +537,17 @@ func (s *BotService) sendUsersCard(chatID int64, msgID int) {
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, email := range emails {
-		// Button labels share Telegram's 64-byte UI limit; emails are user
-		// supplied, so shorten the label. The callback carries a stable short
-		// hash instead of the email (callback_data is capped at 64 bytes).
-		btn := tgbotapi.NewInlineKeyboardButtonData(
-			truncateLabel("👤 "+email, 64), "user_links:"+userCallbackKey(email))
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(btn))
+		key := userCallbackKey(email)
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(truncateLabel("👤 "+email, 40),"manage_user:"+key),
+			tgbotapi.NewInlineKeyboardButtonData("🔗 导出", "user_links:"+key),
+		))
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 		tgbotapi.NewInlineKeyboardButtonData("🔙 返回主菜单", "menu_main"),
 	))
 
-	text := "👥 *请选择需要导出专属链接与二维码的用户：*"
+	text := "👥 *选择用户管理或导出节点链接*\n\n新增用户：/adduser <名称> [节点标签|all]\n其他命令：/help"
 	if len(emails) == 0 {
 		text = "当前配置中尚未添加任何用户，请使用 `freedom` 脚本添加用户。"
 	}
