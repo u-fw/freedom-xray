@@ -153,6 +153,7 @@ func (s *BotService) handleUpdate(update tgbotapi.Update) {
 }
 
 func (s *BotService) handleMessage(msg *tgbotapi.Message) {
+	if s.handleNodePathInput(msg) { return }
 	if s.handleWizardMessage(msg) { return }
 	text := strings.TrimSpace(msg.Text)
 	cmd := msg.Command()
@@ -165,6 +166,8 @@ func (s *BotService) handleMessage(msg *tgbotapi.Message) {
 		s.sendStatusCard(msg.Chat.ID, 0)
 	case "traffic", "usage":
 		s.sendTrafficCard(msg.Chat.ID, 0)
+	case "inboundtraffic":
+		s.sendInboundTrafficCard(msg.Chat.ID,0)
 	case "nodes", "inbounds":
 		s.sendNodesCard(msg.Chat.ID, 0)
 	case "users", "link":
@@ -208,8 +211,16 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 		s.sendStatusCard(chatID, msgID)
 	case data == "menu_traffic":
 		s.sendTrafficCard(chatID, msgID)
+	case data == "menu_inbound_traffic":
+		s.sendInboundTrafficCard(chatID,msgID)
 	case data == "menu_nodes":
 		s.sendNodesCard(chatID, msgID)
+	case strings.HasPrefix(data,"node_detail:") || strings.HasPrefix(data,"node_mode:") || strings.HasPrefix(data,"node_path:"):
+		s.handleNodeCallback(cb)
+	case strings.HasPrefix(data,"node_confirm:"):
+		s.confirmNodeChange(cb,true)
+	case strings.HasPrefix(data,"node_cancel:"):
+		s.confirmNodeChange(cb,false)
 	case data == "menu_users":
 		s.sendUsersCard(chatID, msgID)
 	case data == "menu_disabled_users":
@@ -471,6 +482,7 @@ func (s *BotService) sendTrafficCard(chatID int64, msgID int) {
 			tgbotapi.NewInlineKeyboardButtonData("🔄 清零流量", "traffic_reset_ask"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📡 节点流量", "menu_inbound_traffic"),
 			tgbotapi.NewInlineKeyboardButtonData("🔙 返回主菜单", "menu_main"),
 		),
 	)
@@ -544,6 +556,12 @@ func (s *BotService) sendNodesCard(chatID int64, msgID int) {
 		}
 	}
 
+	var nodeRows [][]tgbotapi.InlineKeyboardButton
+	for _,node:=range nodes {
+		if node.Network=="xhttp" {
+			nodeRows=append(nodeRows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⚙ "+truncateLabel(node.Tag,40),"node_detail:"+userCallbackKey(node.Tag))))
+		}
+	}
 	markup := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("⚡ 刷新", "menu_nodes"),
@@ -551,6 +569,7 @@ func (s *BotService) sendNodesCard(chatID int64, msgID int) {
 		),
 	)
 
+	markup.InlineKeyboard=append(nodeRows,markup.InlineKeyboard...)
 	s.sendOrEdit(chatID, msgID, sb.String(), markup)
 }
 
