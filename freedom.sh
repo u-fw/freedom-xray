@@ -28,7 +28,7 @@ NC='\033[0m'
 
 export PATH="$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
 
-SCRIPT_VERSION="v13.1-user-bot-manager"
+SCRIPT_VERSION="v13.2-synced-updates"
 DEFAULT_SNI="www.nvidia.com"
 DEFAULT_PORT="443"
 DEFAULT_NODE_NAME="Premium-Node"
@@ -2416,61 +2416,46 @@ get_remote_xray_version() {
   echo "$ver"
 }
 
+# Only the script and an already installed Bot are eligible for combined updates.
+# Xray-core remains a separate, explicitly confirmed upgrade.
 update_freedom_script() {
-  info "正在检测 freedom.sh 远端最新版本..."
-  local r_ver
-  r_ver="$(get_remote_script_version)"
-  if [[ -z "$r_ver" ]]; then
-    warn "无法获取 GitHub 远端脚本版本，请检查网络或 GitHub 连通性。"
+  info "正在从 GitHub main 下载最新 freedom.sh（通过内容对比，而非固定版本标签检测更新）..."
+  local tmp_file
+  tmp_file="$(mktemp /tmp/freedom_update_XXXXXXXX.sh)" || return 1
+  if ! curl --proto "=https" -fsSL --connect-timeout 8 --max-time 50 --retry 2 "$RAW_SCRIPT_URL" -o "$tmp_file"; then
+    rm -f "$tmp_file"
+    warn "官方 GitHub 下载失败，未修改已安装脚本。不执行第三方镜像返回的 root 脚本。"
     return 1
   fi
-
-  echo -e "当前本地脚本版本: ${BOLD}${CYAN}${SCRIPT_VERSION}${NC}"
-  echo -e "GitHub 远端最新版本: ${BOLD}${GREEN}${r_ver}${NC}"
-
-  if [[ "$SCRIPT_VERSION" == "$r_ver" ]]; then
-    ok "当前脚本已是最新版本 (${SCRIPT_VERSION})！"
-    read -r -p "是否依然强制重新下载最新脚本覆盖更新？[y/N]: " f_ans || f_ans="N"
-    case "${f_ans:-N}" in
-      y|Y|yes|YES) ;;
-      *) return 0 ;;
-    esac
-  else
-    info "发现新版本脚本可用！"
+  if ! head -n 1 "$tmp_file" | grep -q "^#!/usr/bin/env bash" ||
+     ! grep -q '^SCRIPT_VERSION=' "$tmp_file" || ! bash -n "$tmp_file"; then
+    rm -f "$tmp_file"
+    warn "脚本校验失败：缺少预期标识或 Bash 语法错误；原脚本未修改。"
+    return 1
   fi
-
-  local tmp_file="/tmp/freedom_update_$$.sh"
-  info "正在下载最新脚本代码..."
-  if ! curl -fsSL "$RAW_SCRIPT_URL" -o "$tmp_file" 2>/dev/null; then
-    warn "官方 GitHub raw 下载失败，尝试使用加速镜像下载..."
-    if ! curl -fsSL "$GHPROXY_SCRIPT_URL" -o "$tmp_file" 2>/dev/null; then
+  local target="/usr/local/bin/freedom"
+  if [[ -f "$target" ]] && cmp -s "$tmp_file" "$target"; then
+    rm -f "$tmp_file"
+    ok "管理脚本内容与 GitHub main 一致。"
+    maybe_offer_bot_refresh --force
+    return $?
+  fi
+  if [[ -f "$target" ]]; then
+    if ! cp -a "$target" "${target}.previous"; then
       rm -f "$tmp_file"
-      warn "下载失败，请检查网络连通性。"
+      warn "旧版管理脚本备份失败，已取消更新。"
       return 1
     fi
   fi
-
-  if ! bash -n "$tmp_file" 2>/dev/null; then
-    rm -f "$tmp_file"
-    warn "下载的脚本语法校验失败，已中止覆盖以保护系统！"
+  if ! install -m 755 "$tmp_file" "${target}.next" || ! mv -f "${target}.next" "$target"; then
+    rm -f "$tmp_file" "${target}.next"
+    warn "安装管理脚本失败；旧版备份保留在 ${target}.previous。"
     return 1
   fi
-
-  install -m 755 "$tmp_file" /usr/local/bin/freedom
-  if [[ -f "$0" && "$0" != "/usr/local/bin/freedom" ]]; then
-    cp -f "$tmp_file" "$0" 2>/dev/null || true
-    chmod +x "$0" 2>/dev/null || true
-  fi
   rm -f "$tmp_file"
-
-  ok "freedom.sh 脚本已成功升级至最新版本！"
-  ok "系统快捷指令已同步配置：随时在终端输入 ${BOLD}freedom${NC} 即可唤出控制台！"
-  echo
-  read -r -p "是否立即重新执行新版脚本？[Y/n]: " r_ans || r_ans="Y"
-  case "${r_ans:-Y}" in
-    n|N|no|NO) ;;
-    *) exec /usr/local/bin/freedom ;;
-  esac
+  ok "已安装最新 freedom.sh，旧版备份：${target}.previous"
+  info "重新加载新版管理脚本后，会直接询问是否同步升级已安装的 Telegram Bot。Xray-core 不会自动升级。"
+  exec "$target"
 }
 
 upgrade_xray_core_official() {
@@ -2554,17 +2539,26 @@ system_update_center_menu() {
     echo -e "  ${BOLD}在线更新${NC}"
     echo -e "  脚本: ${SCRIPT_VERSION} | 核心: ${cur_core}"
     echo "————————————————————————————————————————————————"
-    echo -e "  ${GREEN}1.${NC} 更新 freedom.sh"
+    echo -e "  ${GREEN}1.${NC} 更新管理脚本并同步已安装 Bot"
     echo -e "  ${GREEN}2.${NC} 升级 Xray-core"
     echo -e "  ${GREEN}3.${NC} 更新 GeoIP / GeoSite / 1stream.dat"
     echo -e "  ${GREEN}4.${NC} 检查组件版本"
+    echo -e "  ${GREEN}5.${NC} 仅更新 Telegram Bot"
     echo -e "  ${GREEN}0.${NC} 返回主菜单"
     echo "————————————————————————————————————————————————"
 
-    read -r -p "请选择升级操作 [0-4]: " up_sel || up_sel="0"
+    read -r -p "请选择升级操作 [0-5]: " up_sel || up_sel="0"
     case "${up_sel:-0}" in
       1)
         update_freedom_script || true
+        echo && read -rp "按回车键继续..." _dummy
+        ;;
+      5)
+        if [[ -x "$BOT_BIN_PATH" || -f "$BOT_CONFIG_PATH" ]]; then
+          install_or_update_freedom_bot || warn "Bot 更新失败，请检查日志。"
+        else
+          warn "尚未安装 Bot，请先在 Telegram 机器人菜单进行首次配置。"
+        fi
         echo && read -rp "按回车键继续..." _dummy
         ;;
       2)
@@ -3337,6 +3331,36 @@ get_bot_status_str() {
   fi
 }
 
+# Check once per installed script revision whether to synchronize an existing Bot.
+# Old CLI versions re-exec the new script after downloading it; this first-run
+# hook means the user does not need to find a separate Bot submenu.
+maybe_offer_bot_refresh() {
+  [[ -x "$BOT_BIN_PATH" && -f "$BOT_CONFIG_PATH" ]] || return 0
+  local installed_script="/usr/local/bin/freedom"
+  [[ -f "$installed_script" ]] || return 0
+  local script_hash stamp="$CONFIG_DIR/.freedom-bot-sync-script.sha256"
+  script_hash="$(sha256sum "$installed_script" | awk '{print $1}')"
+  [[ "$script_hash" =~ ^[a-fA-F0-9]{64}$ ]] || return 1
+  if [[ "${1:-}" != "--force" && -r "$stamp" && "$(cat "$stamp")" == "$script_hash" ]]; then
+    return 0
+  fi
+  echo
+  info "检测到已安装 Telegram Bot。可以直接同步 GitHub Release 的最新 Bot 二进制，无需进入二级菜单。"
+  local ans
+  read -r -p "是否同步更新 Telegram Bot？[y/N]（不会修改 Xray-core）: " ans || ans="N"
+  case "$ans" in
+    y|Y|yes|YES)
+      if ! install_or_update_freedom_bot; then
+        warn "Bot 更新失败，保留原程序或已尝试回滚。下次启动 freedom 可重新尝试。"
+        return 1
+      fi
+      ;;
+    *) info "已跳过本次 Bot 同步；日后可从在线更新菜单单独更新。";;
+  esac
+  if ! (umask 077; printf "%s\n" "$script_hash" > "${stamp}.next" && mv -f "${stamp}.next" "$stamp"); then
+    warn "Bot 更新检查标记保存失败；不影响已安装版本。"
+  fi
+}
 install_or_update_freedom_bot() {
   echo
   info "正在检测系统 CPU 架构与 Freedom Bot 最新程序..."
@@ -3809,6 +3833,10 @@ main() {
   elif [[ ! -f "/usr/local/bin/freedom" ]]; then
     (curl -fsSL --connect-timeout 4 -m 12 "$RAW_SCRIPT_URL" -o /usr/local/bin/freedom && chmod +x /usr/local/bin/freedom) 2>/dev/null || true
   fi
+
+  # 检测首次运行的新脚本是否需要同步升级已安装的 Bot。
+  # 提示只出现一次/脚本内容变更；拒绝时不会触发任何网络下载。
+  maybe_offer_bot_refresh || warn "Bot 同步检查未完成，可以通过主菜单 8 -> 5 重试。"
 
   # 若未配置或业务节点数为 0，则引导添加首个节点
   local initial_nodes=0
