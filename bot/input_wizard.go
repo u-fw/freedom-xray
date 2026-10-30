@@ -56,7 +56,8 @@ func (s *BotService) handleWizardMessage(msg *tgbotapi.Message) bool {
  nodes,err:=LoadXrayInbounds(s.cfg.XrayConfigPath)
  if err!=nil{s.sendAlert(chatID,"读取节点失败: "+err.Error());return true}
  var rows [][]tgbotapi.InlineKeyboardButton
- rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("所有节点","manage_scope:all")))
+ rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("仅创建用户（默认不绑定）","manage_scope:unbound")))
+ rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("绑定全部现有节点（不推荐）","manage_scope:all")))
  for _,n:=range nodes {
   rows=append(rows,tgbotapi.NewInlineKeyboardRow(
    tgbotapi.NewInlineKeyboardButtonData(truncateLabel(n.Tag,48),"manage_scope:"+userCallbackKey(n.Tag)),
@@ -65,7 +66,7 @@ func (s *BotService) handleWizardMessage(msg *tgbotapi.Message) bool {
  managementWizards.Lock()
  managementWizards.states[chatID]=managementWizard{AdminID:msg.From.ID,Expires:time.Now().Add(5*time.Minute),Stage:"scope",User:input}
  managementWizards.Unlock()
- s.sendOrEdit(chatID,0,"新增用户 "+input+"：请选择要分配的节点。",tgbotapi.NewInlineKeyboardMarkup(rows...))
+ s.sendOrEdit(chatID,0,"新增独立用户 "+input+"：可先保存身份不绑定节点，随后到用户详情单独授权。",tgbotapi.NewInlineKeyboardMarkup(rows...))
  return true
 }
 
@@ -80,8 +81,9 @@ func (s *BotService) handleWizardScope(cb *tgbotapi.CallbackQuery) {
  managementWizards.Unlock()
  if !ok{s.sendOrEdit(chatID,msgID,"操作已过期，请重新添加用户。",backToMainMarkup());return}
  key:=strings.TrimPrefix(cb.Data,"manage_scope:")
- target:="all"
- if key!="all" {
+ target:=""
+ if key=="all"{target="all"}
+ if key!="all"&&key!="unbound" {
   nodes,err:=LoadXrayInbounds(s.cfg.XrayConfigPath)
   if err!=nil{s.sendAlert(chatID,"无法读取节点");return}
   target=""
