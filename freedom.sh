@@ -2055,12 +2055,70 @@ reset_traffic_stats_interactive() {
 # 用户详情：无需再次选择同一用户，即可查看链接、改名或更换 UUID。
 # 仅对 email + UUID 同时匹配的客户端操作，避免误修改其他用户。
 manage_single_user_interactive() {
-  local users
-  users="$(get_all_system_users)"
-  if [[ -z "$users" ]]; then
-    warn "当前没有可管理的用户。"
-    return 0
+  ensure_user_manager_binary || return 1
+  local users="" name id
+  while IFS= read -r name; do
+    [[ -z "$name" ]] && continue
+    id=""
+    if [[ -f "$CONFIG_DIR/freedom-users.json" ]]; then
+      id="$(jq -r --arg name "$name" '.users[$name].id // empty' "$CONFIG_DIR/freedom-users.json" 2>/dev/null || true)"
+    fi
+    if [[ -z "$id" ]]; then
+      id="$(jq -r --arg name "$name" '[.inbounds[]? | .settings.clients[]? | select(.email==$name) | .id] | first // empty' "$CONFIG_PATH")"
+    fi
+    [[ -n "$id" ]] && users+="${name}|${id}"
+
+  local entries=() email uuid idx=0
+  echo
+  echo -e "  ${BOLD}选择要管理的用户${NC}"
+  while IFS='|' read -r email uuid; do
+    [[ -z "$email" || -z "$uuid" ]] && continue
+    entries+=("${email}|${uuid}")
+    echo "  $((++idx))) ${email} | ${uuid}"
+  done <<< "$users"
+  echo "  0) 返回"
+
+  local pick
+  read -r -p "用户序号 [1-${idx}]: " pick || pick=""
+  [[ -z "$pick" || "$pick" == "0" ]] && return 0
+  if ! [[ "$pick" =~ ^[0-9]+$ ]] || ((10#$pick < 1 || 10#$pick > idx)); then
+    warn "无效用户序号。"
+    return 1
   fi
+  local selected="${entries[$((10#$pick-1))]}"
+  local selected_email="${selected%%|*}" selected_uuid="${selected##*|}"
+
+  while true; do
+    echo
+    echo -e "  ${BOLD}用户: ${selected_email}${NC}"
+    echo "  UUID: ${selected_uuid}"
+    echo "  1) 查看该用户所有节点链接 / 二维码"
+    echo "  2) 修改该用户标识名称"
+    echo "  3) 为该用户重新生成 UUID（所有关联入站）"
+    echo "  4) 绑定 / 解绑节点"
+    echo "  0) 返回用户列表"
+    local action
+    read -r -p "请选择 [0-4]: " action || action="0"
+    case "$action" in
+      1) show_user_node_links "$selected_email" "$selected_uuid" ;;
+      2)
+        rename_managed_user "$selected_email" "$selected_uuid" || true
+        return 0
+        ;;
+      3)
+        rotate_managed_user_uuid "$selected_email" "$selected_uuid" || true
+        return 0
+        ;;
+      4) manage_user_node_binding_interactive "$selected_email" || true ;;
+      0|"") return 0 ;;
+      *) warn "无效选项。" ;;
+    esac
+  done
+}
+
+\n'
+  done < <(list_independent_user_names)
+  if [[ -z "$users" ]]; then warn "当前没有可管理的用户。"; return 0; fi
 
   local entries=() email uuid idx=0
   echo
@@ -2106,6 +2164,26 @@ manage_single_user_interactive() {
       *) warn "无效选项。" ;;
     esac
   done
+}
+
+manage_user_node_binding_interactive() {
+  ensure_user_manager_binary || return 1
+  local name="$1" node selection state action confirm
+  echo "用户: $name"
+  jq -r '[.inbounds[]? | select(.protocol=="vless" and .tag!="api-internal")] | to_entries[] | "\(.key+1)) \(.value.tag) / 端口 \(.value.port)"' "$CONFIG_PATH"
+  read -r -p "选择需要调整的节点序号（0 取消）: " selection || return 0
+  [[ "$selection" == "0" ]] && return 0
+  if ! [[ "$selection" =~ ^[0-9]+$ ]] || ((10#$selection < 1));then warn "节点序号无效。";return 1;fi
+  node="$(jq -r --argjson idx "$((10#$selection-1))" '[.inbounds[]? | select(.protocol=="vless" and .tag!="api-internal") | .tag][$idx] // empty' "$CONFIG_PATH")"
+  [[ -n "$node" ]] || { warn "节点不存在。";return 1; }
+  state="$(jq -r --arg tag "$node" --arg name "$name" '[.inbounds[] | select(.tag==$tag) | .settings.clients[]? | select(.email==$name)] | length' "$CONFIG_PATH")"
+  action="assign"
+  if ((state>0));then action="unassign";fi
+  read -r -p "确认对 $node 执行 $action？[y/N]: " confirm || confirm="N"
+  case "$confirm" in
+    y|Y|yes|YES) "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-user-action "$action" -local-user "$name" -local-node "$node" ;;
+    *) info "已取消。" ;;
+  esac
 }
 
 rename_managed_user() {
@@ -2973,7 +3051,7 @@ modify_node_interactive() {
   info "当前正在修改节点 [${cur_tag}] (端口: ${cur_port} | 传输层: ${cur_net})"
   echo "————————————————————————————————————————————————"
   echo -e "  ${GREEN}1.${NC} 修改监听端口"
-  echo -e "  ${GREEN}2.${NC} 修改主用户 UUID"
+  echo -e "  ${GREEN}2.${NC} UUID 属于用户身份；请前往「用户管理」调整"
   echo -e "  ${GREEN}3.${NC} 修改伪装域名 / SNI"
   echo -e "  ${GREEN}4.${NC} 修改 XHTTP 访问路径 (仅限 xhttp 节点)"
   echo -e "  ${GREEN}0.${NC} 取消"
@@ -2998,22 +3076,7 @@ modify_node_interactive() {
       ok "节点 [${cur_tag}] 端口已修改为: ${new_p} (防火墙已同步更新)"
       ;;
     2)
-      local new_uuid
-      read -r -p "请输入新的 UUID: " new_uuid || new_uuid=""
-      new_uuid="${new_uuid//[[:space:]]/}"
-      [[ -n "$new_uuid" ]] || { warn "UUID 不能为空"; return 0; }
-      if ! [[ "$new_uuid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
-        warn "UUID 格式无效，应形如 xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx。"
-        return 0
-      fi
-      backup_existing_config
-      local updated
-      updated="$(jq --arg tag "$cur_tag" --arg uid "$new_uuid" '
-        (.inbounds[] | select(.tag == $tag)).settings.clients[0].id = $uid
-      ' "$CONFIG_PATH")"
-      commit_config "$updated" || { warn "UUID 修改写入失败，原配置保持不变。"; return 1; }
-      validate_and_restart_service
-      ok "节点 [${cur_tag}] 主用户 UUID 已更新！"
+      warn "UUID 属于独立用户身份，请到用户管理中调整。"
       ;;
     3)
       local new_sni
