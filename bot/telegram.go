@@ -53,6 +53,9 @@ func NewBotService(cfg *BotConfig) (*BotService, error) {
 	}
 
 	log.Printf("[Bot] Authorized on account @%s (ID: %d)", bot.Self.UserName, bot.Self.ID)
+	if err := publishBotReadiness(); err != nil {
+		log.Printf("[Bot] Startup readiness marker failed: %v",err)
+	}
 
 	return &BotService{
 		cfg:    cfg,
