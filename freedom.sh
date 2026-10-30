@@ -2051,8 +2051,18 @@ reset_traffic_stats_interactive() {
       read -r -p "确认清零所有用户的流量？[y/N]: " conf || conf="N"
       case "${conf:-N}" in
         y|Y|yes|YES)
-          "$BIN" api statsquery --server=127.0.0.1:10085 -pattern "user>>>" -reset=true >/dev/null 2>&1 || true
-          ok "已成功清零所有用户的流量计数器！"
+          if ! "$BIN" api statsquery --server=127.0.0.1:10085 -pattern "user>>>" -reset=true >/dev/null 2>&1; then
+            warn "Xray 流量计数器重置失败，未修改本地累计数据。"
+            return 1
+          fi
+          # 同步重置本地累计数据，防止下一次查看时旧流量重新出现。
+          if [[ -f "$STATS_STORE_PATH" ]]; then
+            local reset_all
+            reset_all="$(jq '.users |= with_entries(.value = {"total_up":0,"total_down":0,"last_up":0,"last_down":0})' "$STATS_STORE_PATH")" || return 1
+            printf '%s\n' "$reset_all" > "$STATS_STORE_PATH"
+            chmod 600 "$STATS_STORE_PATH" 2>/dev/null || true
+          fi
+          ok "已重置 Xray 计数器及本地累计流量！"
           echo && read -rp "按回车键继续..." _dummy
           ;;
         *) info "已取消。" ;;
