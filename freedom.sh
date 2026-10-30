@@ -88,7 +88,7 @@ print_service_diagnostics() {
 restore_backup() {
   [[ -n "${BACKUP_FILE:-}" && -f "$BACKUP_FILE" ]] || return 1
   cp -a "$BACKUP_FILE" "$CONFIG_PATH"
-  chmod 644 "$CONFIG_PATH" 2>/dev/null || true
+  chmod 640 "$CONFIG_PATH" 2>/dev/null || true
   ok "已恢复备份配置：$BACKUP_FILE -> $CONFIG_PATH"
 
   if service_unit_exists "$SERVICE_NAME"; then
@@ -973,7 +973,7 @@ commit_config() {
     warn "配置临时文件写入失败，原配置保持不变。"
     return 1
   fi
-  chmod 644 "$tmp_file" 2>/dev/null || true
+  chmod 640 "$tmp_file" 2>/dev/null || true
   if ! mv -f "$tmp_file" "$CONFIG_PATH"; then
     rm -f "$tmp_file"
     warn "配置替换失败，原配置保持不变。"
@@ -1400,7 +1400,7 @@ ensure_config_scaffold() {
     fatal "脚手架配置生成失败（jq 输出非法 JSON）。"
   fi
   mv -f "${CONFIG_PATH}.tmp.$$" "$CONFIG_PATH"
-  chmod 644 "$CONFIG_PATH"
+  chmod 640 "$CONFIG_PATH"
   ok "基础架构配置脚手架已就绪。"
 }
 
@@ -1854,7 +1854,7 @@ show_user_node_links() {
         mode="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.mode // "auto"')"
         local flow_param=""
         [[ -n "$node_flow" ]] && flow_param="&flow=${node_flow}"
-        link="vless://${node_user_id}@${host_for_link}:${port}?type=xhttp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&host=${sni}&sid=${sid}&spx=%2F&path=$(url_encode "$path")&mode=${mode}${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "${tag}-${sel_email%%@*}")"
+        link="vless://${node_user_id}@${host_for_link}:${port}?type=xhttp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F&path=$(url_encode "$path")&mode=${mode}&extra=$(url_encode '{"xPaddingBytes":"100-1000"}')${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "${tag}-${sel_email%%@*}")"
       fi
     elif [[ "$sec" == "tls" ]]; then
       local cert_file domain path mode
@@ -1865,7 +1865,7 @@ show_user_node_links() {
       mode="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.mode // "auto"')"
       local flow_param=""
       [[ -n "$node_flow" ]] && flow_param="&flow=${node_flow}"
-      link="vless://${node_user_id}@${domain}:${port}?type=xhttp&security=tls&sni=${domain}&alpn=h2%2Chttp%2F1.1&fp=chrome&path=$(url_encode "$path")&mode=${mode}&flow=${flow:-xtls-rprx-vision}&ech=cloudflare-ech.com%2Bhttps%3A%2F%2Fdns.alidns.com%2Fdns-query&encryption=$(url_encode "$enc_param")#$(url_encode "${tag}-${sel_email%%@*}")"
+      link="vless://${node_user_id}@${domain}:${port}?type=xhttp&security=tls&sni=${domain}&alpn=h2&fp=chrome&path=$(url_encode "$path")&mode=${mode}&extra=$(url_encode '{"xPaddingBytes":"100-1000"}')${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "${tag}-${sel_email%%@*}")"
     fi
 
     node_links+=("$link")
@@ -2444,7 +2444,7 @@ list_and_show_nodes() {
         if [[ -n "$flow" ]]; then
           flow_param="&flow=${flow}"
         fi
-        link="vless://${uuid}@${host_for_link}:${port}?type=xhttp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&host=${sni}&sid=${sid}&spx=%2F&path=$(url_encode "$path")&mode=${mode}${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
+        link="vless://${uuid}@${host_for_link}:${port}?type=xhttp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F&path=$(url_encode "$path")&mode=${mode}&extra=$(url_encode '{"xPaddingBytes":"100-1000"}')${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
         echo "  - 伪装 SNI: ${sni} | XHTTP 路径: ${path} | 模式: ${mode} | 流控: ${flow:-无} | 解密层: ${dec}"
       fi
     elif [[ "$sec" == "tls" ]]; then
@@ -2459,7 +2459,7 @@ list_and_show_nodes() {
       if [[ -n "$flow" ]]; then
         flow_param="&flow=${flow}"
       fi
-      link="vless://${uuid}@${domain}:${port}?type=xhttp&security=tls&sni=${domain}&alpn=h2%2Chttp%2F1.1&fp=chrome&path=$(url_encode "$path")&mode=${mode}&flow=${flow:-xtls-rprx-vision}&ech=cloudflare-ech.com%2Bhttps%3A%2F%2Fdns.alidns.com%2Fdns-query&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
+      link="vless://${uuid}@${domain}:${port}?type=xhttp&security=tls&sni=${domain}&alpn=h2&fp=chrome&path=$(url_encode "$path")&mode=${mode}&extra=$(url_encode '{"xPaddingBytes":"100-1000"}')${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
       echo "  - TLS 域名/SNI: ${domain} | XHTTP 路径: ${path} | 模式: ${mode} | 流控: ${flow:-无} (CDN 代理适配)"
       echo -e "  - ${CYAN}[Cloudflare ECH 增强提示]${NC} 客户端支持 ECH 时，可设置 Outer SNI 为: ${BOLD}cloudflare-ech.com${NC}，配合 DoH: ${BOLD}https://dns.alidns.com/dns-query${NC}，实现真实域名零泄露！"
     fi
@@ -2518,7 +2518,7 @@ list_and_show_nodes() {
         if [[ -n "$flow" ]]; then
           flow_param="&flow=${flow}"
         fi
-        target_link="vless://${uuid}@${host_for_link}:${port}?type=xhttp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&host=${sni}&sid=${sid}&spx=%2F&path=$(url_encode "$path")&mode=${mode}${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
+        target_link="vless://${uuid}@${host_for_link}:${port}?type=xhttp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F&path=$(url_encode "$path")&mode=${mode}&extra=$(url_encode '{"xPaddingBytes":"100-1000"}')${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
       fi
     elif [[ "$sec" == "tls" ]]; then
       local cert_file domain path mode flow
@@ -2532,7 +2532,7 @@ list_and_show_nodes() {
       if [[ -n "$flow" ]]; then
         flow_param="&flow=${flow}"
       fi
-      target_link="vless://${uuid}@${domain}:${port}?type=xhttp&security=tls&sni=${domain}&alpn=h2%2Chttp%2F1.1&fp=chrome&path=$(url_encode "$path")&mode=${mode}&flow=${flow:-xtls-rprx-vision}&ech=cloudflare-ech.com%2Bhttps%3A%2F%2Fdns.alidns.com%2Fdns-query&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
+      target_link="vless://${uuid}@${domain}:${port}?type=xhttp&security=tls&sni=${domain}&alpn=h2&fp=chrome&path=$(url_encode "$path")&mode=${mode}&extra=$(url_encode '{"xPaddingBytes":"100-1000"}')${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
     fi
 
     if [[ -n "$target_link" ]]; then
@@ -2697,12 +2697,13 @@ add_new_node_interactive() {
     esac
 
     ask_vless_encryption_mode "VLESS 后量子加密选项 (ML-KEM-768)："
-    local vdec="$ASK_VDEC" in_flow="xtls-rprx-vision"
+    local vdec="$ASK_VDEC" in_flow=""
     client_enc_for_meta="$ASK_VENC"
     if [[ "$vdec" != "none" ]]; then
+      in_flow="xtls-rprx-vision"
       ok "已启用 ML-KEM-768，并为该节点启用 Vision 穿透流控。"
     else
-      ok "已为该 XHTTP+TLS CDN 节点默认启用 Vision (xtls-rprx-vision) 穿透流控。"
+      info "未启用 VLESS Encryption：不启用 Vision。"
     fi
 
     ask_mldsa65_signature
