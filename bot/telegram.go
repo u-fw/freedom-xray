@@ -290,7 +290,8 @@ func (s *BotService) handleUserLinksCallback(chatID int64, payload string) {
 		s.sendAlert(chatID, "❌ 读取用户列表失败: "+loadErr.Error())
 		return
 	}
-	emails := sortedEmails(nodes)
+	emails,dirErr := allDirectoryNames(s.cfg.XrayConfigPath)
+	if dirErr!=nil {s.sendAlert(chatID,"用户目录读取失败："+dirErr.Error());return}
 
 	// Current format: a 16-hex-character email hash, stable across refreshes.
 	if len(payload) == 16 {
@@ -367,7 +368,8 @@ func (s *BotService) sendOrEdit(chatID int64, msgID int, text string, markup tgb
 
 func (s *BotService) sendMainMenu(chatID int64,msgID int) {
  nodes,_:=LoadXrayInbounds(s.cfg.XrayConfigPath)
- userCount:=len(sortedEmails(nodes))
+ names,dirErr:=allDirectoryNames(s.cfg.XrayConfigPath)
+ userCount:=len(sortedEmails(nodes));if dirErr==nil{userCount=len(names)}
  hostname,_:=os.Hostname()
  if hostname==""{hostname="unknown"}
  status:=CheckXrayServiceStatus()
@@ -562,7 +564,8 @@ func (s *BotService) sendUsersCard(chatID int64, msgID int) {
 		return
 	}
 
-	emails := sortedEmails(nodes)
+	emails,dirErr := allDirectoryNames(s.cfg.XrayConfigPath)
+	if dirErr!=nil {s.sendAlert(chatID,"用户目录读取失败："+dirErr.Error());return}
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, email := range emails {
@@ -579,9 +582,9 @@ func (s *BotService) sendUsersCard(chatID int64, msgID int) {
 		tgbotapi.NewInlineKeyboardButtonData("🔙 返回主菜单", "menu_main"),
 	))
 
-	text := "👥 *选择用户管理或导出节点链接*\n\n新增用户：/adduser <名称> [节点标签|all]\n其他命令：/help"
+	text := "👥 *独立用户管理*\n\n新用户默认没有绑定节点。进入用户详情后可逐节点授权；也可使用 `/adduser 用户名 节点标签` 创建并绑定。"
 	if len(emails) == 0 {
-		text = "当前配置中尚未添加任何用户，请使用 `freedom` 脚本添加用户。"
+		text = "还没有用户。点击「新增用户」先建立独立身份，再按需绑定节点。"
 	}
 
 	markup := tgbotapi.NewInlineKeyboardMarkup(rows...)
