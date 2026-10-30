@@ -2261,6 +2261,48 @@ rotate_managed_user_uuid() {
   warn "请更新 v2rayN/v2rayNG 中该用户的节点链接。"
 }
 
+# Suspend/restore accounts using the same tested Go transaction as Telegram.
+# This avoids maintaining a second incompatible JSON state format in Bash.
+toggle_user_status_interactive() {
+  if [[ ! -x "$BOT_BIN_PATH" || ! -f "$BOT_CONFIG_PATH" ]]; then
+    warn "停用/恢复需要安装并配置 freedom-bot（内部复用其事务管理器）。"
+    return 1
+  fi
+  echo
+  echo "1) 停用活跃用户"
+  echo "2) 恢复已停用用户"
+  echo "0) 取消"
+  local option operation raw_users
+  read -r -p "请选择 [0-2]: " option || option="0"
+  case "$option" in
+    1) operation="disable"; raw_users="$(get_all_system_users | cut -d "|" -f1 | sort -u)" ;;
+    2) operation="enable";
+       raw_users=""
+       if [[ -f "$CONFIG_DIR/freedom-disabled-users.json" ]]; then
+         raw_users="$(jq -r '.users | keys[]' "$CONFIG_DIR/freedom-disabled-users.json" 2>/dev/null || true)"
+       fi ;;
+    *) return 0 ;;
+  esac
+  local names=() name idx=0
+  while IFS= read -r name; do
+    [[ -z "$name" ]] && continue
+    names+=("$name")
+    printf "  %d. %s\n" "$((++idx))" "$name"
+  done <<< "$raw_users"
+  if ((idx==0)); then warn "没有符合条件的用户。"; return 0; fi
+  local selection selected confirm
+  read -r -p "选择用户序号 [1-${idx}]: " selection || selection=""
+  if ! [[ "$selection" =~ ^[0-9]+$ ]] || ((10#$selection < 1 || 10#$selection > idx)); then
+    warn "序号无效，已取消。"; return 0
+  fi
+  selected="${names[$((10#$selection-1))]}"
+  read -r -p "确认对 ${selected} 执行 ${operation}？会重启 Xray [y/N]: " confirm || confirm="N"
+  case "$confirm" in
+    y|Y|yes|YES)
+      "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-user-action "$operation" -local-user "$selected" || warn "操作失败，请检查本地配置或日志。" ;;
+    *) info "已取消。" ;;
+  esac
+}
 user_management_menu() {
   ensure_stats_api_scaffold || warn "统计模块初始化失败，流量看板可能不可用（原配置保持不变）。"
   while true; do
@@ -2318,10 +2360,11 @@ user_management_menu() {
     echo -e "  ${GREEN}4.${NC} 清零流量"
     echo -e "  ${GREEN}5.${NC} 刷新统计"
     echo -e "  ${GREEN}6.${NC} 选择用户并集中管理（链接 / 改名 / UUID）"
+    echo -e "  ${GREEN}7.${NC} 停用 / 恢复用户（需安装 freedom-bot）"
     echo -e "  ${GREEN}0.${NC} 返回主菜单"
     echo "—————————————————————————————————————————————————————————————————————————————————————"
 
-    read -r -p "请选择操作 [0-6]: " u_sel || u_sel="0"
+    read -r -p "请选择操作 [0-7]: " u_sel || u_sel="0"
     case "${u_sel:-0}" in
       1) show_user_node_links || true ;;
       2) add_new_user_interactive || true ;;
@@ -2329,6 +2372,7 @@ user_management_menu() {
       4) reset_traffic_stats_interactive || true ;;
       5) ;;
       6) manage_single_user_interactive || true ;;
+      7) toggle_user_status_interactive || true ;;
       0) return 0 ;;
       *) warn "无效选项，请重新选择。" ;;
     esac
