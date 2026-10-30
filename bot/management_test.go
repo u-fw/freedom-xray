@@ -8,7 +8,7 @@ import (
 
 func testConfig(t *testing.T) map[string]any {
  t.Helper()
- const input = "{\"inbounds\":[{\"tag\":\"api-internal\",\"protocol\":\"dokodemo-door\",\"settings\":{}},{\"tag\":\"raw\",\"protocol\":\"vless\",\"settings\":{\"decryption\":\"none\",\"clients\":[{\"id\":\"aaa\",\"email\":\"admin\",\"flow\":\"xtls-rprx-vision\"}]}},{\"tag\":\"cdn\",\"protocol\":\"vless\",\"settings\":{\"decryption\":\"none\",\"clients\":[{\"id\":\"aaa\",\"email\":\"admin\"}]}}]}"
+ const input = "{\"inbounds\":[{\"tag\":\"api-internal\",\"protocol\":\"dokodemo-door\",\"settings\":{}},{\"tag\":\"raw\",\"protocol\":\"vless\",\"streamSettings\":{\"network\":\"tcp\",\"security\":\"reality\"},\"settings\":{\"decryption\":\"none\",\"clients\":[{\"id\":\"aaa\",\"email\":\"admin\",\"flow\":\"xtls-rprx-vision\"}]}},{\"tag\":\"cdn\",\"protocol\":\"vless\",\"settings\":{\"decryption\":\"none\",\"clients\":[{\"id\":\"aaa\",\"email\":\"admin\"}]}}]}"
  var root map[string]any
  if err:=json.Unmarshal([]byte(input),&root);err!=nil {t.Fatal(err)}
  return root
@@ -49,7 +49,8 @@ func TestManagedUserAssignRenameRotate(t *testing.T) {
 func TestManagedUserRestrictions(t *testing.T) {
  root:=testConfig(t)
  if _,err:=applyManagedUserChange(root,UserChange{Kind:"add",User:"bad>>>name"});err==nil {t.Fatal("unsafe name accepted")}
- if _,err:=applyManagedUserChange(root,UserChange{Kind:"delete",User:"admin"});err==nil {t.Fatal("deleted only user")}
+ if _,err:=applyManagedUserChange(root,UserChange{Kind:"delete",User:"admin"});err!=nil {t.Fatal("deleting last node client should be allowed",err)}
+ root=testConfig(t)
  if _,err:=applyManagedUserChange(root,UserChange{Kind:"add",User:"user",Node:"missing"});err==nil {t.Fatal("unknown node accepted")}
  inbounds,_:=usableInbounds(root)
  clients,_:=clientList(inbounds[1])
