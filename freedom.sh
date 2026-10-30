@@ -1756,28 +1756,31 @@ show_user_node_links() {
     return 0
   fi
 
-  local user_arr=()
-  local i=0
-  echo
-  echo -e "  ${BOLD}请选择要导出分享链接的用户${NC}"
-  while IFS='|' read -r email uuid; do
-    [[ -z "$email" ]] && continue
-    user_arr+=("${email}|${uuid}")
-    echo "$((i+1))) 用户名: ${email} | UUID: ${uuid}"
-    i=$((i + 1))
-  done <<< "$users"
-  echo "0) 取消并返回"
+  local sel_email="${1:-}" sel_uuid="${2:-}"
+  if [[ -z "$sel_email" || -z "$sel_uuid" ]]; then
+    local user_arr=()
+    local i=0
+    echo
+    echo -e "  ${BOLD}请选择要导出分享链接的用户${NC}"
+    while IFS='|' read -r email uuid; do
+      [[ -z "$email" ]] && continue
+      user_arr+=("${email}|${uuid}")
+      echo "$((i+1))) 用户名: ${email} | UUID: ${uuid}"
+      i=$((i + 1))
+    done <<< "$users"
+    echo "0) 取消并返回"
 
-  read -r -p "请选择用户序号 [1-${i}]: " u_sel || u_sel=""
-  [[ "$u_sel" == "0" || -z "$u_sel" ]] && return 0
-  if ! [[ "$u_sel" =~ ^[0-9]+$ ]] || ((u_sel < 1 || u_sel > i)); then
-    warn "无效序号。"
-    return 0
+    local u_sel
+    read -r -p "请选择用户序号 [1-${i}]: " u_sel || u_sel=""
+    [[ "$u_sel" == "0" || -z "$u_sel" ]] && return 0
+    if ! [[ "$u_sel" =~ ^[0-9]+$ ]] || ((u_sel < 1 || u_sel > i)); then
+      warn "无效序号。"
+      return 0
+    fi
+    local chosen="${user_arr[$((u_sel-1))]}"
+    sel_email="${chosen%%|*}"
+    sel_uuid="${chosen##*|}"
   fi
-
-  local chosen="${user_arr[$((u_sel-1))]}"
-  local sel_email="${chosen%%|*}"
-  local sel_uuid="${chosen##*|}"
 
   local server_ip
   server_ip="$(get_public_ip)"
@@ -2091,6 +2094,138 @@ reset_traffic_stats_interactive() {
   esac
 }
 
+# 用户详情：无需再次选择同一用户，即可查看链接、改名或更换 UUID。
+# 仅对 email + UUID 同时匹配的客户端操作，避免误修改其他用户。
+manage_single_user_interactive() {
+  local users
+  users="$(get_all_system_users)"
+  if [[ -z "$users" ]]; then
+    warn "当前没有可管理的用户。"
+    return 0
+  fi
+
+  local entries=() email uuid idx=0
+  echo
+  echo -e "  ${BOLD}选择要管理的用户${NC}"
+  while IFS='|' read -r email uuid; do
+    [[ -z "$email" || -z "$uuid" ]] && continue
+    entries+=("${email}|${uuid}")
+    echo "  $((++idx))) ${email} | ${uuid}"
+  done <<< "$users"
+  echo "  0) 返回"
+
+  local pick
+  read -r -p "用户序号 [1-${idx}]: " pick || pick=""
+  [[ -z "$pick" || "$pick" == "0" ]] && return 0
+  if ! [[ "$pick" =~ ^[0-9]+$ ]] || ((10#$pick < 1 || 10#$pick > idx)); then
+    warn "无效用户序号。"
+    return 1
+  fi
+  local selected="${entries[$((10#$pick-1))]}"
+  local selected_email="${selected%%|*}" selected_uuid="${selected##*|}"
+
+  while true; do
+    echo
+    echo -e "  ${BOLD}用户: ${selected_email}${NC}"
+    echo "  UUID: ${selected_uuid}"
+    echo "  1) 查看该用户所有节点链接 / 二维码"
+    echo "  2) 修改该用户标识名称"
+    echo "  3) 为该用户重新生成 UUID（所有关联入站）"
+    echo "  0) 返回用户列表"
+    local action
+    read -r -p "请选择 [0-3]: " action || action="0"
+    case "$action" in
+      1) show_user_node_links "$selected_email" "$selected_uuid" ;;
+      2)
+        rename_managed_user "$selected_email" "$selected_uuid" || true
+        return 0
+        ;;
+      3)
+        rotate_managed_user_uuid "$selected_email" "$selected_uuid" || true
+        return 0
+        ;;
+      0|"") return 0 ;;
+      *) warn "无效选项。" ;;
+    esac
+  done
+}
+
+rename_managed_user() {
+  local old_email="$1" old_uuid="$2" new_email
+  read -r -p "新的用户标识（旧值 ${old_email}，直接回车取消）: " new_email || new_email=""
+  new_email="$(printf '%s' "$new_email" | tr -d '[:space:]|>')"
+  [[ -z "$new_email" || "$new_email" == "$old_email" ]] && return 0
+  if get_all_system_users | awk -F'|' -v e="$new_email" '$1 == e {found=1} END{exit !found}'; then
+    warn "用户标识已存在，不能重名。"
+    return 1
+  fi
+  if ! jq -e --arg email "$old_email" --arg id "$old_uuid"     '[.inbounds[]? | .settings.clients[]? | select(.email == $email and .id == $id)] | length > 0'     "$CONFIG_PATH" >/dev/null; then
+    warn "未找到对应用户，请刷新列表。"
+    return 1
+  fi
+  local updated
+  updated="$(jq --arg old "$old_email" --arg id "$old_uuid" --arg new "$new_email" '
+    .inbounds |= map(
+      if .tag == "api-internal" then . else
+        .settings.clients |= map(
+          if .email == $old and .id == $id then .email = $new else . end
+        )
+      end
+    )
+  ' "$CONFIG_PATH")" || return 1
+  backup_existing_config
+  commit_config "$updated" || return 1
+  validate_and_restart_service
+
+  # 更换 Xray 计数器名称后从零开始采样，保留旧的累计流量值。
+  if [[ -f "$STATS_STORE_PATH" ]]; then
+    local traffic_updated
+    traffic_updated="$(jq --arg old "$old_email" --arg new "$new_email" '
+      if .users[$old] then
+        .users[$new] = (.users[$old] | .last_up = 0 | .last_down = 0) |
+        del(.users[$old])
+      else . end
+    ' "$STATS_STORE_PATH")" || return 1
+    printf '%s\n' "$traffic_updated" > "$STATS_STORE_PATH"
+    chmod 600 "$STATS_STORE_PATH" 2>/dev/null || true
+  fi
+  ok "用户已改名为 ${new_email}，所有关联节点同步完成。"
+}
+
+rotate_managed_user_uuid() {
+  local email="$1" old_uuid="$2"
+  if ! jq -e --arg email "$email" --arg id "$old_uuid"     '[.inbounds[]? | .settings.clients[]? | select(.email == $email and .id == $id)] | length > 0'     "$CONFIG_PATH" >/dev/null; then
+    warn "未找到对应用户，请刷新列表。"
+    return 1
+  fi
+  local new_uuid
+  new_uuid="$("$BIN" uuid 2>/dev/null || cat /proc/sys/kernel/random/uuid | tr -d '[:space:]')"
+  [[ "$new_uuid" =~ ^[0-9a-fA-F-]{36}$ ]] || { warn "UUID 生成失败。"; return 1; }
+  echo "重置用户 ${email} 的 UUID 后，原客户端链接立即失效。"
+  local answer
+  read -r -p "确认重新生成并同步所有关联节点？[y/N]: " answer || answer="N"
+  [[ "$answer" == "y" || "$answer" == "Y" ]] || return 0
+  if jq -e --arg id "$new_uuid"     '[.inbounds[]? | .settings.clients[]? | select(.id == $id)] | length > 0'     "$CONFIG_PATH" >/dev/null; then
+    warn "新 UUID 意外重复，请重试。"
+    return 1
+  fi
+  local updated
+  updated="$(jq --arg email "$email" --arg old "$old_uuid" --arg new "$new_uuid" '
+    .inbounds |= map(
+      if .tag == "api-internal" then . else
+        .settings.clients |= map(
+          if .email == $email and .id == $old then .id = $new else . end
+        )
+      end
+    )
+  ' "$CONFIG_PATH")" || return 1
+  backup_existing_config
+  commit_config "$updated" || return 1
+  validate_and_restart_service
+  ok "UUID 已更新：${new_uuid}"
+  warn "请更新 v2rayN/v2rayNG 中该用户的节点链接。"
+}
+
 user_management_menu() {
   ensure_stats_api_scaffold || warn "统计模块初始化失败，流量看板可能不可用（原配置保持不变）。"
   while true; do
@@ -2147,16 +2282,18 @@ user_management_menu() {
     echo -e "  ${GREEN}3.${NC} 删除用户"
     echo -e "  ${GREEN}4.${NC} 清零流量"
     echo -e "  ${GREEN}5.${NC} 刷新统计"
+    echo -e "  ${GREEN}6.${NC} 选择用户并集中管理（链接 / 改名 / UUID）"
     echo -e "  ${GREEN}0.${NC} 返回主菜单"
     echo "—————————————————————————————————————————————————————————————————————————————————————"
 
-    read -r -p "请选择操作 [0-5]: " u_sel || u_sel="0"
+    read -r -p "请选择操作 [0-6]: " u_sel || u_sel="0"
     case "${u_sel:-0}" in
       1) show_user_node_links || true ;;
       2) add_new_user_interactive || true ;;
       3) delete_user_interactive || true ;;
       4) reset_traffic_stats_interactive || true ;;
       5) ;;
+      6) manage_single_user_interactive || true ;;
       0) return 0 ;;
       *) warn "无效选项，请重新选择。" ;;
     esac
