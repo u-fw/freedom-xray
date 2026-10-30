@@ -30,7 +30,7 @@ jobs:
           mkdir -p dist
           cd bot
 
-          VERSION=$(git describe --tags --always 2>/dev/null || echo "v1.0.0")
+          VERSION=$(git rev-parse --short=12 HEAD)
           BUILD_TIME=$(date -u +%Y-%m-%d)
           LDFLAGS="-s -w -X main.Version=${VERSION} -X main.BuildTime=${BUILD_TIME}"
 
@@ -60,6 +60,7 @@ jobs:
           name: Freedom Bot Latest Release
           body: |
             Automated build of `freedom-bot` (Telegram Bot for freedom.sh & Xray-core).
+            Commit: ${{ github.sha }}
 
             ### Binaries & Verification
             - `freedom-bot-linux-amd64`
