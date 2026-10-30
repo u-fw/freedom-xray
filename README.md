@@ -23,9 +23,12 @@ sudo bash ./freedom.sh
 | --- | --- | --- |
 | VLESS RAW/REALITY/Vision、XHTTP/REALITY、XHTTP/TLS/CDN | 支持 | 节点查看/导出 |
 | 添加/删除用户、改名、UUID 轮换 | 支持 | 支持 |
+| 暂停/恢复用户（保留原 UUID） | 通过已安装的 Bot 管理程序支持 | 支持，私聊确认 |
 | 指定节点分配用户 | 目前添加用户默认同步各节点 | 支持 |
 | 节点列表、二维码、用户链接 | 支持 | 支持 |
+| 修改 XHTTP Path/Mode | 支持 | 支持，仅允许修改这两项并二次确认 |
 | 流量统计/清零 | 支持 | 支持 |
+| 入站累计流量 | 核心 StatsService 可查 | Bot 展示当前 Xray 运行周期的各入站总量 |
 | Xray 状态/重启 | 支持 | 支持 |
 | 更新 freedom.sh、Bot、Xray-core | 支持 | 支持（需授权） |
 | 回滚上一版 Xray-core | 手动 | 支持（需授权） |
@@ -48,7 +51,7 @@ Bot 只响应管理员 User ID 在私人聊天中的操作。默认关闭远程�
 }
 ```
 
-- allow_mutations：Telegram 添加、删除、改名用户，轮换 UUID、修改节点分配；二次确认。
+- allow_mutations：Telegram 添加、删除、改名、停用/恢复用户，轮换 UUID、修改节点分配，以及 XHTTP Path/Mode；二次确认。
 - allow_updates：Telegram 升级 freedom.sh 和 freedom-bot；二次确认。
 - allow_core_updates：独立授权 Xray-core 升级与回滚；还需 allow_updates。
 - allow_sensitive_backup：允许把包含 REALITY/VLESS 私钥的完整 JSON 发往 Telegram；建议保持关闭。
@@ -65,17 +68,24 @@ Bot 只响应管理员 User ID 在私人聊天中的操作。默认关闭远程�
 /renameuser old new         改名
 /rotateuser phone           轮换 UUID
 /removeuser phone           删除用户
+/disableuser phone          停用用户，保留原节点与 UUID
+/enableuser phone           恢复停用用户
 /assignuser phone cdn       给用户分配节点
 /unassignuser phone cdn     从节点移除用户
 /nodes                      节点列表
-/traffic                    流量
+/traffic                    用户流量（当前核心运行周期）
+/inboundtraffic             按入站汇总流量
 /status                     系统状态
 /update                     更新检查、确认、回滚菜单
 /restart                    重启 Xray（确认）
 /cancel                     取消文本输入流程
 ```
 
-也可以直接在用户列表点击「新增用户」，按提示输入名称、选择节点、二次确认。
+也可以直接在用户列表点击「新增用户」，按提示输入名称、选择节点、二次确认。已停用的用户可在用户列表中的「停用用户」恢复。
+
+停用时会把用户从活跃的 Xray 入站配置移除，并将原始 UUID、各入站客户端配置保存在 VPS 本地的 `freedom-disabled-users.json`（文件权限 0600，**不是加密文件**）。为防止管理员意外失联，不能停用某入站的最后一个用户。若删除原入站，恢复会拒绝不完整的操作。终端用户菜单也提供停用/恢复入口，但需要先安装和配置 `freedom-bot` 二进制程序。
+
+Telegram 节点详情允许修改现有 XHTTP 入站的 Path 与 Mode，不直接操作 REALITY 私钥、证书、端口、防火墙或其他任意 JSON 字段。**更改 Path/Mode 会使已导入的客户端需要同步配置**；请优先在备用节点测试。
 
 ### 远程更新
 
@@ -104,7 +114,9 @@ Bot 当前需要较高本地权限来管理 systemd 与安装核心。Bot Token�
 
 - StatsService 保持 127.0.0.1 监听；管理建议优先通过 Tailscale。
 - 更新包经 HTTPS 下载，Bot 与 Xray-core 发布包执行 SHA-256 校验；脚本执行 Bash 语法校验。
-- Bot 用户修改在重启前验证配置，并在启动失败时尝试恢复旧配置；异常时需检查 systemd 和本地备份。
+- Bot 用户修改及 XHTTP Path/Mode 修改在重启前验证配置，并在启动失败时尝试恢复旧配置；异常时需检查 systemd 和本地备份。
+- 统计按入站和按用户分别独立提供，**不能据此推算每个用户在每个入站的流量**。入站流量显示当前 Xray 运行周期的值，核心重启会重置；并非持久化配额统计。
+- Bot 与终端写入 Xray 配置的操作目前尚未完全共享一个覆盖整个读-改-写事务的跨进程锁，避免两个界面同时修改用户或节点，尤其不要在 Telegram 操作时使用终端执行配置变更。
 - 内核升级/重启会影响现有连接：不承诺零停机。
 - 系统网络调优是手动高级功能，不应无基准测试就认为 BBR、TCP Fast Open、缓冲区增大等一定提高吞吐。
 - GitHub Actions 验证 Shell 语法、Go 单元测试并编译 amd64/arm64 Bot；真实 CDN 和客户端连接仍须实际验证。
