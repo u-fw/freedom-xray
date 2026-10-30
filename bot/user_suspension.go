@@ -7,7 +7,6 @@ import (
  "os"
  "path/filepath"
  "sort"
- "syscall"
  "time"
 )
 
@@ -100,11 +99,8 @@ func applyUserSuspension(root map[string]any,store *suspendedStore,change UserCh
 // Both files are backed up and restored together if a write or restart fails.
 // The shared file lock prevents simultaneous Telegram changes.
 func changeUserSuspension(configPath,xrayBinary string,change UserChange) (string,error) {
- lock,err:=os.OpenFile(filepath.Join(filepath.Dir(configPath),".freedom-config.lock"),os.O_CREATE|os.O_RDWR,0600)
- if err!=nil{return "",err}
- defer lock.Close()
- if err=syscall.Flock(int(lock.Fd()),syscall.LOCK_EX);err!=nil{return "",err}
- defer syscall.Flock(int(lock.Fd()),syscall.LOCK_UN)
+ lock,err:=acquireConfigLock(configPath,20*time.Second);if err!=nil{return "",err}
+ defer releaseConfigLock(lock)
  original,err:=os.ReadFile(configPath);if err!=nil{return "",err}
  st,err:=os.Stat(configPath);if err!=nil{return "",err}
  store,oldState,err:=readSuspendedStore(configPath);if err!=nil{return "",err}
@@ -158,8 +154,11 @@ func changeUserSuspension(configPath,xrayBinary string,change UserChange) (strin
 func changeManagedUser(configPath,xrayBinary string,change UserChange)(string,error){
  if change.Kind=="disable"||change.Kind=="enable"{return changeUserSuspension(configPath,xrayBinary,change)}
  if change.Kind=="add" {
-  store,_,err:=readSuspendedStore(configPath);if err!=nil{return "",err}
-  if _,exists:=store.Users[change.User];exists{return "",errors.New("此名称存在停用用户，请先恢复或使用不同的名称")}
+  return commitManagedConfig(configPath,xrayBinary,func(root map[string]any)(string,error){
+   store,_,err:=readSuspendedStore(configPath);if err!=nil{return "",err}
+   if _,exists:=store.Users[change.User];exists{return "",errors.New("此名称存在停用用户，请先恢复或使用不同的名称")}
+   return applyManagedUserChange(root,change)
+  })
  }
  return ChangeUserConfig(configPath,xrayBinary,change)
 }
