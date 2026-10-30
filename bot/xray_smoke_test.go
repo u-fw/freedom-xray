@@ -24,7 +24,7 @@ func TestGenerateVlessURIReality(t *testing.T) {
 		ClientEncrypt: "MLKEMCLIENT",
 	}
 
-	uri := node.GenerateVlessURI(XrayClient{ID: "11111111-1111-1111-1111-111111111111", Email: "u@x"}, "203.0.113.9")
+	uri := node.GenerateVlessURI(XrayClient{ID: "11111111-1111-1111-1111-111111111111", Email: "u@x", Flow: "xtls-rprx-vision"}, "203.0.113.9")
 	u, err := url.Parse(uri)
 	if err != nil {
 		t.Fatalf("parse uri: %v", err)
