@@ -17,7 +17,10 @@ var (
 func main() {
 	configPath := flag.String("c", "/usr/local/etc/xray/bot.json", "path to bot.json configuration file")
 	showVersion := flag.Bool("v", false, "display version and exit")
-	localAction := flag.String("local-user-action", "", "offline CLI user action: disable or enable (root only)")
+	localAction := flag.String("local-user-action", "", "offline CLI user management action (root only)")
+ localNode := flag.String("local-node", "", "target inbound tag for bind/unbind or initial assignment")
+ localNewName := flag.String("local-new-name", "", "new name for rename")
+ localList := flag.Bool("local-list-users", false, "list independent users without Telegram")
 	localUser := flag.String("local-user", "", "user email/name for offline action")
 	flag.Parse()
 
@@ -26,17 +29,25 @@ func main() {
 		os.Exit(0)
 	}
 
-	if *localAction != "" {
-		if *localAction != "disable" && *localAction != "enable" { log.Fatal("unsupported local user action") }
-		if os.Geteuid()!=0 { log.Fatal("local user modification requires root") }
-		if *localUser == "" { log.Fatal("-local-user is required") }
-		cfg,err:=LoadConfig(*configPath)
-		if err!=nil {log.Fatalf("load bot config: %v",err)}
-		result,err:=changeManagedUser(cfg.XrayConfigPath,cfg.XrayBinPath,UserChange{Kind:*localAction,User:*localUser})
-		if err!=nil {log.Fatalf("local user action failed: %v",err)}
-		fmt.Println(result)
-		return
-	}
+
+ if *localList || *localAction!="" {
+  if os.Geteuid()!=0{log.Fatal("local user operations require root")}
+  cfg,err:=LoadConfig(*configPath);if err!=nil{log.Fatalf("load config: %v",err)}
+  if *localList {
+   names,err:=allDirectoryNames(cfg.XrayConfigPath)
+   if err!=nil{log.Fatalf("list users: %v",err)}
+   for _,name:=range names{fmt.Println(name)}
+   return
+  }
+  valid:=map[string]bool{"add":true,"rename":true,"rotate":true,"delete":true,"assign":true,"unassign":true,"disable":true,"enable":true}
+  if !valid[*localAction]{log.Fatal("unsupported local action")}
+  if *localUser==""{log.Fatal("-local-user required")}
+  change:=UserChange{Kind:*localAction,User:*localUser,Node:*localNode,NewName:*localNewName}
+  result,err:=changeManagedUser(cfg.XrayConfigPath,cfg.XrayBinPath,change)
+  if err!=nil{log.Fatalf("local user operation failed: %v",err)}
+  fmt.Println(result)
+  return
+ }
 
 	// Fallback to local ./bot.json if default does not exist but local does
 	if *configPath == "/usr/local/etc/xray/bot.json" {
