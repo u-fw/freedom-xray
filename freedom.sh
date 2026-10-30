@@ -2865,10 +2865,11 @@ add_new_node_interactive() {
     return 1
   fi
 
-  # 3. 自动生成或继承主用户 UUID 与标识 (静默全自动，无需打扰用户)
+  # 新节点不隐式授予任何用户访问权限。仅生成模板所需的临时 UUID；
+  # 提交前会清空 clients，后续由独立用户目录显式绑定。
   local new_uuid new_email
-  new_uuid="$(get_or_create_shared_uuid)"
-  new_email="$(get_or_create_shared_email)"
+  new_uuid="$("$BIN" uuid 2>/dev/null || cat /proc/sys/kernel/random/uuid)"
+  new_email="unbound-template"
 
   local new_inbound_json=""
   local client_enc_for_meta="none"
@@ -2981,6 +2982,8 @@ add_new_node_interactive() {
     return 1
   fi
 
+  # 新节点默认没有客户端，不能把 admin/所有旧用户复制过去。
+  new_inbound_json="$(jq -c '.settings.clients = []' <<< "$new_inbound_json")" || return 1
   # 写入配置文件（原子提交 + JSON 校验，绝不覆盖成空文件）
   backup_existing_config
   local updated_config
@@ -2996,34 +2999,8 @@ add_new_node_interactive() {
     fi
   fi
 
-  # 自动同步系统中现存的其他多用户至该新节点 (若有)
-  local all_users
-  all_users="$(get_all_system_users)"
-  if [[ -n "$all_users" ]]; then
-    while IFS='|' read -r ex_email ex_uuid; do
-      [[ -z "$ex_email" || -z "$ex_uuid" ]] && continue
-      if jq -e --arg tag "$new_tag" --arg id "$ex_uuid" --arg em "$ex_email" '
-        .inbounds[] | select(.tag == $tag) | .settings.clients[]? | select(.id == $id or .email == $em)
-      ' "$CONFIG_PATH" >/dev/null 2>&1; then
-        continue
-      fi
-      local u_sync
-      u_sync="$(jq --arg tag "$new_tag" --arg email "$ex_email" --arg id "$ex_uuid" '
-        .inbounds = [
-          .inbounds[] |
-          if .tag != $tag then .
-          else
-            .settings.clients = (.settings.clients // []) + [
-              { id: $id, email: $email } + (
-                if (.settings.clients[0].flow // "") != "" then { flow: .settings.clients[0].flow } else {} end
-              )
-            ]
-          end
-        ]
-      ' "$CONFIG_PATH")"
-      commit_config "$u_sync" || { warn "同步多用户到新节点时写入失败，已跳过剩余用户。"; break; }
-    done <<< "$all_users"
-  fi
+  # 不再自动跨节点同步用户：管理员在用户管理中显式绑定。
+  info "新节点当前没有任何用户，需要从用户管理中绑定账号后才能连接。"
 
   validate_and_restart_service
   auto_open_firewall_port "$new_port" "tcp" "$new_tag"
