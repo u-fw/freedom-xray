@@ -1,114 +1,114 @@
 # freedom-xray
 
-Freedom: a modular Xray node manager (`freedom.sh`), a pure-Go Telegram bot (`freedom-bot`), and 1stream rule assets.
+中文说明 | Xray-core 裸核管理工具：freedom.sh（终端）+ freedom-bot（Telegram）。
 
-## 1stream.dat
+使用官方 Xray-core 与 systemd，不安装独立的 Web 面板或数据库。本项目用于自用节点维护，不保证协议不可识别或一定避免网络封锁。
 
-This repository can manually build `1stream.dat` with GitHub Actions.
+## 首次安装
 
-The generated file is a geosite/domain asset for Xray `domain` rules. It does not contain geoip data.
+建议下载脚本、进行语法检查并审阅后运行，而不是直接执行不明镜像提供的 root 脚本。
 
-### Build
+```bash
+curl -fsSLo freedom.sh https://raw.githubusercontent.com/u-fw/freedom-xray/main/freedom.sh
+bash -n freedom.sh
+less freedom.sh
+sudo bash ./freedom.sh
+```
 
-Run the `Build 1stream.dat` workflow manually from the GitHub Actions page.
+安装后使用 sudo freedom 进入终端菜单。在「Telegram 机器人」中首次配置 BotFather Token、自己的 Telegram User ID，以及远程权限。
 
-The workflow publishes these files to the `1stream-latest` release:
+## 功能及范围
 
-- `1stream.dat`
-- `1stream.dat.sha256`
-- `1stream-tags.md`
-- `source-info.json`
+| 功能 | 终端 | Telegram Bot |
+| --- | --- | --- |
+| VLESS RAW/REALITY/Vision、XHTTP/REALITY、XHTTP/TLS/CDN | 支持 | 节点查看/导出 |
+| 添加/删除用户、改名、UUID 轮换 | 支持 | 支持 |
+| 指定节点分配用户 | 目前添加用户默认同步各节点 | 支持 |
+| 节点列表、二维码、用户链接 | 支持 | 支持 |
+| 流量统计/清零 | 支持 | 支持 |
+| Xray 状态/重启 | 支持 | 支持 |
+| 更新 freedom.sh、Bot、Xray-core | 支持 | 支持（需授权） |
+| 回滚上一版 Xray-core | 手动 | 支持（需授权） |
+| 用户配额、有效期、Web 面板、公开订阅服务 | 暂不实现 | 暂不实现 |
 
-### Xray Usage
+不实现 3x-ui 的所有功能是有意的：个人、小规模 VPS 管理优先减少攻击面和维护复杂性。
 
-Download `1stream.dat` to Xray's asset directory, usually `/usr/local/share/xray`.
+## Telegram Bot
 
-Example routing rule:
+Bot 只响应管理员 User ID 在私人聊天中的操作。默认关闭远程配置修改、远程软件更新以及包含完整私钥的备份发送。
+
+在终端配置的 bot.json 中有以下权限字段：
 
 ```json
 {
-  "type": "field",
-  "domain": [
-    "ext:1stream.dat:ai"
-  ],
-  "outboundTag": "proxy"
+  "allow_mutations": false,
+  "allow_updates": false,
+  "allow_core_updates": false,
+  "allow_sensitive_backup": false
 }
 ```
 
-Download `1stream-tags.md` from the release to see all generated tags.
+- allow_mutations：Telegram 添加、删除、改名用户，轮换 UUID、修改节点分配；二次确认。
+- allow_updates：Telegram 升级 freedom.sh 和 freedom-bot；二次确认。
+- allow_core_updates：独立授权 Xray-core 升级与回滚；还需 allow_updates。
+- allow_sensitive_backup：允许把包含 REALITY/VLESS 私钥的完整 JSON 发往 Telegram；建议保持关闭。
 
-## Scripts
+在 VPS 上首次启用更新权限后，正常情况下后续可直接在 Telegram 中发送 /update，不必为每一次更新登录 VPS。但如果 Bot 自更新失败、服务器失联或管理员凭据丢失，仍必须通过 SSH/Tailscale 恢复。
 
-- `1stream.sh`: build `1stream.dat` from 1stream upstream domain rules.
-- `freedom.sh`: Modern modular node lifecycle manager dedicated 100% exclusively to Xray-core.
+### 常用指令
 
-### Quick Start (Linux)
-
-Run directly in terminal without manual download or permissions:
-
-```bash
-# Direct connection (Overseas VPS)
-sudo bash <(curl -fsSL https://raw.githubusercontent.com/u-fw/freedom-xray/main/freedom.sh)
-
-# Accelerated mirror (CN / High-latency VPS)
-sudo bash <(curl -fsSL https://ghproxy.net/https://raw.githubusercontent.com/u-fw/freedom-xray/main/freedom.sh)
+```text
+/start                      打开按钮主菜单
+/users                      用户管理（含新增用户引导）
+/adduser phone              全部节点新增用户
+/adduser phone cdn          只添加到节点标签 cdn
+/renameuser old new         改名
+/rotateuser phone           轮换 UUID
+/removeuser phone           删除用户
+/assignuser phone cdn       给用户分配节点
+/unassignuser phone cdn     从节点移除用户
+/nodes                      节点列表
+/traffic                    流量
+/status                     系统状态
+/update                     更新检查、确认、回滚菜单
+/restart                    重启 Xray（确认）
+/cancel                     取消文本输入流程
 ```
 
-### Key Highlights & Features
+也可以直接在用户列表点击「新增用户」，按提示输入名称、选择节点、二次确认。
 
-- **Live Version Dashboard & Global Shortcut (`freedom`)**:
-  - Console header displays active Xray-core version, script version, systemd service status, managed node count, managed user count, and panel coexistence status at a glance.
-  - Automatically registers `/usr/local/bin/freedom` so you can bring up the control panel anytime by simply typing `freedom`.
-- **Native Multi-User Management & Real-Time Traffic Statistics (StatsService)**:
-  - Powered 100% natively by Xray-core's internal `StatsService` gRPC API (`127.0.0.1:10085`, `dokodemo-door`), completely eliminating the need for external databases or third-party web panels.
-  - Independent user management: add/delete users with custom email tags and distinct UUIDs, automatically synchronized across all managed node inbounds.
-  - Real-time traffic query leaderboard (Uplink, Downlink, Total with automatic human-readable unit conversion: KB / MB / GB / TB).
-  - One-click traffic reset (for a single user or all users) and instant export of user-specific `vless://` URLs and terminal ANSI QR codes.
-- **Online Upgrade & Maintenance Center**:
-  - **Script Self-Updater**: Check and update `freedom.sh` directly from GitHub with syntax verification and safe rollback.
-  - **Xray-core Updater**: Query XTLS official releases and upgrade Xray-core in-place with zero downtime and automatic configuration re-validation.
-  - **Asset Updater**: One-click updates for official GeoIP/GeoSite databases and repository-built `1stream.dat` streaming media routing rules.
-- **Dynamic Modular Node Management (CRUD)**:
-  - Add, list, edit, and delete inbounds dynamically within a single unified Xray configuration (`config.json`).
-  - **Zero-Friction Node Setup**: Completely automated, silent UUID generation (no manual prompting or typing required).
-  - **Automatic Firewall Automation**: Intelligently detects and opens listening TCP ports on `ufw`, `firewalld`, or `iptables` upon adding/modifying nodes, and cleans them up upon node deletion.
-  - **Default Disguise**: Uses high-reputation `www.nvidia.com:443` as the default REALITY SNI target.
-  - **Flexible User Identifiers**: Supports arbitrary nicknames (e.g. `admin`, `alice`, `my_phone`) without enforcing fake email domain suffixes.
-  - Instant export of standard `vless://` URIs and terminal ANSI QR code rendering for all managed nodes.
-- **3 Core Atomic Architecture Templates**:
-  - **Template 1: VLESS + TCP + REALITY + Vision**: Highest performance, direct connection with Linux kernel Splice zero-copy hardware acceleration.
-  - **Template 2: VLESS + XHTTP + REALITY**: Next-gen HTTP streaming disguise (Beyond REALITY) with dynamic padding (`xPaddingBytes`) and anti-DPI probing, no domain required.
-  - **Template 3: VLESS + XHTTP + TLS**: Engineered for Cloudflare CDN proxying and IP unblocking (with automatic 10-year ECC self-signed certs and full ALPN negotiation).
-- **Vision Penetration on XHTTP**:
-  - Automatically enables `flow: "xtls-rprx-vision"` when paired with VLESS Encryption (`ML-KEM-768`), penetrating encryption layers to eliminate TLS-in-TLS fingerprints according to the official Xray specification.
-- **Cloudflare ECH Zero-Exposure Integration**:
-  - Automatically includes Outer SNI (`cloudflare-ech.com`) and secure DoH (`https://dns.alidns.com/dns-query`) guidance for CDN nodes, hiding origin custom domains completely from middleboxes.
-- **Strict Dual-Layer Port Conflict Prevention**:
-  - Automatically audits both internal Xray inbound definitions and global operating system TCP listeners (`ss`/`lsof`/`netstat`) before applying any port changes.
-- **Live System Network Tuning Diagnostics & Reversible Snapshots (Menu Option 6)**:
-  - One compact status view of the values that matter: BBR + FQ, TCP Fast Open, idle slow-start, 32MB socket buffers, `tcp_notsent_lowat`, local port range, connection queues, and live file-descriptor limits.
-  - Full-stack tuning also applies TCP user timeout and keepalive to every managed inbound and the direct outbound, then restarts Xray once so the new descriptor limit takes effect.
-  - **Automatic Original Snapshot Backup**: Automatically captures and archives native kernel parameter snapshots before applying any tuning (`/usr/local/etc/xray/sysctl_backup.conf`).
-  - **One-Click Reversible Rollback**: Instant restoration to original factory OS kernel values at any time with verification.
-  - System benchmark scoring (0-100) with a plain summary line.
-- **Standalone Go Telegram Bot (`freedom-bot`, Menu Option 9)**:
-  - Reference architecture based on 3X-UI, engineered in 100% pure Go with zero CGO or external database dependencies (`CGO_ENABLED=0`).
-  - Managed, configured, and daemonized seamlessly via `freedom.sh` and systemd (`freedom-bot.service`).
-  - **Interactive Inline Dashboard & Remote Control**:
-    - `/start` / `/menu`: Brings up the rich inline control console with instant navigation buttons.
-    - 📊 **Real-Time System Health**: Monitors CPU load, per-core utilization, RAM usage (Used/Total/%), Disk capacity, Uptime, and Xray status.
-    - 📈 **Native Traffic Leaderboard**: Direct integration with Xray's `StatsService` to display real-time Uplink, Downlink, and Total consumption per user, with an interactive one-click traffic reset confirmation flow.
-    - 📋 **Active Inbound Matrix**: Displays all active node ports, protocols (TCP / XHTTP), security layers (REALITY / TLS), and disguised SNIs.
-    - 👥 **User Export with In-Memory QR Codes**: Select any user to instantly receive standard `vless://` URLs alongside pure-Go generated high-resolution PNG QR code photos.
-    - 🔄 **Remote Service Operations**: Safe one-click Xray daemon reboot with confirmation dialogues.
-    - 💾 **Remote Config Backup**: Instantly sends `/usr/local/etc/xray/config.json` to the admin chat as a document attachment.
-    - 📢 **Automated Scheduled Reporting**: Configurable periodic broadcaster (e.g. every 12 hours) reporting VPS resource utilization and user traffic leaderboards directly to admins.
-  - **Security & Censorship-Resistant Networking**:
-    - Strict Admin ID validation (`admin_ids` whitelist), silently discarding or rejecting unauthorized requests.
-    - Built-in SOCKS5 proxy support (`socks5_proxy`), ensuring reliable connectivity to Telegram API even on mainland or restricted VPS nodes.
-  - **Automated CI/CD Cross-Compilation**:
-    - Dedicated GitHub Actions workflow (`build-bot.yml`) automatically builds static binaries for `linux/amd64` and `linux/arm64` with sha256 checksums, available via GitHub Releases and high-speed mirrors.
-- **Post-Quantum Cryptography (PQC)**:
-  - Integrated `vlessenc` (ML-KEM-768 / X25519) for post-quantum forward secrecy against *Harvest Now, Decrypt Later* attacks.
-  - Native `mldsa65` (ML-DSA-65 / Dilithium) post-quantum digital signature authentication for REALITY.
+### 远程更新
 
+Bot 可以分别更新：
+
+1. freedom.sh：读取 GitHub main 的提交 SHA，固定到该提交下载脚本，校验 Bash 语法，保留 previous 备份。
+2. freedom-bot：下载本仓库 bot-latest Release 的架构匹配程序和 SHA-256 文件，验证后替换，由 systemd 重启。
+3. Xray-core：下载 XTLS/Xray-core 官方最新稳定版 Release，验证 .dgst 中的 SHA-256，用新二进制测试现有配置，替换后重启；启动检查失败时尝试回滚。Telegram 另有「回滚上一版核心」。
+   
+注意：Xray 能启动不等于新版本能与 Shadowrocket、v2rayN、v2rayNG 完成 REALITY/ML-KEM 握手。升级核心前保留备用节点及 Tailscale/SSH 管理通道。更新不会自动修改 VLESS 密钥、REALITY 目标、路由资产或 TLS 证书。
+
+### Telegram 权限风险
+
+Bot 当前需要较高本地权限来管理 systemd 与安装核心。Bot Token、Telegram 管理员会话与 GitHub 发布源都属于高价值安全边界。不要向其他 Telegram 用户开放管理权限；建议启用 Telegram 两步验证，仅在需要时开启核心远程更新。
+
+## v2rayN/v2rayNG 导入
+
+- 客户端 encryption 和服务端 decryption 必须成对；只有用户实际启用 Vision 才导出 flow。
+- XHTTP Host 默认留空，不强制复制 TLS SNI；必要时可以针对反代自定义。
+- XHTTP Padding 通常使用 100–1000 默认值；新版分享链接可携带 extra JSON，但客户端支持情况仍应实测。
+- 不默认附加 ECH。仅在 DNS/CDN/客户端支持时使用。
+- CDN 方案推荐有效源站证书 + Cloudflare Full (strict)，不要把 Full + 自签名证书误认为同等级验证。
+- 不保证 XHTTP 比 RAW 延迟更低，也不保证迁移裸核能解除被封锁 IP。
+
+## 安全和性能
+
+- StatsService 保持 127.0.0.1 监听；管理建议优先通过 Tailscale。
+- 更新包经 HTTPS 下载，Bot 与 Xray-core 发布包执行 SHA-256 校验；脚本执行 Bash 语法校验。
+- Bot 用户修改在重启前验证配置，并在启动失败时尝试恢复旧配置；异常时需检查 systemd 和本地备份。
+- 内核升级/重启会影响现有连接：不承诺零停机。
+- 系统网络调优是手动高级功能，不应无基准测试就认为 BBR、TCP Fast Open、缓冲区增大等一定提高吞吐。
+- GitHub Actions 验证 Shell 语法、Go 单元测试并编译 amd64/arm64 Bot；真实 CDN 和客户端连接仍须实际验证。
+
+## 1stream 路由资产
+
+1stream.sh 可生成 1stream.dat geosite/domain 规则文件。该文件不包含 GeoIP 数据，与代理软件更新、用户管理相互独立。
