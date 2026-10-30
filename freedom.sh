@@ -3825,13 +3825,14 @@ main() {
   ensure_xray_installed
   locked_config_operation ensure_config_scaffold || fatal "初始化配置时未能获得独占锁。"
 
-  # 自动注册或更新系统全局快捷指令 freedom
-  if [[ -f "$0" && "$0" != "/dev/fd/"* ]]; then
-    if [[ ! -f "/usr/local/bin/freedom" ]] || ! cmp -s "$0" "/usr/local/bin/freedom" 2>/dev/null; then
-      install -m 755 "$0" /usr/local/bin/freedom 2>/dev/null || true
+  # 首次安装才注册快捷指令。以后由显式更新流程负责覆盖，
+  # 防止运行旧版脚本副本时静默降级 /usr/local/bin/freedom。
+  if [[ ! -f "/usr/local/bin/freedom" ]]; then
+    if [[ -f "$0" && "$0" != "/dev/fd/"* ]]; then
+      install -m 755 "$0" /usr/local/bin/freedom || warn "注册 freedom 快捷指令失败。"
+    else
+      warn "当前使用非文件输入启动，请手动安装到 /usr/local/bin/freedom。"
     fi
-  elif [[ ! -f "/usr/local/bin/freedom" ]]; then
-    (curl -fsSL --connect-timeout 4 -m 12 "$RAW_SCRIPT_URL" -o /usr/local/bin/freedom && chmod +x /usr/local/bin/freedom) 2>/dev/null || true
   fi
 
   # 检测首次运行的新脚本是否需要同步升级已安装的 Bot。
