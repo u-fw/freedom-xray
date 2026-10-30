@@ -45,6 +45,7 @@ CONFIG_PATH="$CONFIG_DIR/config.json"
 CERTS_DIR="$CONFIG_DIR/certs"
 # 节点辅助元数据（VLESS Encryption 客户端串等无法写入 Xray 配置的字段）
 META_PATH="$CONFIG_DIR/freedom-meta.json"
+STATS_STORE_PATH="$CONFIG_DIR/freedom-stats.json"
 BACKUP_FILE=""
 
 BOT_BIN_PATH="/usr/local/bin/freedom-bot"
@@ -1522,12 +1523,7 @@ build_inbound_xhttp_reality() {
         xhttpSettings: {
           path: $path,
           mode: $mode,
-          extra: {
-            xPaddingBytes: "100-1000",
-            scMaxEachPostBytes: 1000000,
-            scMaxBufferedPosts: 30,
-            scStreamUpServerSecs: "20-80"
-          }
+          xPaddingBytes: "100-1000"
         },
         sockopt: {
           tcpFastOpen: true,
@@ -1594,12 +1590,7 @@ build_inbound_xhttp_tls() {
         xhttpSettings: {
           path: $path,
           mode: $mode,
-          extra: {
-            xPaddingBytes: "100-1000",
-            scMaxEachPostBytes: 1000000,
-            scMaxBufferedPosts: 30,
-            scStreamUpServerSecs: "20-80"
-          }
+          xPaddingBytes: "100-1000"
         },
         sockopt: {
           tcpFastOpen: true,
@@ -1700,6 +1691,42 @@ format_bytes() {
     awk -v b="$b" 'BEGIN {printf "%.2f GB", b/1073741824}'
   else
     awk -v b="$b" 'BEGIN {printf "%.2f TB", b/1099511627776}'
+  fi
+}
+
+# ==================== 流量持久化存储体系 (重启无损) ====================
+
+get_or_update_persistent_user_traffic() {
+  local email="$1"
+  local live_up="${2:-0}"
+  local live_down="${3:-0}"
+
+  install -d -m 755 "$CONFIG_DIR"
+  [[ -f "$STATS_STORE_PATH" ]] || echo '{"users":{}}' > "$STATS_STORE_PATH"
+
+  local updated
+  updated="$(jq --arg email "$email" --argjson up "$live_up" --argjson down "$live_down" '
+    .users[$email] = (
+      (.users[$email] // {"total_up":0, "total_down":0, "last_up":0, "last_down":0}) as $u |
+      (if $up >= $u.last_up then ($up - $u.last_up) else $up end) as $delta_up |
+      (if $down >= $u.last_down then ($down - $u.last_down) else $down end) as $delta_down |
+      {
+        total_up: ($u.total_up + $delta_up),
+        total_down: ($u.total_down + $delta_down),
+        last_up: $up,
+        last_down: $down
+      }
+    )
+  ' "$STATS_STORE_PATH" 2>/dev/null || true)"
+
+  if [[ -n "$updated" ]]; then
+    echo "$updated" > "$STATS_STORE_PATH"
+    local p_up p_down
+    p_up="$(echo "$updated" | jq -r --arg email "$email" ".users[\$email].total_up // $live_up")"
+    p_down="$(echo "$updated" | jq -r --arg email "$email" ".users[\$email].total_down // $live_down")"
+    echo "${p_up}|${p_down}"
+  else
+    echo "${live_up}|${live_down}"
   fi
 }
 
@@ -1838,7 +1865,7 @@ show_user_node_links() {
       mode="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.mode // "auto"')"
       local flow_param=""
       [[ -n "$node_flow" ]] && flow_param="&flow=${node_flow}"
-      link="vless://${node_user_id}@${domain}:${port}?type=xhttp&security=tls&sni=${domain}&host=${domain}&fp=chrome&path=$(url_encode "$path")&mode=${mode}${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "${tag}-${sel_email%%@*}")"
+      link="vless://${node_user_id}@${domain}:${port}?type=xhttp&security=tls&sni=${domain}&alpn=h2&fp=chrome&path=$(url_encode "$path")&mode=${mode}${flow_param}&ech=1&echOuterSni=cloudflare-ech.com&encryption=$(url_encode "$enc_param")#$(url_encode "${tag}-${sel_email%%@*}")"
     fi
 
     node_links+=("$link")
@@ -2049,6 +2076,11 @@ reset_traffic_stats_interactive() {
       if [[ "$u_idx" =~ ^[0-9]+$ ]] && ((1 <= u_idx && u_idx <= i)); then
         local target_em="${u_arr[$((u_idx-1))]}"
         "$BIN" api statsquery --server=127.0.0.1:10085 -pattern "user>>>${target_em}>>>" -reset=true >/dev/null 2>&1 || true
+        if [[ -f "$STATS_STORE_PATH" ]]; then
+          local reset_json
+          reset_json="$(jq --arg email "$target_em" '.users[$email] = {"total_up":0, "total_down":0, "last_up":0, "last_down":0}' "$STATS_STORE_PATH" 2>/dev/null || true)"
+          [[ -n "$reset_json" ]] && echo "$reset_json" > "$STATS_STORE_PATH"
+        fi
         ok "已成功清零用户 [${target_em}] 的流量计数！"
         echo && read -rp "按回车键继续..." _dummy
       else
@@ -2082,16 +2114,23 @@ user_management_menu() {
         user_list+=("${u_email}|${u_id}")
         idx=$((idx + 1))
 
-        local up_bytes down_bytes total_bytes
-        up_bytes="$(jq -r --arg email "$u_email" '.stat[]? | select(.name == ("user>>>" + $email + ">>>traffic>>>uplink")) | .value // "0"' <<<"$stats_data" | tail -n1)"
-        down_bytes="$(jq -r --arg email "$u_email" '.stat[]? | select(.name == ("user>>>" + $email + ">>>traffic>>>downlink")) | .value // "0"' <<<"$stats_data" | tail -n1)"
-        [[ -z "$up_bytes" ]] && up_bytes=0
-        [[ -z "$down_bytes" ]] && down_bytes=0
-        total_bytes=$((up_bytes + down_bytes))
+        local live_up live_down
+        live_up="$(jq -r --arg email "$u_email" '.stat[]? | select(.name == ("user>>>" + $email + ">>>traffic>>>uplink")) | .value // "0"' <<<"$stats_data" | tail -n1)"
+        live_down="$(jq -r --arg email "$u_email" '.stat[]? | select(.name == ("user>>>" + $email + ">>>traffic>>>downlink")) | .value // "0"' <<<"$stats_data" | tail -n1)"
+        [[ -z "$live_up" ]] && live_up=0
+        [[ -z "$live_down" ]] && live_down=0
+
+        local persisted p_up p_down total_bytes
+        persisted="$(get_or_update_persistent_user_traffic "$u_email" "$live_up" "$live_down")"
+        p_up="${persisted%%|*}"
+        p_down="${persisted##*|}"
+        [[ -z "$p_up" ]] && p_up="$live_up"
+        [[ -z "$p_down" ]] && p_down="$live_down"
+        total_bytes=$((p_up + p_down))
 
         local up_fmt down_fmt total_fmt
-        up_fmt="$(format_bytes "$up_bytes")"
-        down_fmt="$(format_bytes "$down_bytes")"
+        up_fmt="$(format_bytes "$p_up")"
+        down_fmt="$(format_bytes "$p_down")"
         total_fmt="$(format_bytes "$total_bytes")"
 
         printf "%-6s %-20s %-38s %-12s %-12s %-12s\n" \
@@ -2420,7 +2459,7 @@ list_and_show_nodes() {
       if [[ -n "$flow" ]]; then
         flow_param="&flow=${flow}"
       fi
-      link="vless://${uuid}@${domain}:${port}?type=xhttp&security=tls&sni=${domain}&host=${domain}&fp=chrome&path=$(url_encode "$path")&mode=${mode}${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
+      link="vless://${uuid}@${domain}:${port}?type=xhttp&security=tls&sni=${domain}&alpn=h2&fp=chrome&path=$(url_encode "$path")&mode=${mode}${flow_param}&ech=1&echOuterSni=cloudflare-ech.com&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
       echo "  - TLS 域名/SNI: ${domain} | XHTTP 路径: ${path} | 模式: ${mode} | 流控: ${flow:-无} (CDN 代理适配)"
       echo -e "  - ${CYAN}[Cloudflare ECH 增强提示]${NC} 客户端支持 ECH 时，可设置 Outer SNI 为: ${BOLD}cloudflare-ech.com${NC}，配合 DoH: ${BOLD}https://dns.alidns.com/dns-query${NC}，实现真实域名零泄露！"
     fi
@@ -2493,7 +2532,7 @@ list_and_show_nodes() {
       if [[ -n "$flow" ]]; then
         flow_param="&flow=${flow}"
       fi
-      target_link="vless://${uuid}@${domain}:${port}?type=xhttp&security=tls&sni=${domain}&host=${domain}&fp=chrome&path=$(url_encode "$path")&mode=${mode}${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
+      target_link="vless://${uuid}@${domain}:${port}?type=xhttp&security=tls&sni=${domain}&alpn=h2&fp=chrome&path=$(url_encode "$path")&mode=${mode}${flow_param}&ech=1&echOuterSni=cloudflare-ech.com&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
     fi
 
     if [[ -n "$target_link" ]]; then
