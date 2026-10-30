@@ -1,6 +1,6 @@
-# xray-rule-assets
+# freedom-xray
 
-Xray rule assets and related automation scripts.
+Freedom: a modular Xray node manager (`freedom.sh`), a pure-Go Telegram bot (`freedom-bot`), and 1stream rule assets.
 
 ## 1stream.dat
 
@@ -48,10 +48,10 @@ Run directly in terminal without manual download or permissions:
 
 ```bash
 # Direct connection (Overseas VPS)
-sudo bash <(curl -fsSL https://raw.githubusercontent.com/u-fw/xray-rule-assets/main/freedom.sh)
+sudo bash <(curl -fsSL https://raw.githubusercontent.com/u-fw/freedom-xray/main/freedom.sh)
 
 # Accelerated mirror (CN / High-latency VPS)
-sudo bash <(curl -fsSL https://ghproxy.net/https://raw.githubusercontent.com/u-fw/xray-rule-assets/main/freedom.sh)
+sudo bash <(curl -fsSL https://ghproxy.net/https://raw.githubusercontent.com/u-fw/freedom-xray/main/freedom.sh)
 ```
 
 ### Key Highlights & Features

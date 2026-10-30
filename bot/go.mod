@@ -1,4 +1,4 @@
-module github.com/u-fw/xray-rule-assets/bot
+module github.com/u-fw/freedom-xray/bot
 
 go 1.24.0
 

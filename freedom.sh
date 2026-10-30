@@ -34,7 +34,7 @@ DEFAULT_PORT="443"
 DEFAULT_NODE_NAME="Premium-Node"
 DEFAULT_ADMIN_EMAIL="admin"
 
-GITHUB_REPO="u-fw/xray-rule-assets"
+GITHUB_REPO="u-fw/freedom-xray"
 RAW_SCRIPT_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main/freedom.sh"
 GHPROXY_SCRIPT_URL="https://ghproxy.net/https://raw.githubusercontent.com/${GITHUB_REPO}/main/freedom.sh"
 
@@ -2260,7 +2260,7 @@ update_rule_assets_interactive() {
 
   info "正在拉取最新构建的 1stream.dat 分流规则资产..."
   install -d -m 755 /usr/local/share/xray
-  local stream_url="https://github.com/u-fw/xray-rule-assets/releases/download/1stream-latest/1stream.dat"
+  local stream_url="https://github.com/u-fw/freedom-xray/releases/download/1stream-latest/1stream.dat"
   local tmp_dat="/usr/local/share/xray/1stream.dat.tmp"
   if curl -fsSL --connect-timeout 8 "$stream_url" -o "$tmp_dat" 2>/dev/null; then
     mv -f "$tmp_dat" /usr/local/share/xray/1stream.dat
