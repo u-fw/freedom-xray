@@ -1937,140 +1937,48 @@ show_user_node_links() {
   echo && read -rp "按回车键继续..." _dummy
 }
 
-add_new_user_interactive() {
-  ensure_stats_api_scaffold || warn "统计模块初始化失败，流量看板可能不可用（原配置保持不变）。"
-  echo
-  echo -e "  ${BOLD}添加用户${NC}"
-  local new_email
-  while true; do
-    read -r -p "请输入用户标识名称 (任意字符或邮箱，如 alice/phone/admin，直接回车随机分配): " in_name || in_name=""
-    in_name="$(echo "$in_name" | tr -d '[:space:]|>')"
-    if [[ -z "$in_name" ]]; then
-      new_email="user-$(openssl rand -hex 2)"
-      info "已自动分配随机用户标识: ${new_email}"
-      break
-    fi
-    new_email="$in_name"
-    break
-  done
-
-  if get_all_system_users | awk -F'|' -v e="$new_email" '$1 == e { found = 1 } END { exit !found }'; then
-    warn "用户标识 [${new_email}] 已存在，请勿重复添加！"
-    return 0
-  fi
-
-  local gen_uuid
-  gen_uuid="$("$BIN" uuid 2>/dev/null || cat /proc/sys/kernel/random/uuid | tr -d '[:space:]')"
-  local new_uuid
-  read -r -p "用户 UUID (直接回车全自动随机生成，或手动粘贴指定 UUID): " custom_uuid || custom_uuid=""
-  new_uuid="${custom_uuid:-$gen_uuid}"
-  new_uuid="${new_uuid//[[:space:]]/}"
-  if ! [[ "$new_uuid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
-    warn "UUID 格式无效，应形如 xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx。"
-    return 0
-  fi
-
-  backup_existing_config
-  local updated
-  updated="$(jq --arg email "$new_email" --arg id "$new_uuid" '
-    .inbounds = [
-      .inbounds[] |
-      if .tag == "api-internal" then .
-      else
-        .settings.clients = (.settings.clients // []) + [
-          {
-            id: $id,
-            email: $email
-          } + (
-            if (.settings.clients[0].flow // "") != "" then { flow: .settings.clients[0].flow } else {} end
-          )
-        ]
-      end
-    ]
-  ' "$CONFIG_PATH")"
-
-  commit_config "$updated" || { warn "新用户写入失败，原配置保持不变。"; return 1; }
-
-  validate_and_restart_service
-  ok "新用户 [${new_email}] 已成功添加并同步下发至所有活跃节点！"
-  echo "  - 用户 UUID: ${new_uuid}"
-  echo && read -rp "按回车键继续..." _dummy
+# Shared CLI/TG user directory engine (the Go binary needs no Telegram token for local use).
+ensure_user_manager_binary() {
+  if [[ -x "$BOT_BIN_PATH" ]]; then return 0; fi
+  warn "独立用户管理需要 freedom-bot Go 管理程序。可在 Telegram 机器人菜单先安装（无需启用 Telegram）。"
+  return 1
 }
-
-delete_user_interactive() {
-  ensure_stats_api_scaffold || warn "统计模块初始化失败，流量看板可能不可用（原配置保持不变）。"
-  local users
-  users="$(get_all_system_users)"
-  if [[ -z "$users" ]]; then
-    warn "当前系统没有任何用户记录可供删除。"
-    return 0
-  fi
-
-  local user_arr=()
-  local i=0
-  echo
-  echo -e "  ${BOLD}请选择要删除的用户序号${NC}"
-  echo "————————————————————————————————————————————————"
-  while IFS='|' read -r email uuid; do
-    [[ -z "$email" ]] && continue
-    user_arr+=("${email}|${uuid}")
-    echo -e "  ${GREEN}$((i+1)).${NC} 用户名: ${email} | UUID: ${uuid}"
-    i=$((i + 1))
-  done <<< "$users"
-  echo "————————————————————————————————————————————————"
-  echo -e "  ${GREEN}0.${NC} 取消并返回"
-  echo "————————————————————————————————————————————————"
-
-  if (( i <= 1 )); then
-    warn "系统当前仅存 1 个用户，删除该用户将导致所有节点无法连接！请至少保留 1 个用户。"
-    echo && read -rp "按回车键继续..." _dummy
-    return 0
-  fi
-
-  read -r -p "请输入要删除的用户序号 [1-${i}]: " del_sel || del_sel=""
-  [[ "$del_sel" == "0" || -z "$del_sel" ]] && return 0
-
-  if ! [[ "$del_sel" =~ ^[0-9]+$ ]] || ((del_sel < 1 || del_sel > i)); then
-    warn "序号无效，操作取消。"
-    return 0
-  fi
-
-  local chosen="${user_arr[$((del_sel-1))]}"
-  local del_email="${chosen%%|*}"
-  local del_uuid="${chosen##*|}"
-
-  read -r -p "确认彻底删除用户 [${del_email}]？[y/N]: " confirm_del || confirm_del="N"
-  case "${confirm_del:-N}" in
-    y|Y|yes|YES)
-      backup_existing_config
-      local updated
-      updated="$(jq --arg email "$del_email" --arg id "$del_uuid" '
-        .inbounds = [
-          .inbounds[] |
-          if .tag == "api-internal" then .
-          else
-            .settings.clients = [ .settings.clients[]? | select(.email != $email and .id != $id) ]
-          end
-        ]
-      ' "$CONFIG_PATH")"
-
-      if ! commit_config "$updated"; then
-        warn "删除用户失败：配置写入未通过校验，原配置保持不变。"
-        echo && read -rp "按回车键继续..." _dummy
-        return 1
-      fi
-      validate_and_restart_service
-      "$BIN" api statsquery --server=127.0.0.1:10085 -pattern "user>>>${del_email}>>>" -reset=true >/dev/null 2>&1 || true
-      ok "用户 [${del_email}] 已成功从所有节点注销并断开连接。"
-      echo && read -rp "按回车键继续..." _dummy
-      ;;
+list_independent_user_names() {
+  "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-list-users
+}
+add_new_user_interactive() {
+  ensure_user_manager_binary || return 1
+  local username selection node="" total
+  read -r -p "新用户名称（默认只创建，不绑定节点）: " username || return 0
+  if ! [[ "$username" =~ ^[A-Za-z0-9_.@-]{1,48}$ ]];then warn "用户名不合法。";return 1;fi
+  total="$(jq '[.inbounds[]? | select(.protocol=="vless" and .tag!="api-internal")] | length' "$CONFIG_PATH")"
+  echo "0) 只创建用户，不绑定节点（推荐）"
+  jq -r '[.inbounds[]? | select(.protocol=="vless" and .tag!="api-internal") | .tag] | to_entries[] | "\(.key+1)) \(.value)"' "$CONFIG_PATH"
+  echo "a) 绑定全部现有节点（谨慎）"
+  read -r -p "绑定节点序号 [默认 0]: " selection || selection="0"
+  case "$selection" in
+    ""|0) ;;
+    a|A) node="all" ;;
     *)
-      info "已取消删除。"
-      echo && read -rp "按回车键继续..." _dummy
+      if ! [[ "$selection" =~ ^[0-9]+$ ]] || ((10#$selection < 1 || 10#$selection > total));then warn "无效序号";return 1;fi
+      node="$(jq -r --argjson ix "$((10#$selection-1))" '[.inbounds[]? | select(.protocol=="vless" and .tag!="api-internal") | .tag][$ix] // empty' "$CONFIG_PATH")"
+      [[ -n "$node" ]] || return 1
       ;;
   esac
+  "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-user-action add -local-user "$username" -local-node "$node"
 }
-
+delete_user_interactive() {
+  ensure_user_manager_binary || return 1
+  local username confirm
+  list_independent_user_names
+  read -r -p "输入需要删除的用户名（回车取消）: " username || return 0
+  [[ -n "$username" ]] || return 0
+  read -r -p "确认删除用户及全部绑定 $username？[y/N]: " confirm || confirm="N"
+  case "$confirm" in
+    y|Y|yes|YES) "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-user-action delete -local-user "$username" ;;
+    *) info "已取消" ;;
+  esac
+}
 reset_traffic_stats_interactive() {
   ensure_stats_api_scaffold || warn "统计模块初始化失败，流量看板可能不可用（原配置保持不变）。"
   if ! service_unit_exists "$SERVICE_NAME" || ! systemctl is-active --quiet "$SERVICE_NAME"; then
@@ -2187,11 +2095,11 @@ manage_single_user_interactive() {
     case "$action" in
       1) show_user_node_links "$selected_email" "$selected_uuid" ;;
       2)
-        locked_config_operation rename_managed_user "$selected_email" "$selected_uuid" || true
+        rename_managed_user "$selected_email" "$selected_uuid" || true
         return 0
         ;;
       3)
-        locked_config_operation rotate_managed_user_uuid "$selected_email" "$selected_uuid" || true
+        rotate_managed_user_uuid "$selected_email" "$selected_uuid" || true
         return 0
         ;;
       0|"") return 0 ;;
@@ -2201,83 +2109,22 @@ manage_single_user_interactive() {
 }
 
 rename_managed_user() {
-  local old_email="$1" old_uuid="$2" new_email
-  read -r -p "新的用户标识（旧值 ${old_email}，直接回车取消）: " new_email || new_email=""
-  new_email="$(printf '%s' "$new_email" | tr -d '[:space:]|>')"
-  [[ -z "$new_email" || "$new_email" == "$old_email" ]] && return 0
-  if get_all_system_users | awk -F'|' -v e="$new_email" '$1 == e {found=1} END{exit !found}'; then
-    warn "用户标识已存在，不能重名。"
-    return 1
-  fi
-  if ! jq -e --arg email "$old_email" --arg id "$old_uuid"     '[.inbounds[]? | .settings.clients[]? | select(.email == $email and .id == $id)] | length > 0'     "$CONFIG_PATH" >/dev/null; then
-    warn "未找到对应用户，请刷新列表。"
-    return 1
-  fi
-  local updated
-  updated="$(jq --arg old "$old_email" --arg id "$old_uuid" --arg new "$new_email" '
-    .inbounds |= map(
-      if .tag == "api-internal" then . else
-        .settings.clients |= map(
-          if .email == $old and .id == $id then .email = $new else . end
-        )
-      end
-    )
-  ' "$CONFIG_PATH")" || return 1
-  backup_existing_config
-  commit_config "$updated" || return 1
-  validate_and_restart_service
-
-  # 更换 Xray 计数器名称后从零开始采样，保留旧的累计流量值。
-  if [[ -f "$STATS_STORE_PATH" ]]; then
-    local traffic_updated
-    traffic_updated="$(jq --arg old "$old_email" --arg new "$new_email" '
-      if .users[$old] then
-        .users[$new] = (.users[$old] | .last_up = 0 | .last_down = 0) |
-        del(.users[$old])
-      else . end
-    ' "$STATS_STORE_PATH")" || return 1
-    printf '%s\n' "$traffic_updated" > "$STATS_STORE_PATH"
-    chmod 600 "$STATS_STORE_PATH" 2>/dev/null || true
-  fi
-  ok "用户已改名为 ${new_email}，所有关联节点同步完成。"
+  ensure_user_manager_binary || return 1
+  local old_name="$1" new_name
+  read -r -p "新用户名（回车取消）: " new_name || return 0
+  [[ -z "$new_name" ]] && return 0
+  "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-user-action rename -local-user "$old_name" -local-new-name "$new_name"
 }
-
 rotate_managed_user_uuid() {
-  local email="$1" old_uuid="$2"
-  if ! jq -e --arg email "$email" --arg id "$old_uuid"     '[.inbounds[]? | .settings.clients[]? | select(.email == $email and .id == $id)] | length > 0'     "$CONFIG_PATH" >/dev/null; then
-    warn "未找到对应用户，请刷新列表。"
-    return 1
-  fi
-  local new_uuid
-  new_uuid="$("$BIN" uuid 2>/dev/null || cat /proc/sys/kernel/random/uuid | tr -d '[:space:]')"
-  [[ "$new_uuid" =~ ^[0-9a-fA-F-]{36}$ ]] || { warn "UUID 生成失败。"; return 1; }
-  echo "重置用户 ${email} 的 UUID 后，原客户端链接立即失效。"
-  local answer
-  read -r -p "确认重新生成并同步所有关联节点？[y/N]: " answer || answer="N"
-  [[ "$answer" == "y" || "$answer" == "Y" ]] || return 0
-  if jq -e --arg id "$new_uuid"     '[.inbounds[]? | .settings.clients[]? | select(.id == $id)] | length > 0'     "$CONFIG_PATH" >/dev/null; then
-    warn "新 UUID 意外重复，请重试。"
-    return 1
-  fi
-  local updated
-  updated="$(jq --arg email "$email" --arg old "$old_uuid" --arg new "$new_uuid" '
-    .inbounds |= map(
-      if .tag == "api-internal" then . else
-        .settings.clients |= map(
-          if .email == $email and .id == $old then .id = $new else . end
-        )
-      end
-    )
-  ' "$CONFIG_PATH")" || return 1
-  backup_existing_config
-  commit_config "$updated" || return 1
-  validate_and_restart_service
-  ok "UUID 已更新：${new_uuid}"
-  warn "请更新 v2rayN/v2rayNG 中该用户的节点链接。"
+  ensure_user_manager_binary || return 1
+  local name="$1" confirm
+  read -r -p "确认轮换 $name 的 UUID？旧客户端链接将失效 [y/N]: " confirm || confirm="N"
+  case "$confirm" in
+    y|Y|yes|YES) "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-user-action rotate -local-user "$name" ;;
+    *) info "已取消" ;;
+  esac
 }
 
-# Suspend/restore accounts using the same tested Go transaction as Telegram.
-# This avoids maintaining a second incompatible JSON state format in Bash.
 toggle_user_status_interactive() {
   if [[ ! -x "$BOT_BIN_PATH" || ! -f "$BOT_CONFIG_PATH" ]]; then
     warn "停用/恢复需要安装并配置 freedom-bot（内部复用其事务管理器）。"
@@ -2382,8 +2229,8 @@ user_management_menu() {
     read -r -p "请选择操作 [0-7]: " u_sel || u_sel="0"
     case "${u_sel:-0}" in
       1) show_user_node_links || true ;;
-      2) locked_config_operation add_new_user_interactive || true ;;
-      3) locked_config_operation delete_user_interactive || true ;;
+      2) add_new_user_interactive || true ;;
+      3) delete_user_interactive || true ;;
       4) locked_config_operation reset_traffic_stats_interactive || true ;;
       5) ;;
       6) manage_single_user_interactive || true ;;
