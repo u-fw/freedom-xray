@@ -15,7 +15,8 @@ type BotConfig struct {
 	ReportHours      int     `json:"report_hours,omitempty"`
 	AllowMutations   bool    `json:"allow_mutations,omitempty"`
 	AllowUpdates bool `json:"allow_updates,omitempty"`
-	AllowCoreUpdates bool `json:"allow_core_updates,omitempty"` // periodic report interval in hours (0 = disabled)
+	AllowCoreUpdates bool `json:"allow_core_updates,omitempty"`
+	AllowSensitiveBackup bool `json:"allow_sensitive_backup,omitempty"` // periodic report interval in hours (0 = disabled)
 	XrayConfigPath   string  `json:"xray_config_path"`
 	XrayBinPath      string  `json:"xray_bin_path"`
 	StatsAPIServer   string  `json:"stats_api_server"`
@@ -31,6 +32,7 @@ func DefaultConfig() *BotConfig {
 		AllowMutations: false, // Local opt-in is required before Telegram can write configurations
 		AllowUpdates: false,
 		AllowCoreUpdates: false,
+		AllowSensitiveBackup: false,
 		XrayConfigPath: "/usr/local/etc/xray/config.json",
 		XrayBinPath:    "/usr/local/bin/xray",
 		StatsAPIServer: "127.0.0.1:10085",
