@@ -13,7 +13,9 @@ type BotConfig struct {
 	AdminIDs         []int64 `json:"admin_ids"`
 	Socks5Proxy      string  `json:"socks5_proxy,omitempty"` // e.g. "127.0.0.1:10808"
 	ReportHours      int     `json:"report_hours,omitempty"`
-	AllowMutations   bool    `json:"allow_mutations,omitempty"` // periodic report interval in hours (0 = disabled)
+	AllowMutations   bool    `json:"allow_mutations,omitempty"`
+	AllowUpdates bool `json:"allow_updates,omitempty"`
+	AllowCoreUpdates bool `json:"allow_core_updates,omitempty"` // periodic report interval in hours (0 = disabled)
 	XrayConfigPath   string  `json:"xray_config_path"`
 	XrayBinPath      string  `json:"xray_bin_path"`
 	StatsAPIServer   string  `json:"stats_api_server"`
@@ -27,6 +29,8 @@ func DefaultConfig() *BotConfig {
 		Socks5Proxy:    "",
 		ReportHours:    12, // Default every 12 hours
 		AllowMutations: false, // Local opt-in is required before Telegram can write configurations
+		AllowUpdates: false,
+		AllowCoreUpdates: false,
 		XrayConfigPath: "/usr/local/etc/xray/config.json",
 		XrayBinPath:    "/usr/local/bin/xray",
 		StatsAPIServer: "127.0.0.1:10085",
