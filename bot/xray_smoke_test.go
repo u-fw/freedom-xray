@@ -77,15 +77,27 @@ func TestGenerateVlessURITLS(t *testing.T) {
 	if u.Host != "example.com:8443" {
 		t.Errorf("host = %q", u.Host)
 	}
-	if q.Get("host") != "example.com" || q.Get("sni") != "example.com" {
+	if q.Get("host") != "" || q.Get("sni") != "example.com" {
 		t.Errorf("host/sni = %q/%q", q.Get("host"), q.Get("sni"))
 	}
+	if q.Get("alpn") != "h2" { t.Errorf("alpn = %q", q.Get("alpn")) }
+	if q.Get("extra") != `{"xPaddingBytes":"100-1000"}` { t.Errorf("extra = %q", q.Get("extra")) }
 	if q.Get("path") != "/stream" || q.Get("mode") != "packet-up" {
 		t.Errorf("path/mode = %q/%q", q.Get("path"), q.Get("mode"))
 	}
 	if q.Get("flow") != "" {
 		t.Errorf("flow should be empty, got %q", q.Get("flow"))
 	}
+}
+
+
+func TestGenerateVlessURITLSHostOverrideAndFlow(t *testing.T) {
+ node := &InboundDetails{Tag:"cdn", Port:443, Network:"xhttp", Security:"tls", SNI:"cdn.example.com", XHTTPHost:"authority.example.com", XHTTPPath:"/stream", ClientEncrypt:"TEST"}
+ uri := node.GenerateVlessURI(XrayClient{ID:"22222222-2222-2222-2222-222222222222", Flow:"xtls-rprx-vision"}, "203.0.113.9")
+ u, err := url.Parse(uri); if err != nil {t.Fatal(err)}
+ q:=u.Query()
+ if q.Get("host") != "authority.example.com" {t.Errorf("host override = %q",q.Get("host"))}
+ if q.Get("flow") != "xtls-rprx-vision" {t.Errorf("flow = %q",q.Get("flow"))}
 }
 
 func TestGenerateVlessURIIPv6(t *testing.T) {
