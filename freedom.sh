@@ -2066,7 +2066,9 @@ manage_single_user_interactive() {
     if [[ -z "$id" ]]; then
       id="$(jq -r --arg name "$name" '[.inbounds[]? | .settings.clients[]? | select(.email==$name) | .id] | first // empty' "$CONFIG_PATH")"
     fi
-    [[ -n "$id" ]] && users+="${name}|${id}"
+    [[ -n "$id" ]] && users+="${name}|${id}"$\'\\n\'
+  done < <(list_independent_user_names)
+  if [[ -z "$users" ]]; then warn "没有用户。"; return 0; fi
 
   local entries=() email uuid idx=0
   echo
