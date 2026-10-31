@@ -163,7 +163,7 @@ func saveTrafficStore(configPath string,state trafficStore) error {
  return writeAtomically(trafficStorePath(configPath),append(b,'\n'),0600)
 }
 func pruneObservedIPs(state *trafficStore, now time.Time) bool {
- cutoff:=now.Add(-30*time.Minute).Unix()
+ cutoff:=now.Add(-onlineHistoryRetention).Unix()
  changed:=false
  for email,items:=range state.OnlineIPs {
   kept:=items[:0]

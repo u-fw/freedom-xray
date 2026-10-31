@@ -15,6 +15,7 @@ func onlineCardText(state trafficStore, now time.Time, lang string) string {
 func onlineCardTextWithError(state trafficStore,now time.Time,lang string,queryErr error) string {
  var out strings.Builder
  out.WriteString(tr(lang,"online.title"))
+ out.WriteString(tr(lang,"online.history",int(onlineHistoryRetention/(24*time.Hour)),maxOnlineIPsPerUser))
  if queryErr!=nil {out.WriteString(tr(lang,"online.queryFailure",mdEsc(queryErr.Error())))}
  fresh:=state.OnlinePollAt>0 && now.Unix()-state.OnlinePollAt<=20 && state.OnlinePollAt<=now.Unix()+5
  if !fresh{out.WriteString(tr(lang,"online.stale"))}
@@ -28,6 +29,9 @@ func onlineCardTextWithError(state trafficStore,now time.Time,lang string,queryE
   iLive:=fresh && len(state.LiveIPs[names[i]])>0
   jLive:=fresh && len(state.LiveIPs[names[j]])>0
   if iLive!=jLive{return iLive}
+  iAt:=state.LastOnline[names[i]]
+  jAt:=state.LastOnline[names[j]]
+  if iAt!=jAt{return iAt>jAt}
   return names[i]<names[j]
  })
  if len(names)==0{
@@ -42,6 +46,11 @@ func onlineCardTextWithError(state trafficStore,now time.Time,lang string,queryE
    if len(ips)==0 {status=tr(lang,"online.notObserved")}
    if live{status=tr(lang,"online.live");ips=current}
    out.WriteString("👤 *"+mdEsc(name)+"* — "+status+"\n")
+   if stamp:=state.LastOnline[name];stamp>0{
+    out.WriteString(tr(lang,"online.lastSeen",time.Unix(stamp,0).Format("2006-01-02 15:04:05")))
+   }else{
+    out.WriteString(tr(lang,"online.lastNever"))
+   }
    limit:=len(ips);if limit>3{limit=3}
    for _,ip:=range ips[:limit]{
     out.WriteString(tr(lang,"online.ip",mdCode(ip.IP),time.Unix(ip.LastSeen,0).Format("2006-01-02 15:04:05")))

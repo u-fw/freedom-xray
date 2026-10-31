@@ -115,6 +115,65 @@ func onlineAggregateEmpty(raw string) bool {
  return raw==""||strings.Contains(compact,`"users":[]`)||strings.Contains(compact,`"users":null`)
 }
 
+// onlineProbeCandidates prefers users with recorded activity so the probe
+// checks the addresses an administrator most likely cares about.
+func onlineProbeCandidates(configPath string) []string {
+ state,err:=loadTrafficStore(configPath)
+ if err==nil&&len(state.Users)>0 {
+  names:=make([]string,0,len(state.Users))
+  for name:=range state.Users{names=append(names,name)}
+  sort.Slice(names,func(i,j int)bool{
+   a,b:=state.LastOnline[names[i]],state.LastOnline[names[j]]
+   if a!=b{return a>b}
+   return names[i]<names[j]
+  })
+  return names
+ }
+ names,_:=allDirectoryNames(configPath)
+ return names
+}
+
+// onlineProbeText exercises the per-email endpoint for a small sample of
+// managed users. It separates "no active session" from "session exists but no
+// address was recorded", which is what a local relay or a client that is idle
+// between requests looks like from Xray's point of view.
+func (s *BotService) onlineProbeText() string {
+ lang:=s.cfg.Language
+ names:=onlineProbeCandidates(s.cfg.XrayConfigPath)
+ if len(names)==0{return ""}
+ limit:=len(names);if limit>4{limit=4}
+ sample:=names[:limit]
+ ipCtx,ipCancel:=context.WithTimeout(context.Background(),8*time.Second)
+ users,probeErr:=queryOnlineClientsByEmail(ipCtx,s.cfg.XrayBinPath,s.cfg.StatsAPIServer,sample)
+ ipCancel()
+ countCtx,countCancel:=context.WithTimeout(context.Background(),8*time.Second)
+ counts:=queryOnlineSessionCounts(countCtx,s.cfg.XrayBinPath,s.cfg.StatsAPIServer,sample)
+ countCancel()
+ byEmail:=map[string]int{}
+ for _,user:=range users{byEmail[user.Email]=len(user.IPs)}
+ var out strings.Builder
+ out.WriteString(tr(lang,"online.doctor.probe"))
+ if probeErr!=nil&&len(users)==0 {
+  out.WriteString(tr(lang,"online.doctor.probeerror",mdEsc(truncateLabel(probeErr.Error(),300))))
+  return out.String()
+ }
+ if probeErr!=nil {
+  out.WriteString(tr(lang,"online.doctor.probewarn",mdEsc(truncateLabel(probeErr.Error(),300))))
+ }
+ sawSessionsWithoutIP:=false
+ for _,name:=range sample {
+  sessions:="?"
+  if count,ok:=counts[name];ok {
+   sessions=strconv.FormatInt(count,10)
+   if count>0&&byEmail[name]==0{sawSessionsWithoutIP=true}
+  }
+  out.WriteString(tr(lang,"online.doctor.proberow",mdCode(name),sessions,byEmail[name]))
+ }
+ if len(names)>limit{out.WriteString(tr(lang,"online.doctor.probemore",len(names)-limit))}
+ if sawSessionsWithoutIP{out.WriteString(tr(lang,"online.doctor.hint.sessions"))}
+ return out.String()
+}
+
 func (s *BotService) onlineDiagnosticText() string {
  lang:=s.cfg.Language
  var out strings.Builder
@@ -151,6 +210,7 @@ func (s *BotService) onlineDiagnosticText() string {
  }else{
   out.WriteString(tr(lang,"online.doctor.apiok",mdCode(raw)))
  }
+ out.WriteString(s.onlineProbeText())
 
  if store,err:=loadTrafficStore(s.cfg.XrayConfigPath);err==nil {
   live,recent:=0,0

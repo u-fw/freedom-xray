@@ -103,7 +103,7 @@ func snapshotTrafficLocked(configPath,xrayBinary,statsServer string) (trafficSto
  changed:=applyTrafficSnapshot(&state,users,inbounds,epoch)
  // Collect online IPs independently of traffic accounting. Unsupported
  // APIs must not stop the durable traffic sampler.
- onlineCtx,onlineCancel:=context.WithTimeout(context.Background(),5*time.Second)
+ onlineCtx,onlineCancel:=context.WithTimeout(context.Background(),10*time.Second)
  defer onlineCancel()
  if observed,onlineErr:=queryOnlineClientsForEmails(onlineCtx,xrayBinary,statsServer,onlineQueryEmails(configPath,state));onlineErr==nil {
   if applyOnlineSnapshot(&state,observed,time.Now()){changed=true}
@@ -226,7 +226,7 @@ func refreshOnlineTraffic(configPath,xrayBinary,statsServer string)(trafficStore
  emails:=make([]string,0,len(active))
  for name:=range active{emails=append(emails,name)}
  sort.Strings(emails)
- ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second);defer cancel()
+ ctx,cancel:=context.WithTimeout(context.Background(),10*time.Second);defer cancel()
  online,queryErr:=queryOnlineClientsForEmails(ctx,xrayBinary,statsServer,emails)
  changed:=reconciled
  if queryErr==nil {

@@ -29,10 +29,11 @@ func TestOnlineCardShowsSourceAndCumulativeUserTraffic(t *testing.T){
   Users:map[string]trafficCounter{"phone":{TotalUp:1048576,TotalDown:2097152}},
   LiveIPs:map[string][]onlineClientIP{"phone":{{IP:"203.0.113.7",LastSeen:now.Unix()}}},
   OnlineIPs:map[string][]onlineClientIP{"phone":{{IP:"203.0.113.7",LastSeen:now.Unix()}}},
+  LastOnline:map[string]int64{"phone":now.Unix()},
   OnlinePollAt:now.Unix(),
  }
  body:=onlineCardText(state,now,"en")
- for _,wanted:=range []string{"phone","203.0.113.7","Online","Total:","per user"}{
+ for _,wanted:=range []string{"phone","203.0.113.7","Online","Total:","per user","Last online","IP history"}{
   if !strings.Contains(body,wanted){t.Fatalf("missing %q in online view: %s",wanted,body)}
  }
  state.LiveIPs=map[string][]onlineClientIP{}
@@ -115,7 +116,7 @@ exit 3
  recordOnlineFallback(bin,false,time.Now())
  usePerEmail,allowProbe=onlineFallbackPlan(bin,1,time.Now().Add(time.Minute))
  if usePerEmail||allowProbe{t.Fatalf("empty probe did not back off: use=%v probe=%v",usePerEmail,allowProbe)}
- if usePerEmail,allowProbe=onlineFallbackPlan(bin,40,time.Now());usePerEmail||allowProbe{
+ if usePerEmail,allowProbe=onlineFallbackPlan(bin,200,time.Now());usePerEmail||allowProbe{
   t.Fatalf("oversized email list must not trigger a probe: use=%v probe=%v",usePerEmail,allowProbe)
  }
 }
@@ -129,4 +130,64 @@ func TestOnlineEmailResponseShapes(t *testing.T){
  user,err=parseOnlineEmailResponse(arrayForm,"")
  if err!=nil{t.Fatal(err)}
  if user.Email!="alice"||len(user.IPs)!=1||user.IPs[0].IP!="2001:db8::5"{t.Fatalf("array form not parsed: %+v",user)}
+}
+
+func TestParseOnlineIPsShapes(t *testing.T){
+ ips,err:=parseOnlineIPs([]byte(`[{"ip":"203.0.113.7","lastSeen":"1800000000"}]`),1800000000)
+ if err!=nil||len(ips)!=1||ips[0].IP!="203.0.113.7"{t.Fatalf("array shape not parsed: %+v %v",ips,err)}
+ ips,err=parseOnlineIPs([]byte(`{"2001:db8::5":1800000000}`),1800000000)
+ if err!=nil||len(ips)!=1||ips[0].IP!="2001:db8::5"{t.Fatalf("map shape not parsed: %+v %v",ips,err)}
+ if ips,err=parseOnlineIPs([]byte(`null`),1800000000);err!=nil||len(ips)!=0{t.Fatalf("null must be empty: %+v %v",ips,err)}
+ if _,err=parseOnlineIPs([]byte(`"bogus"`),1800000000);err==nil{t.Fatal("accepted an unsupported ips shape")}
+}
+
+func TestParseStatInt(t *testing.T){
+ for _,test:=range []struct{
+  raw string
+  want int64
+  ok bool
+ }{
+  {`"3"`,3,true},
+  {`3`,3,true},
+  {`"0"`,0,true},
+  {`"bogus"`,0,false},
+  {``,0,false},
+ }{
+  value,ok:=parseStatInt([]byte(test.raw))
+  if ok!=test.ok||value!=test.want{t.Fatalf("%q parsed as %d/%v",test.raw,value,ok)}
+ }
+}
+
+// A malformed aggregate response or a failing aggregate RPC must not hide the
+// working per-email endpoint: older cores return an unimplemented RPC for
+// GetUsersStats while GetStatsOnlineIpList keeps working.
+func TestOnlineAggregateFailureFallsBackToPerEmail(t *testing.T){
+ for _,mode:=range []string{"rpc-error","malformed"}{
+  bin:=filepath.Join(t.TempDir(),"xray")
+  mock:=`#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in
+    -all)
+      if [ "`+mode+`" = "malformed" ]; then
+        printf '%s\n' '{"users":[{"email":"phone","ips":"bogus"}]}'
+        exit 0
+      fi
+      printf '%s\n' 'failed to get stats: rpc error: code = Unimplemented desc = unknown service method' >&2
+      exit 1 ;;
+    -email=*)
+      printf '%s\n' '{"name":"phone","ips":{"203.0.113.11":1800000000}}'
+      exit 0 ;;
+  esac
+done
+exit 3
+`
+  if err:=os.WriteFile(bin,[]byte(mock),0700);err!=nil{t.Fatal(err)}
+  ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second)
+  users,err:=queryOnlineClientsForEmails(ctx,bin,"127.0.0.1:10085",[]string{"phone"})
+  cancel()
+  if err!=nil{t.Fatalf("%s: aggregate failure was not recovered: %v",mode,err)}
+  if len(users)!=1||len(users[0].IPs)!=1||users[0].IPs[0].IP!="203.0.113.11"{
+   t.Fatalf("%s: per-email fallback lost the user: %+v",mode,users)
+  }
+ }
 }

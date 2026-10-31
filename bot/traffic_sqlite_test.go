@@ -42,8 +42,10 @@ func TestSQLiteOnlineObservationsAndRetention(t *testing.T){
  if len(again.LiveIPs)!=0{t.Fatal("stale live IP retained")}
  if again.LastOnline["alice"]!=now.Unix(){t.Fatal("offline poll changed last seen")}
  if !applyOnlineSnapshot(&again,nil,now.Add(31*time.Minute)){t.Fatal("stale IP not pruned")}
- if len(again.OnlineIPs)!=0{t.Fatal("stale IP history retained")}
- if _,known=recentOnline(again,"alice",now.Add(32*time.Minute));known{t.Fatal("stale poll must not report online")}
+ if len(again.OnlineIPs)!=1{t.Fatal("history inside the retention window was pruned")}
+ if !applyOnlineSnapshot(&again,nil,now.Add(onlineHistoryRetention+time.Minute)){t.Fatal("expired IP not pruned")}
+ if len(again.OnlineIPs)!=0{t.Fatal("expired IP history retained")}
+ if _,known=recentOnline(again,"alice",now.Add(onlineHistoryRetention+2*time.Minute));known{t.Fatal("stale poll must not report online")}
 }
 
 func TestSQLiteCorruptLegacyFailsClosed(t *testing.T){

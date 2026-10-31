@@ -149,11 +149,15 @@ func (s *BotService) sendUserManageCard(chatID int64,msgID int,key string) {
   }else{content.WriteString(tr(s.cfg.Language,"account.offline"))}
   if stamp:=state.LastOnline[email];stamp>0 {
    content.WriteString(tr(s.cfg.Language,"account.last",time.Unix(stamp,0).Format("2006-01-02 15:04:05")))
+  }else{
+   content.WriteString(tr(s.cfg.Language,"account.lastNever"))
   }
   if entries:=state.OnlineIPs[email];len(entries)>0{
    content.WriteString(tr(s.cfg.Language,"account.recent"))
-   for i,ip:=range entries{if i>=3{break};if i>0{content.WriteString(", ")};content.WriteString(ip.IP)}
-   content.WriteString("\n")
+   for i,ip:=range entries{
+    if i>=5{break}
+    content.WriteString(tr(s.cfg.Language,"account.recentline",mdCode(ip.IP),time.Unix(ip.LastSeen,0).Format("2006-01-02 15:04:05")))
+   }
   }
   content.WriteString(tr(s.cfg.Language,"account.warning"))
  }else{
