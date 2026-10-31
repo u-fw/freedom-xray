@@ -29,6 +29,7 @@ type XrayClient struct {
 type InboundDetails struct {
 	Tag           string
 	Port          int
+	PublicPort    int // client-facing HTTPS port; does not alter listener
 	Protocol      string
 	Network       string
 	Security      string
@@ -41,6 +42,7 @@ type InboundDetails struct {
 	XHTTPPath     string
 	XHTTPHost     string
 	XHTTPMode     string
+	XHTTPPaddingBytes string
 	ClientEncrypt string
 	Clients       []XrayClient
 }
@@ -328,12 +330,18 @@ func LoadXrayInbounds(configPath string) ([]InboundDetails, error) {
 				node.XHTTPPath, _ = xhttp["path"].(string)
 				node.XHTTPHost, _ = xhttp["host"].(string)
 				node.XHTTPMode, _ = xhttp["mode"].(string)
+				// Prefer the official nested extra when present, but keep legacy top-level compatibility.
+    if extra,ok:=xhttp["extra"].(map[string]interface{});ok {
+     node.XHTTPPaddingBytes,_=extra["xPaddingBytes"].(string)
+    }
+    if node.XHTTPPaddingBytes=="" {node.XHTTPPaddingBytes,_=xhttp["xPaddingBytes"].(string)}
 			}
 		}
 
 		inbounds = append(inbounds, node)
 	}
 
+	if err:=attachInboundPublicPorts(configPath,inbounds);err!=nil{return nil,err}
 	return inbounds, nil
 }
 
@@ -390,6 +398,24 @@ func formatHost(host string) string {
 	return host
 }
 
+// Xray's ECH client can query HTTPS RR for cloudflare-ech.com through this DoH.
+// Emit it only for TLS + XHTTP links, not for REALITY transports.
+const defaultXHTTPECHConfig = "cloudflare-ech.com+https://dns.alidns.com/dns-query"
+
+func (node *InboundDetails) xhttpShareExtra() string {
+ padding:=node.XHTTPPaddingBytes
+ if padding=="" {padding="100-1000"}
+ extra,_:=json.Marshal(struct {
+  XPaddingBytes string `json:"xPaddingBytes"`
+ }{XPaddingBytes:padding})
+ return string(extra)
+}
+
+func (node *InboundDetails) SharePort() int {
+ if node.PublicPort>=1&&node.PublicPort<=65535{return node.PublicPort}
+ return node.Port
+}
+
 // GenerateVlessURI builds a standard vless:// URI for the given client.
 // The parameter set mirrors freedom.sh so the bot and the CLI produce the
 // same working links: REALITY public key derived from privateKey, ML-DSA-65
@@ -406,6 +432,11 @@ func (node *InboundDetails) GenerateVlessURI(client XrayClient, serverHost strin
 	if encryption == "" {
 		encryption = "none"
 	}
+ if node.Network=="xhttp" && encryption=="none" && flow!="" {
+  // Vision is meaningful on XHTTP only together with VLESS Encryption.
+  log.Printf("[Xray] node %s: removed incompatible XHTTP Vision (encryption=none) from exported URI",node.Tag)
+  flow=""
+ }
 
 	q := url.Values{}
 	q.Set("type", node.Network)
@@ -452,19 +483,20 @@ func (node *InboundDetails) GenerateVlessURI(client XrayClient, serverHost strin
 
 		switch node.Network {
 		case "tcp":
-			if flow == "" {
-				flow = "xtls-rprx-vision"
-			}
+			// Export exactly the flow configured on this client, never infer it.
 		case "xhttp":
 			if node.XHTTPPath != "" {
 				q.Set("path", node.XHTTPPath)
 			}
-			q.Set("host", sni)
+			if node.XHTTPHost != "" {
+				q.Set("host", node.XHTTPHost)
+			}
 			mode := node.XHTTPMode
 			if mode == "" {
 				mode = "auto"
 			}
 			q.Set("mode", mode)
+			q.Set("extra", node.xhttpShareExtra())
 		}
 	case "tls":
 		// CDN-friendly: address the node through its certificate domain
@@ -476,7 +508,13 @@ func (node *InboundDetails) GenerateVlessURI(client XrayClient, serverHost strin
 		host = domain
 		q.Set("fp", "chrome")
 		q.Set("sni", domain)
-		q.Set("host", domain)
+		q.Set("alpn", "h2")
+		if node.Network == "xhttp" {
+			q.Set("ech", defaultXHTTPECHConfig)
+		}
+		if node.XHTTPHost != "" {
+			q.Set("host", node.XHTTPHost)
+		}
 		if node.Network == "xhttp" {
 			if node.XHTTPPath != "" {
 				q.Set("path", node.XHTTPPath)
@@ -486,6 +524,7 @@ func (node *InboundDetails) GenerateVlessURI(client XrayClient, serverHost strin
 				mode = "auto"
 			}
 			q.Set("mode", mode)
+			q.Set("extra", node.xhttpShareExtra())
 		}
 	default:
 		if node.SNI != "" {
@@ -498,11 +537,11 @@ func (node *InboundDetails) GenerateVlessURI(client XrayClient, serverHost strin
 	}
 	q.Set("encryption", encryption)
 
-	remark := fmt.Sprintf("%s-%d-%s", node.Tag, node.Port, client.Email)
+	remark := fmt.Sprintf("%s-%d-%s", node.Tag, node.SharePort(), client.Email)
 	return fmt.Sprintf("vless://%s@%s:%d?%s#%s",
 		client.ID,
 		formatHost(host),
-		node.Port,
+		node.SharePort(),
 		q.Encode(),
 		url.QueryEscape(remark),
 	)

@@ -10,9 +10,15 @@ import (
 // BotConfig represents freedom-bot configuration options
 type BotConfig struct {
 	Token            string  `json:"token"`
+ Language string `json:"language,omitempty"`
+ ConfigFile string `json:"-"`
 	AdminIDs         []int64 `json:"admin_ids"`
 	Socks5Proxy      string  `json:"socks5_proxy,omitempty"` // e.g. "127.0.0.1:10808"
-	ReportHours      int     `json:"report_hours,omitempty"` // periodic report interval in hours (0 = disabled)
+	ReportHours      int     `json:"report_hours,omitempty"`
+	AllowMutations   bool    `json:"allow_mutations,omitempty"`
+	AllowUpdates bool `json:"allow_updates,omitempty"`
+	AllowCoreUpdates bool `json:"allow_core_updates,omitempty"`
+	AllowSensitiveBackup bool `json:"allow_sensitive_backup,omitempty"` // periodic report interval in hours (0 = disabled)
 	XrayConfigPath   string  `json:"xray_config_path"`
 	XrayBinPath      string  `json:"xray_bin_path"`
 	StatsAPIServer   string  `json:"stats_api_server"`
@@ -22,9 +28,14 @@ type BotConfig struct {
 func DefaultConfig() *BotConfig {
 	return &BotConfig{
 		Token:          "",
+  Language: "en",
 		AdminIDs:       []int64{},
 		Socks5Proxy:    "",
 		ReportHours:    12, // Default every 12 hours
+		AllowMutations: false, // Local opt-in is required before Telegram can write configurations
+		AllowUpdates: false,
+		AllowCoreUpdates: false,
+		AllowSensitiveBackup: false,
 		XrayConfigPath: "/usr/local/etc/xray/config.json",
 		XrayBinPath:    "/usr/local/bin/xray",
 		StatsAPIServer: "127.0.0.1:10085",
@@ -34,7 +45,8 @@ func DefaultConfig() *BotConfig {
 // LoadConfig reads config from given path
 func LoadConfig(path string) (*BotConfig, error) {
 	cfg := DefaultConfig()
-	data, err := os.ReadFile(path)
+ cfg.ConfigFile=path
+ data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return cfg, nil
@@ -46,7 +58,9 @@ func LoadConfig(path string) (*BotConfig, error) {
 		return nil, fmt.Errorf("parse config error: %w", err)
 	}
 
-	// Fallback empty paths to defaults
+	// The English locale is the default for all installs and upgrades.
+ cfg.Language=normalizeLanguage(cfg.Language)
+ // Fallback empty paths to defaults
 	if cfg.XrayConfigPath == "" {
 		cfg.XrayConfigPath = "/usr/local/etc/xray/config.json"
 	}

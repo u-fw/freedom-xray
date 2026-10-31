@@ -1,0 +1,22 @@
+{
+  "title": "freedom.sh 管理脚本",
+  "status.nodes": "节点",
+  "status.users": "用户",
+  "exit": "退出脚本",
+  "nodes": "节点列表与分享链接",
+  "add": "添加节点",
+  "delete": "删除节点",
+  "modify": "修改节点",
+  "users": "用户管理与流量统计",
+  "tuning": "系统网络调优",
+  "service": "服务运维",
+  "update": "在线更新",
+  "bot": "Telegram 机器人",
+  "uninstall": "卸载 Xray",
+  "language": "语言 / Language",
+  "prompt": "请选择 [0-11]: ",
+  "bye": "退出脚本。再见！",
+  "invalid": "无效选项，请重新选择。",
+  "language.prompt": "语言设置：1) English  2) 简体中文 [1/2]: ",
+  "language.saved": "语言设置已保存。"
+}

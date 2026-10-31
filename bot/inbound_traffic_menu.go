@@ -1,0 +1,33 @@
+package main
+
+import (
+ "strings"
+
+ tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+)
+
+func (s *BotService) sendInboundTrafficCard(chatID int64,msgID int) {
+ state,err:=snapshotTraffic(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer)
+ if err!=nil {
+  cached,readErr:=loadTrafficStore(s.cfg.XrayConfigPath)
+  if readErr!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"inbound.failure",mdEsc(err.Error()),mdEsc(readErr.Error())),backToMainMarkup());return}
+  state=cached
+ }
+ traffic:=storedInboundTraffic(state)
+ var body strings.Builder
+ body.WriteString(tr(s.cfg.Language,"inbound.title"))
+ if err!=nil{body.WriteString(tr(s.cfg.Language,"inbound.stale",mdEsc(err.Error())))}
+ var total uint64
+ if len(traffic)==0{body.WriteString(tr(s.cfg.Language,"inbound.empty"))}
+ for _,entry:=range traffic{
+  total+=entry.Total()
+  body.WriteString(tr(s.cfg.Language,"inbound.row",mdEsc(entry.Tag),FormatBytes(entry.Uplink),FormatBytes(entry.Downlink),FormatBytes(entry.Total())))
+ }
+ body.WriteString(tr(s.cfg.Language,"inbound.total",FormatBytes(total)))
+ body.WriteString(tr(s.cfg.Language,"inbound.note"))
+ markup:=tgbotapi.NewInlineKeyboardMarkup(
+  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.refresh"),"menu_inbound_traffic"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"inbound.users"),"menu_traffic")),
+  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.home"),"menu_main")),
+ )
+ s.sendOrEdit(chatID,msgID,body.String(),markup)
+}

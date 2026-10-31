@@ -24,6 +24,7 @@ type BotService struct {
 	cfg    *BotConfig
 	bot    *tgbotapi.BotAPI
 	stopCh chan struct{}
+ collectorReady bool
 }
 
 // NewBotService initializes Telegram Bot with optional SOCKS5 proxy
@@ -53,6 +54,9 @@ func NewBotService(cfg *BotConfig) (*BotService, error) {
 	}
 
 	log.Printf("[Bot] Authorized on account @%s (ID: %d)", bot.Self.UserName, bot.Self.ID)
+	if err := publishBotReadiness(); err != nil {
+		log.Printf("[Bot] Startup readiness marker failed: %v",err)
+	}
 
 	return &BotService{
 		cfg:    cfg,
@@ -68,7 +72,10 @@ func (s *BotService) Start() error {
 
 	updates := s.bot.GetUpdatesChan(u)
 
-	// Start periodic report if enabled
+	// Independently persist traffic, even when no report or chat is requested.
+ if !s.collectorReady {go s.runTrafficSampler()}
+
+ // Start periodic report if enabled
 	if s.cfg.ReportHours > 0 {
 		go s.runPeriodicReport()
 	}
@@ -88,7 +95,10 @@ func (s *BotService) Start() error {
 
 // Stop cleanly stops the bot
 func (s *BotService) Stop() {
-	close(s.stopCh)
+  if _,err:=snapshotTraffic(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer);err!=nil{
+    log.Printf("[Traffic] shutdown snapshot skipped: %v",err)
+  }
+  close(s.stopCh)
 }
 
 func (s *BotService) handleUpdate(update tgbotapi.Update) {
@@ -114,15 +124,15 @@ func (s *BotService) handleUpdate(update tgbotapi.Update) {
 		log.Printf("[Bot] Unauthorized access attempt from User ID: %d", senderID)
 		if isCallback && update.CallbackQuery != nil {
 			// Stop the client-side spinner on unauthorized button presses.
-			if _, err := s.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "⛔ 未授权访问")); err != nil {
+			if _, err := s.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "⛔ Access denied")); err != nil {
 				log.Printf("[Bot] answer unauthorized callback failed: %v", err)
 			}
 		}
 		if !isCallback && update.Message != nil && update.Message.Chat.IsPrivate() {
 			msg := tgbotapi.NewMessage(chatID, fmt.Sprintf(
-				"⛔ 未授权访问 (Unauthorized)\n\n"+
-					"您的 Telegram User ID 是: `%d`\n"+
-					"请在 VPS 上使用 `freedom` 脚本将其加入管理员白名单。",
+				"⛔ Unauthorized access\n\n"+
+					"Your Telegram user ID: `%d`\n"+
+					"Use the `freedom` command on the VPS to add it to the administrator allowlist.",
 				senderID,
 			))
 			msg.ParseMode = "Markdown"
@@ -130,6 +140,14 @@ func (s *BotService) handleUpdate(update tgbotapi.Update) {
 				log.Printf("[Bot] send unauthorized notice failed: %v", err)
 			}
 		}
+		return
+	}
+
+	// Never expose keys or permit management from group chats.
+	// In a private Telegram chat, chat ID equals the authorized user's ID.
+	if chatID != senderID || (update.Message != nil && !update.Message.Chat.IsPrivate()) ||
+		(update.CallbackQuery != nil && update.CallbackQuery.Message != nil && !update.CallbackQuery.Message.Chat.IsPrivate()) {
+		if isCallback { _,_ = s.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Administrator private chats only")) }
 		return
 	}
 
@@ -145,16 +163,26 @@ func (s *BotService) handleUpdate(update tgbotapi.Update) {
 }
 
 func (s *BotService) handleMessage(msg *tgbotapi.Message) {
+	if s.handleNodePathInput(msg) { return }
+	if s.handleWizardMessage(msg) { return }
 	text := strings.TrimSpace(msg.Text)
 	cmd := msg.Command()
+	if s.handleUserManagementCommand(msg) { return }
 
 	switch cmd {
 	case "start", "menu":
+		s.registerAdminCommands(msg.Chat.ID)
 		s.sendMainMenu(msg.Chat.ID, 0)
 	case "status":
 		s.sendStatusCard(msg.Chat.ID, 0)
-	case "traffic", "usage":
+	case "language", "lang":
+  s.changeLanguage(msg)
+ case "online":
+  s.sendOnlineCard(msg.Chat.ID,0)
+ case "traffic", "usage":
 		s.sendTrafficCard(msg.Chat.ID, 0)
+	case "inboundtraffic":
+		s.sendInboundTrafficCard(msg.Chat.ID,0)
 	case "nodes", "inbounds":
 		s.sendNodesCard(msg.Chat.ID, 0)
 	case "users", "link":
@@ -163,9 +191,15 @@ func (s *BotService) handleMessage(msg *tgbotapi.Message) {
 		s.askRestart(msg.Chat.ID, 0)
 	case "backup":
 		s.sendBackupFile(msg.Chat.ID)
+	case "update":
+		s.runSafeUpdates(msg.Chat.ID,0,[]string{"script","bot"})
+	case "version", "versions":
+		s.sendVersionCard(msg.Chat.ID,0)
+	case "help":
+		s.sendHelpCard(msg.Chat.ID,0)
 	default:
 		if strings.HasPrefix(text, "/") {
-			reply := tgbotapi.NewMessage(msg.Chat.ID, "未知命令，输入 /menu 或 /start 查看控制中心。")
+			reply := tgbotapi.NewMessage(msg.Chat.ID, "Unknown command. Use /menu or /start to open the dashboard.")
 			s.bot.Send(reply)
 		} else {
 			s.sendMainMenu(msg.Chat.ID, 0)
@@ -192,24 +226,71 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 		s.sendMainMenu(chatID, msgID)
 	case data == "menu_status":
 		s.sendStatusCard(chatID, msgID)
-	case data == "menu_traffic":
+	case data == "menu_online":
+  s.sendOnlineCard(chatID,msgID)
+ case data == "menu_traffic":
 		s.sendTrafficCard(chatID, msgID)
+	case data == "menu_inbound_traffic":
+		s.sendInboundTrafficCard(chatID,msgID)
 	case data == "menu_nodes":
 		s.sendNodesCard(chatID, msgID)
+	case strings.HasPrefix(data,"node_detail:") || strings.HasPrefix(data,"node_mode:") || strings.HasPrefix(data,"node_path:") || strings.HasPrefix(data,"node_public_port:") || strings.HasPrefix(data,"node_sni:"):
+		s.handleNodeCallback(cb)
+	case strings.HasPrefix(data,"node_confirm:"):
+		s.confirmNodeChange(cb,true)
+	case strings.HasPrefix(data,"node_cancel:"):
+		s.confirmNodeChange(cb,false)
 	case data == "menu_users":
 		s.sendUsersCard(chatID, msgID)
+	case data == "menu_disabled_users":
+		s.sendDisabledUsersCard(chatID,msgID)
+	case strings.HasPrefix(data,"manage_enable:"):
+		s.enableDisabledUserCallback(cb)
+	case data == "manage_add":
+		s.beginUserWizard(chatID,cb.From.ID,msgID,"name","")
+	case strings.HasPrefix(data,"manage_scope:"):
+		s.handleWizardScope(cb)
+	case strings.HasPrefix(data,"manage_rename:"):
+		email:=lookupManagedUserByKey(s.cfg.XrayConfigPath,strings.TrimPrefix(data,"manage_rename:"))
+		if email==""{s.sendAlert(chatID,"User not found or renamed; refresh the user list");return}
+		s.beginUserWizard(chatID,cb.From.ID,msgID,"rename",email)
 	case data == "menu_restart_ask":
 		s.askRestart(chatID, msgID)
 	case data == "menu_restart_confirm":
 		s.doRestart(chatID, msgID)
 	case data == "menu_backup":
 		s.sendBackupFile(chatID)
+	case data == "menu_update":
+		s.showUpdatesMenu(chatID,msgID)
+	case data == "menu_version":
+		s.sendVersionCard(chatID,msgID)
+	case data == "menu_help":
+		s.sendHelpCard(chatID,msgID)
+	case strings.HasPrefix(data,"update_ask:"):
+		s.askUpdate(cb,strings.TrimPrefix(data,"update_ask:"))
+	case strings.HasPrefix(data,"update_confirm:"):
+		s.resolveUpdate(cb,true)
+	case strings.HasPrefix(data,"update_cancel:"):
+		s.resolveUpdate(cb,false)
 	case data == "traffic_reset_ask":
 		s.askTrafficReset(chatID, msgID)
 	case data == "traffic_reset_confirm":
 		s.doTrafficReset(chatID, msgID)
 	case strings.HasPrefix(data, "user_links:"):
 		s.handleUserLinksCallback(chatID, strings.TrimPrefix(data, "user_links:"))
+	case strings.HasPrefix(data,"user_export_one:"):
+		s.handleUserExportCallback(cb,"one")
+	case strings.HasPrefix(data,"user_export_all:"):
+		s.handleUserExportCallback(cb,"all")
+	case strings.HasPrefix(data,"user_export_qrs:"):
+		s.handleUserExportCallback(cb,"qrs")
+	case strings.HasPrefix(data, "manage_confirm:"):
+		s.resolveUserChange(cb, true)
+	case strings.HasPrefix(data, "manage_cancel:"):
+		s.resolveUserChange(cb, false)
+	case strings.HasPrefix(data, "manage_user:") || strings.HasPrefix(data, "manage_rotate:") ||
+		strings.HasPrefix(data, "manage_delete:") || strings.HasPrefix(data, "manage_disable:") || strings.HasPrefix(data, "manage_node:"):
+		s.handleManagedUserCallback(cb)
 	}
 }
 
@@ -221,12 +302,13 @@ func (s *BotService) handleUserLinksCallback(chatID int64, payload string) {
 		return
 	}
 
-	nodes, loadErr := LoadXrayInbounds(s.cfg.XrayConfigPath)
+	_, loadErr := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if loadErr != nil {
-		s.sendAlert(chatID, "❌ 读取用户列表失败: "+loadErr.Error())
+		s.sendAlert(chatID, "❌ Failed to read user list: "+loadErr.Error())
 		return
 	}
-	emails := sortedEmails(nodes)
+	emails,dirErr := allDirectoryNames(s.cfg.XrayConfigPath)
+	if dirErr!=nil {s.sendAlert(chatID,"Failed to read user directory: "+dirErr.Error());return}
 
 	// Current format: a 16-hex-character email hash, stable across refreshes.
 	if len(payload) == 16 {
@@ -237,7 +319,7 @@ func (s *BotService) handleUserLinksCallback(chatID int64, payload string) {
 					return
 				}
 			}
-			s.sendAlert(chatID, "用户列表已变化，请返回重新选择。")
+			s.sendAlert(chatID, "The user list has changed. Return and select again.")
 			s.sendUsersCard(chatID, 0)
 			return
 		}
@@ -249,7 +331,7 @@ func (s *BotService) handleUserLinksCallback(chatID int64, payload string) {
 			s.sendUserLinksAndQRs(chatID, emails[idx])
 			return
 		}
-		s.sendAlert(chatID, "用户列表已变化，请返回重新选择。")
+		s.sendAlert(chatID, "The user list has changed. Return and select again.")
 		s.sendUsersCard(chatID, 0)
 		return
 	}
@@ -301,53 +383,29 @@ func (s *BotService) sendOrEdit(chatID int64, msgID int, text string, markup tgb
 	}
 }
 
-func (s *BotService) sendMainMenu(chatID int64, msgID int) {
-	nodes, _ := LoadXrayInbounds(s.cfg.XrayConfigPath)
-	userCount := len(sortedEmails(nodes))
-
-	xrayStatus := CheckXrayServiceStatus()
-	statusIcon := "🟢"
-	if xrayStatus != "active" {
-		statusIcon = "🔴"
-	}
-
-	text := fmt.Sprintf(
-		"🤖 *freedom.sh 控制中心 (Freedom Bot)*\n\n"+
-			"🖥️ *Xray 运行状态:* %s `%s`\n"+
-			"📋 *活跃业务节点:* `%d` 个\n"+
-			"👥 *托管同步用户:* `%d` 个\n"+
-			"⏱️ *Bot 运行时间:* `%s`\n\n"+
-			"请选择下方操作：",
-		statusIcon, mdCode(xrayStatus),
-		len(nodes), userCount,
-		formatDuration(time.Since(botStartTime)),
-	)
-
-	markup := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("📊 系统状态", "menu_status"),
-			tgbotapi.NewInlineKeyboardButtonData("📈 流量统计", "menu_traffic"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("📋 节点列表", "menu_nodes"),
-			tgbotapi.NewInlineKeyboardButtonData("👥 导出链接与二维码", "menu_users"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🔄 重启 Xray", "menu_restart_ask"),
-			tgbotapi.NewInlineKeyboardButtonData("💾 备份配置", "menu_backup"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("⚡ 刷新主面板", "menu_main"),
-		),
-	)
-
-	s.sendOrEdit(chatID, msgID, text, markup)
+func (s *BotService) sendMainMenu(chatID int64,msgID int) {
+ nodes,_:=LoadXrayInbounds(s.cfg.XrayConfigPath)
+ names,dirErr:=allDirectoryNames(s.cfg.XrayConfigPath)
+ userCount:=len(sortedEmails(nodes));if dirErr==nil{userCount=len(names)}
+ hostname,_:=os.Hostname()
+ if hostname==""{hostname="unknown"}
+ status:=CheckXrayServiceStatus()
+ state:="🔴";if status=="active"{state="🟢"}
+ updateState:=tr(s.cfg.Language,"menu.updates.disabled");if s.cfg.AllowUpdates{updateState=tr(s.cfg.Language,"menu.updates.enabled")}
+ content:=fmt.Sprintf(tr(s.cfg.Language,"menu.dashboard"),mdCode(hostname),state,mdCode(status),len(nodes),userCount,mdCode(Version),updateState)
+ keyboard:=tgbotapi.NewInlineKeyboardMarkup(
+  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.users"),"menu_users"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.nodes"),"menu_nodes")),
+  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.traffic"),"menu_traffic"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.online"),"menu_online"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.status"),"menu_status")),
+  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.update"),"menu_update"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.version"),"menu_version")),
+  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.restart"),"menu_restart_ask"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.backup"),"menu_backup")),
+  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.help"),"menu_help"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.refresh"),"menu_main")),
+ )
+ s.sendOrEdit(chatID,msgID,content,keyboard)
 }
-
 func (s *BotService) sendStatusCard(chatID int64, msgID int) {
 	stats, err := GetSystemStats()
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, "❌ 获取系统状态失败: "+mdEsc(err.Error()), backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language,"status.failure",mdEsc(err.Error())), backToMainMarkup())
 		return
 	}
 
@@ -358,15 +416,7 @@ func (s *BotService) sendStatusCard(chatID int64, msgID int) {
 	}
 
 	text := fmt.Sprintf(
-		"📊 *VPS 系统实时健康监控*\n\n"+
-			"🖥️ *主机名:* `%s` (%s)\n"+
-			"⏱️ *系统开机时间:* `%s`\n"+
-			"⚙️ *Xray 服务状态:* %s `%s`\n\n"+
-			"🔥 *CPU:* `%d 核` | 使用率: `%.1f%%`\n"+
-			"📈 *平均负载:* `%s, %s, %s`\n"+
-			"🧠 *内存使用:* `%s / %s` (`%.1f%%`)\n"+
-			"💾 *磁盘使用 (/):* `%s / %s` (`%.1f%%`)\n"+
-			"🤖 *Bot 连续运行:* `%s`",
+  tr(s.cfg.Language,"status.summary"),
 		mdCode(stats.Hostname), mdEsc(stats.Platform),
 		mdCode(stats.UptimeStr),
 		statusIcon, mdCode(xrayStatus),
@@ -379,8 +429,8 @@ func (s *BotService) sendStatusCard(chatID int64, msgID int) {
 
 	markup := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("⚡ 刷新", "menu_status"),
-			tgbotapi.NewInlineKeyboardButtonData("🔙 返回主菜单", "menu_main"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.refresh"), "menu_status"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.back"), "menu_main"),
 		),
 	)
 
@@ -388,44 +438,42 @@ func (s *BotService) sendStatusCard(chatID int64, msgID int) {
 }
 
 func (s *BotService) sendTrafficCard(chatID int64, msgID int) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	traffics, err := QueryTrafficStats(ctx, s.cfg.XrayBinPath, s.cfg.StatsAPIServer, false)
-	if err != nil {
-		s.sendOrEdit(chatID, msgID, fmt.Sprintf(
-			"❌ *获取流量失败*\n\n原因: `%s`\n\n请确认 Xray 正在运行且 StatsService (10085 端口) 已开启。", mdCode(err.Error())),
-			backToMainMarkup())
-		return
-	}
-
-	var sb strings.Builder
-	sb.WriteString("📈 *用户流量统计实时排行榜*\n\n")
+ state,err:=snapshotTraffic(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer)
+ if err!=nil {
+  cached,readErr:=loadTrafficStore(s.cfg.XrayConfigPath)
+  if readErr!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"traffic.readerror",mdEsc(err.Error()),mdEsc(readErr.Error())),backToMainMarkup());return}
+  state=cached
+ }
+ traffics:=storedUserTraffic(state)
+ var sb strings.Builder
+ sb.WriteString(tr(s.cfg.Language,"traffic.title"))
+ if err!=nil {sb.WriteString(tr(s.cfg.Language,"traffic.stale",mdEsc(err.Error())))}
 
 	if len(traffics) == 0 {
-		sb.WriteString("暂无用户流量记录或 Xray 刚启动尚未产生数据。\n")
+		sb.WriteString(tr(s.cfg.Language,"traffic.empty"))
 	} else {
 		var totalAll uint64
 		for _, u := range traffics {
 			totalAll += u.Total
-			sb.WriteString(fmt.Sprintf(
-				"👤 *%s*\n  ⬆️ 上传: `%s` | ⬇️ 下载: `%s`\n  📊 总计: `%s`\n\n",
+			sb.WriteString(fmt.Sprintf(tr(s.cfg.Language,"traffic.row"),
 				mdEsc(u.Email),
 				FormatBytes(u.Uplink),
 				FormatBytes(u.Downlink),
 				FormatBytes(u.Total),
 			))
 		}
-		sb.WriteString(fmt.Sprintf("🌐 *全站总流量:* `%s`\n", FormatBytes(totalAll)))
+		sb.WriteString(tr(s.cfg.Language,"traffic.total",FormatBytes(totalAll)))
 	}
 
+ sb.WriteString(tr(s.cfg.Language,"traffic.note"))
 	markup := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("⚡ 刷新", "menu_traffic"),
-			tgbotapi.NewInlineKeyboardButtonData("🔄 清零流量", "traffic_reset_ask"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.refresh"), "menu_traffic"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"traffic.reset"), "traffic_reset_ask"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🔙 返回主菜单", "menu_main"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"traffic.inbounds"), "menu_inbound_traffic"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.back"), "menu_main"),
 		),
 	)
 
@@ -433,31 +481,38 @@ func (s *BotService) sendTrafficCard(chatID int64, msgID int) {
 }
 
 func (s *BotService) askTrafficReset(chatID int64, msgID int) {
-	text := "⚠️ *确认清零所有用户的流量统计吗？*\n\n此操作会重置 Xray 核心内存中当前记录的全部上传与下载量，无法撤回。"
+	text := tr(s.cfg.Language,"traffic.resetconfirm")
 	markup := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🔴 确认清零", "traffic_reset_confirm"),
-			tgbotapi.NewInlineKeyboardButtonData("取消", "menu_traffic"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"traffic.resetbutton"), "traffic_reset_confirm"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.cancel"), "menu_traffic"),
 		),
 	)
 	s.sendOrEdit(chatID, msgID, text, markup)
 }
 
 func (s *BotService) doTrafficReset(chatID int64, msgID int) {
+ lock,lockErr:=acquireConfigLock(s.cfg.XrayConfigPath,10*time.Second)
+ if lockErr!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"traffic.lock",mdEsc(lockErr.Error())),backToMainMarkup());return}
+ defer releaseConfigLock(lock)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	_, err := QueryTrafficStats(ctx, s.cfg.XrayBinPath, s.cfg.StatsAPIServer, true)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, "❌ 清零失败: "+mdEsc(err.Error()), backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language,"traffic.reseterror",mdEsc(err.Error())), backToMainMarkup())
 		return
 	}
 
-	text := "✅ *用户流量统计已成功清零！*"
+	if err := resetTrafficAllUsersLocked(s.cfg.XrayConfigPath); err != nil {
+		s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"traffic.partialreset",mdEsc(err.Error())),backToMainMarkup())
+		return
+	}
+	text := tr(s.cfg.Language,"traffic.resetsuccess")
 	markup := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("📊 查看流量统计", "menu_traffic"),
-			tgbotapi.NewInlineKeyboardButtonData("🔙 返回主菜单", "menu_main"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"traffic.view"), "menu_traffic"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.back"), "menu_main"),
 		),
 	)
 	s.sendOrEdit(chatID, msgID, text, markup)
@@ -466,27 +521,23 @@ func (s *BotService) doTrafficReset(chatID int64, msgID int) {
 func (s *BotService) sendNodesCard(chatID int64, msgID int) {
 	nodes, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, "❌ 读取节点列表失败: "+mdEsc(err.Error()), backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language,"nodes.failure",mdEsc(err.Error())), backToMainMarkup())
 		return
 	}
 
 	var sb strings.Builder
-	sb.WriteString("📋 *当前托管业务节点列表*\n\n")
+	sb.WriteString(tr(s.cfg.Language,"nodes.title"))
 
 	if len(nodes) == 0 {
-		sb.WriteString("未找到任何业务节点，请使用 `freedom` 脚本添加。\n")
+		sb.WriteString(tr(s.cfg.Language,"nodes.empty"))
 	} else {
 		for i, n := range nodes {
 			sni := n.SNI
 			if sni == "" {
 				sni = "-"
 			}
-			sb.WriteString(fmt.Sprintf(
-				"*%d. [%s] 端口: %d*\n"+
-					"  • 协议: `%s` | 传输: `%s`\n"+
-					"  • 安全层: `%s` | 伪装/SNI: `%s`\n"+
-					"  • 绑定用户数: `%d` 个\n\n",
-				i+1, mdEsc(n.Tag), n.Port,
+			sb.WriteString(fmt.Sprintf(tr(s.cfg.Language,"nodes.row"),
+				i+1, mdEsc(n.Tag), n.SharePort(),
 				mdCode(strings.ToUpper(n.Protocol)), mdCode(strings.ToUpper(n.Network)),
 				mdCode(strings.ToUpper(n.Security)), mdCode(sni),
 				len(n.Clients),
@@ -494,150 +545,127 @@ func (s *BotService) sendNodesCard(chatID int64, msgID int) {
 		}
 	}
 
+	var nodeRows [][]tgbotapi.InlineKeyboardButton
+	for _,node:=range nodes {
+		if node.Protocol=="vless" {
+			nodeRows=append(nodeRows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⚙ "+truncateLabel(node.Tag,40),"node_detail:"+userCallbackKey(node.Tag))))
+		}
+	}
 	markup := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("⚡ 刷新", "menu_nodes"),
-			tgbotapi.NewInlineKeyboardButtonData("🔙 返回主菜单", "menu_main"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.refresh"), "menu_nodes"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.back"), "menu_main"),
 		),
 	)
 
+	markup.InlineKeyboard=append(nodeRows,markup.InlineKeyboard...)
 	s.sendOrEdit(chatID, msgID, sb.String(), markup)
 }
 
 func (s *BotService) sendUsersCard(chatID int64, msgID int) {
-	nodes, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
+	_, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, "❌ 读取用户列表失败: "+mdEsc(err.Error()), backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language,"users.failure",mdEsc(err.Error())), backToMainMarkup())
 		return
 	}
 
-	emails := sortedEmails(nodes)
+	emails,dirErr := allDirectoryNames(s.cfg.XrayConfigPath)
+	if dirErr!=nil {s.sendAlert(chatID,tr(s.cfg.Language,"users.directoryerror",dirErr.Error()));return}
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, email := range emails {
-		// Button labels share Telegram's 64-byte UI limit; emails are user
-		// supplied, so shorten the label. The callback carries a stable short
-		// hash instead of the email (callback_data is capped at 64 bytes).
-		btn := tgbotapi.NewInlineKeyboardButtonData(
-			truncateLabel("👤 "+email, 64), "user_links:"+userCallbackKey(email))
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(btn))
+		key := userCallbackKey(email)
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(truncateLabel("👤 "+email, 40),"manage_user:"+key),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"users.export"), "user_links:"+key),
+		))
 	}
+	rows = append([][]tgbotapi.InlineKeyboardButton{
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"users.add"),"manage_add"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"users.suspended"),"menu_disabled_users")),
+	}, rows...)
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("🔙 返回主菜单", "menu_main"),
+		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.back"), "menu_main"),
 	))
 
-	text := "👥 *请选择需要导出专属链接与二维码的用户：*"
+	text := tr(s.cfg.Language,"users.title")
 	if len(emails) == 0 {
-		text = "当前配置中尚未添加任何用户，请使用 `freedom` 脚本添加用户。"
+		text = tr(s.cfg.Language,"users.empty")
 	}
 
 	markup := tgbotapi.NewInlineKeyboardMarkup(rows...)
 	s.sendOrEdit(chatID, msgID, text, markup)
 }
 
-func (s *BotService) sendUserLinksAndQRs(chatID int64, email string) {
-	nodes, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
-	if err != nil {
-		s.sendAlert(chatID, "❌ 无法生成节点配置: "+err.Error())
-		return
-	}
-
-	publicIP := GetPublicIP()
-	found := false
-
-	s.sendOrEdit(chatID, 0, fmt.Sprintf("📦 正在为用户 *%s* 生成节点与二维码...", mdEsc(email)),
-		tgbotapi.InlineKeyboardMarkup{})
-
-	for _, n := range nodes {
-		for _, c := range n.Clients {
-			if c.Email == email {
-				found = true
-				vlessURI := n.GenerateVlessURI(c, publicIP)
-
-				// 1. Send URI Text
-				caption := fmt.Sprintf(
-					"🌐 *节点: %s* (端口: `%d`)\n"+
-						"• 协议: `%s + %s + %s`\n"+
-						"• 用户: `%s`\n\n"+
-						"```\n%s\n```",
-					mdEsc(n.Tag), n.Port,
-					mdCode(strings.ToUpper(n.Protocol)), mdCode(strings.ToUpper(n.Network)), mdCode(strings.ToUpper(n.Security)),
-					mdCode(email),
-					vlessURI,
-				)
-
-				// 2. Generate and Send QR Code
-				qrBytes, qrErr := GenerateQRCodePNG(vlessURI, 280)
-				if qrErr != nil {
-					log.Printf("[Bot] generate QR failed for %s: %v", n.Tag, qrErr)
-					s.sendOrEdit(chatID, 0, caption, tgbotapi.InlineKeyboardMarkup{})
-					continue
-				}
-
-				photo := tgbotapi.NewPhoto(chatID, tgbotapi.FileBytes{
-					Name:  fmt.Sprintf("%s-%d.png", n.Tag, n.Port),
-					Bytes: qrBytes,
-				})
-				photo.Caption = caption
-				photo.ParseMode = "Markdown"
-				if _, err := s.bot.Send(photo); err != nil {
-					log.Printf("[Bot] send QR failed for %s: %v", n.Tag, err)
-					// Photo delivery can fail (size, network); the link text is
-					// the actual payload, so fall back to a text message.
-					s.sendOrEdit(chatID, 0, caption, tgbotapi.InlineKeyboardMarkup{})
-				}
-			}
-		}
-	}
-
-	if !found {
-		s.sendAlert(chatID, fmt.Sprintf("未找到用户 %s 的匹配节点信息。", email))
-	}
+// Export links as separate plain-text messages: REALITY parameters can exceed
+// Telegram's photo caption limit (1024 characters) and Markdown escaping can
+// invalidate long VLESS URIs. QR is an optional attachment, never the only copy.
+// Legacy callback entry point: open an explicit selection menu, never auto-send
+// every QR and never silently drop a long REALITY URI.
+func (s *BotService) sendUserLinksAndQRs(chatID int64,email string) {
+ s.sendUserExportMenu(chatID,0,email)
 }
 
 func (s *BotService) askRestart(chatID int64, msgID int) {
-	text := "🔄 *确认立即重启 Xray 核心服务吗？*\n\n重启过程耗时约 1 秒，现有活跃连接会快速重连。"
+	text := "🔄 *Restart the Xray core now?*\n\nActive client connections will disconnect and need to reconnect."
 	markup := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🟢 确认重启", "menu_restart_confirm"),
-			tgbotapi.NewInlineKeyboardButtonData("取消", "menu_main"),
+			tgbotapi.NewInlineKeyboardButtonData("🟢 Confirm restart", "menu_restart_confirm"),
+			tgbotapi.NewInlineKeyboardButtonData("Cancel", "menu_main"),
 		),
 	)
 	s.sendOrEdit(chatID, msgID, text, markup)
 }
 
 func (s *BotService) doRestart(chatID int64, msgID int) {
-	s.sendOrEdit(chatID, msgID, "⏳ 正在重启 Xray 服务...", tgbotapi.InlineKeyboardMarkup{})
+	s.sendOrEdit(chatID, msgID, "⏳ Restarting Xray...", tgbotapi.InlineKeyboardMarkup{})
 
-	err := RestartXrayService()
+	lock,lockErr:=acquireConfigLock(s.cfg.XrayConfigPath,15*time.Second)
+ if lockErr!=nil{s.sendOrEdit(chatID,msgID,"❌ Cannot acquire config lock for restart: "+mdEsc(lockErr.Error()),backToMainMarkup());return}
+ snapshotTrafficBestEffortLocked(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer)
+ err := RestartXrayService()
+ releaseConfigLock(lock)
 	time.Sleep(1 * time.Second)
 	status := CheckXrayServiceStatus()
 
 	var text string
 	if err != nil || status != "active" {
-		reason := "未知错误"
+		reason := "Unknown error"
 		if err != nil {
 			reason = err.Error()
 		}
-		text = fmt.Sprintf("❌ *Xray 重启失败*\n\n当前状态: `%s`\n错误: `%s`", mdCode(status), mdCode(reason))
+		text = fmt.Sprintf("❌ *Xray restart failed*\n\nCurrent status: `%s`\nError: `%s`", mdCode(status), mdCode(reason))
 	} else {
-		text = "✅ *Xray 核心服务重启成功！*\n\n当前状态: `active (running)`"
+		text = "✅ *Xray restarted successfully.*\n\nCurrent status: `active (running)`"
 	}
 
 	s.sendOrEdit(chatID, msgID, text, backToMainMarkup())
 }
 
 func (s *BotService) sendBackupFile(chatID int64) {
+  if !s.cfg.AllowSensitiveBackup {
+    s.sendAlert(chatID,"🔒 The full configuration contains REALITY and VLESS secrets. Sending it over Telegram is disabled unless allow_sensitive_backup is explicitly enabled on the VPS.")
+    return
+  }
 	if _, err := os.Stat(s.cfg.XrayConfigPath); err != nil {
-		s.sendAlert(chatID, "❌ 配置文件不存在: "+s.cfg.XrayConfigPath)
+		s.sendAlert(chatID, "❌ Configuration file not found: "+s.cfg.XrayConfigPath)
 		return
 	}
 
 	doc := tgbotapi.NewDocument(chatID, tgbotapi.FilePath(s.cfg.XrayConfigPath))
-	doc.Caption = fmt.Sprintf("💾 freedom.sh Xray 配置备份文件\n备份时间: %s", time.Now().Format("2006-01-02 15:04:05"))
+	doc.Caption = fmt.Sprintf("💾 freedom.sh Xray configuration backup\nCreated: %s", time.Now().Format("2006-01-02 15:04:05"))
 	if _, err := s.bot.Send(doc); err != nil {
 		log.Printf("[Bot] send backup document failed: %v", err)
 	}
+}
+
+func (s *BotService) runTrafficSampler() {
+ ticker:=time.NewTicker(15*time.Second)
+ defer ticker.Stop()
+ sample:=func(){if _,err:=snapshotTraffic(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer);err!=nil{
+  log.Printf("[Traffic] background snapshot failed: %v",err)
+ }}
+ sample()
+ for {select{case <-s.stopCh:return;case <-ticker.C:sample()}}
 }
 
 func (s *BotService) runPeriodicReport() {
@@ -657,26 +685,29 @@ func (s *BotService) runPeriodicReport() {
 func (s *BotService) broadcastReport() {
 	stats, _ := GetSystemStats()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	traffics, _ := QueryTrafficStats(ctx, s.cfg.XrayBinPath, s.cfg.StatsAPIServer, false)
+	_ = ctx
+ state,err:=snapshotTraffic(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer)
+ if err!=nil {state,_=loadTrafficStore(s.cfg.XrayConfigPath)}
+ traffics:=storedUserTraffic(state)
 	cancel()
 
 	var sb strings.Builder
-	sb.WriteString("📢 *freedom.sh 定时健康与流量报告*\n\n")
+	sb.WriteString("📢 *freedom.sh Periodic Health and Traffic Report*\n\n")
 	if stats != nil {
 		sb.WriteString(fmt.Sprintf(
-			"🖥️ *主机:* `%s` | Xray: `%s`\n"+
-				"🔥 *CPU:* `%.1f%%` | 🧠 *内存:* `%.1f%%` | 💾 *磁盘:* `%.1f%%`\n\n",
+			"🖥️ *Host:* `%s` | Xray: `%s`\n"+
+				"🔥 *CPU:* `%.1f%%` | 🧠 *Memory:* `%.1f%%` | 💾 *Disk:* `%.1f%%`\n\n",
 			mdCode(stats.Hostname), mdCode(stats.XrayStatus),
 			stats.CPUUsagePct, stats.MemUsagePct, stats.DiskUsagePct,
 		))
 	}
 
-	sb.WriteString("📈 *今日流量榜单:*\n")
+	sb.WriteString("📈 *Top Users by Traffic:*\n")
 	if len(traffics) == 0 {
-		sb.WriteString("暂无流量数据。\n")
+		sb.WriteString("No traffic data available.\n")
 	} else {
 		for _, u := range traffics {
-			sb.WriteString(fmt.Sprintf("• `%s`: ⬆️ %s | ⬇️ %s (共 %s)\n",
+			sb.WriteString(fmt.Sprintf("• `%s`: ⬆️ %s | ⬇️ %s (total %s)\n",
 				mdCode(u.Email), FormatBytes(u.Uplink), FormatBytes(u.Downlink), FormatBytes(u.Total)))
 		}
 	}
@@ -694,7 +725,7 @@ func (s *BotService) broadcastReport() {
 func backToMainMarkup() tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🔙 返回主菜单", "menu_main"),
+			tgbotapi.NewInlineKeyboardButtonData("🔙 Back to menu", "menu_main"),
 		),
 	)
 }

@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 # freedom.sh v11.0-modular-manager
-# 专为 Xray-core 深度定制的 VLESS (REALITY / XHTTP / TLS) 模块化节点生命周期管理控制台
-# 官方规范参考：https://xtls.github.io/config/ 与 https://github.com/xtls/xray-core
+# A modular Xray-core lifecycle manager for VLESS (REALITY, XHTTP, TLS).
+# Official configuration references: https://xtls.github.io/config/ and https://github.com/xtls/xray-core
 #
-# 架构原则：
-# 1. 100% 专一服务于 Xray-core，完全抛弃第三方内核妥协与兼容包袱。
-# 2. 统一配置管理：所有节点聚合维护在单一 Xray 主配置文件中 (inbounds 池)，支持动态增删改查 (CRUD)。
-# 3. 基础原子模板原生支持：
-#    - [模板 1] VLESS + TCP + REALITY + Vision (Splice 硬件零拷贝，直连极速)
-#    - [模板 2] VLESS + XHTTP + REALITY (Beyond REALITY 动态流式分包伪装，抗深度探测，免域名)
-#    - [模板 3] VLESS + XHTTP + TLS (Cloudflare CDN 代理穿透，隐藏源站 IP，救砖抗封)
-# 4. 智能化运维与安全体系：
-#    - Xray 内部端口 + 操作系统全局双层端口冲突主动探测与智能释放
-#    - 后量子密码学全面护航 (ML-KEM-768 加密与 ML-DSA-65 数字签名)
-#    - 生产级全栈极限调优 (BBR, TCP Fast Open, 32MB 宽带大窗口, 100万句柄, 512K 缓冲池)
-#    - 随时调用查看节点看板、导出链接、生成终端二维码，永不丢失配置
+# Architecture principles:
+# 1. Uses the official Xray-core without introducing alternative proxy cores.
+# 2. Stores managed inbounds in one Xray configuration file and supports CRUD operations.
+# 3. Built-in configuration templates:
+#    - Template 1: VLESS + TCP + REALITY + Vision for direct connections.
+#    - Template 2: VLESS + XHTTP + REALITY without an external TLS certificate.
+#    - Template 3: VLESS + XHTTP + TLS for trusted CDN deployments.
+# 4. Operations and security features:
+#    - Checks both Xray configuration and system listener ports for conflicts.
+#    - Supports optional ML-KEM-768 and ML-DSA-65 where the installed core provides them.
+#    - Offers explicit BBR, TCP Fast Open, buffer and file-descriptor tuning.
+#    - Lists inbounds and exports client URLs and terminal QR codes.
 
 set -Eeuo pipefail
 
@@ -28,13 +28,15 @@ NC='\033[0m'
 
 export PATH="$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
 
-SCRIPT_VERSION="v13.0-modular-manager"
+SCRIPT_VERSION="v13.5.0"
+# Optional client-side ECH configuration for XHTTP/TLS links; does not modify origin TLS.
+XHTTP_CDN_ECH_CONFIG="cloudflare-ech.com+https://dns.alidns.com/dns-query"
 DEFAULT_SNI="www.nvidia.com"
 DEFAULT_PORT="443"
 DEFAULT_NODE_NAME="Premium-Node"
 DEFAULT_ADMIN_EMAIL="admin"
 
-GITHUB_REPO="u-fw/xray-rule-assets"
+GITHUB_REPO="u-fw/freedom-xray"
 RAW_SCRIPT_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main/freedom.sh"
 GHPROXY_SCRIPT_URL="https://ghproxy.net/https://raw.githubusercontent.com/${GITHUB_REPO}/main/freedom.sh"
 
@@ -43,8 +45,10 @@ SERVICE_NAME="xray"
 CONFIG_DIR="/usr/local/etc/xray"
 CONFIG_PATH="$CONFIG_DIR/config.json"
 CERTS_DIR="$CONFIG_DIR/certs"
-# 节点辅助元数据（VLESS Encryption 客户端串等无法写入 Xray 配置的字段）
+# Auxiliary inbound metadata for fields such as VLESS client encryption not stored in Xray configuration.
 META_PATH="$CONFIG_DIR/freedom-meta.json"
+PUBLIC_PORTS_PATH="$CONFIG_DIR/freedom-public-ports.json"
+STATS_STORE_PATH="$CONFIG_DIR/freedom-stats.json"
 BACKUP_FILE=""
 
 BOT_BIN_PATH="/usr/local/bin/freedom-bot"
@@ -52,22 +56,39 @@ BOT_CONFIG_PATH="$CONFIG_DIR/bot.json"
 BOT_SERVICE="freedom-bot"
 BOT_SERVICE_FILE="/etc/systemd/system/freedom-bot.service"
 
-# 所有日志一律输出到 stderr：保证 $(...) 捕获的“纯数据输出”（端口号、证书路径等）
-# 绝不会被日志文本污染。这是此前端口/证书获取失败的核心原因之一。
+# Send diagnostics to stderr so command substitutions capture only returned data.
+# Log messages must not corrupt values such as listener ports or certificate paths.
 info() { echo -e "${CYAN}[INFO] $*${NC}" >&2; }
 ok() { echo -e "${GREEN}[OK] $*${NC}" >&2; }
 warn() { echo -e "${YELLOW}[WARN] $*${NC}" >&2; }
 fatal() { echo -e "${RED}[ERROR] $*${NC}" >&2; exit 1; }
 
 need_root() {
-  [[ "$(id -u)" == "0" ]] || fatal "请使用 root 权限运行：sudo bash $0"
+  [[ "$(id -u)" == "0" ]] || fatal "Run as root: sudo bash $0"
 }
 
 ensure_systemd_available() {
-  command -v systemctl >/dev/null 2>&1 || fatal "未找到 systemctl；此脚本需要 systemd 管理 xray 服务。"
-  # /run/systemd/system 存在即代表 systemd 为 PID 1。相比 systemctl list-units
-  # 这种全量 D-Bus 查询，目录探测是微秒级的，不会造成启动卡顿。
-  [[ -d /run/systemd/system ]] || fatal "当前环境无法使用 systemd（systemd 未作为 PID 1 运行）。若在容器内运行，请改用支持 systemd 的 VPS 宿主机环境。"
+  command -v systemctl >/dev/null 2>&1 || fatal "systemctl not found; systemd is required to manage Xray."
+  # A systemd instance normally exposes /run/systemd/system when it is PID 1.
+  # Checking this directory is less expensive than enumerating systemctl D-Bus units.
+  [[ -d /run/systemd/system ]] || fatal "systemd is not PID 1. Run this script on a VPS with a functional systemd instance, not an unsupported container."
+}
+
+# Synchronize live Xray counters to the Bot's persistent journal before a
+# managed restart. Detect an inherited config lock to avoid recursive flock.
+snapshot_traffic_before_restart() {
+  [[ -x "$BOT_BIN_PATH" ]] || return 0
+  local mode="-local-traffic-snapshot"
+  local held
+  held="$(readlink "/proc/$BASHPID/fd/9" 2>/dev/null || true)"
+  [[ "$held" != "$CONFIG_DIR/.freedom-config.lock" ]] || mode="-local-traffic-snapshot-locked"
+  if ! "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" "$mode" >/dev/null; then
+    warn "Pre-restart traffic sampling failed; the last unsampled window may be lost. Historical totals are preserved."
+  fi
+}
+restart_xray_preserving_traffic() {
+  snapshot_traffic_before_restart
+  systemctl restart "$SERVICE_NAME"
 }
 
 service_unit_exists() {
@@ -78,26 +99,26 @@ service_unit_exists() {
 
 print_service_diagnostics() {
   local svc="$1"
-  warn "${svc}.service 状态："
+  warn "${svc}.service status: "
   systemctl status "$svc" --no-pager -l >&2 || true
-  warn "${svc}.service 最近日志："
+  warn "${svc}.service recent logs: "
   journalctl -u "$svc" -n 80 --no-pager >&2 || true
 }
 
 restore_backup() {
   [[ -n "${BACKUP_FILE:-}" && -f "$BACKUP_FILE" ]] || return 1
   cp -a "$BACKUP_FILE" "$CONFIG_PATH"
-  chmod 644 "$CONFIG_PATH" 2>/dev/null || true
-  ok "已恢复备份配置：$BACKUP_FILE -> $CONFIG_PATH"
+  chmod 640 "$CONFIG_PATH" 2>/dev/null || true
+  ok "Restored backup configuration: $BACKUP_FILE -> $CONFIG_PATH"
 
   if service_unit_exists "$SERVICE_NAME"; then
-    info "尝试重启 ${SERVICE_NAME}.service 以恢复旧配置"
-    if systemctl restart "$SERVICE_NAME"; then
+    info "Attempting to restart ${SERVICE_NAME}.service to restore the previous configuration"
+    if restart_xray_preserving_traffic; then
       sleep 1
       if systemctl is-active --quiet "$SERVICE_NAME"; then
-        ok "${SERVICE_NAME}.service 已恢复运行。"
+        ok "${SERVICE_NAME}.service is running again."
       else
-        warn "${SERVICE_NAME}.service 重启后仍未处于 active 状态。"
+        warn "${SERVICE_NAME}.service is not active after restart."
         print_service_diagnostics "$SERVICE_NAME"
       fi
     fi
@@ -109,10 +130,10 @@ fatal_with_rollback() {
   local ans=""
   if [[ -n "${BACKUP_FILE:-}" && -f "$BACKUP_FILE" ]]; then
     warn "$msg"
-    read -r -p "是否恢复本次备份配置？[y/N]: " ans || ans="N"
+    read -r -p "Restore this backup configuration? [y/N]: " ans || ans="N"
     case "${ans:-N}" in
-      y|Y|yes|YES) restore_backup || warn "恢复备份失败，请手动检查：$BACKUP_FILE" ;;
-      *) warn "已保留当前新配置。备份位置：$BACKUP_FILE" ;;
+      y|Y|yes|YES) restore_backup || warn "Backup restoration failed. Check manually: $BACKUP_FILE" ;;
+      *) warn "Current configuration retained. Backup: $BACKUP_FILE" ;;
     esac
   fi
   fatal "$msg"
@@ -132,7 +153,7 @@ install_packages() {
   elif command -v apk >/dev/null 2>&1; then
     apk add --no-cache "${pkgs[@]}" >/dev/null
   else
-    fatal "找不到支持的包管理器，请手动安装：${pkgs[*]}"
+    fatal "No supported package manager found. Install manually: ${pkgs[*]}"
   fi
 }
 
@@ -141,7 +162,7 @@ install_port_detection_dep() {
   command -v lsof >/dev/null 2>&1 && return 0
   command -v netstat >/dev/null 2>&1 && return 0
 
-  info "安装端口检测依赖：ss"
+  info "Installing port inspection dependency: ss"
   if command -v apt-get >/dev/null 2>&1; then
     apt-get update -y >/dev/null
     DEBIAN_FRONTEND=noninteractive apt-get install -y iproute2 >/dev/null
@@ -161,7 +182,7 @@ install_base_deps() {
   done
 
   if ((${#missing[@]} > 0)); then
-    info "安装基础依赖：${missing[*]}"
+    info "Installing base dependencies: ${missing[*]}"
     install_packages "${missing[@]}"
   fi
 
@@ -171,7 +192,7 @@ install_base_deps() {
 sync_time_best_effort() {
   timedatectl set-ntp true >/dev/null 2>&1 || true
   if command -v ntpdate >/dev/null 2>&1; then
-    # 加硬超时：避免 DNS/网络异常时拖慢脚本启动
+    # Enforce short timeouts to avoid slow startup when DNS or network access fails.
     if command -v timeout >/dev/null 2>&1; then
       timeout 5 ntpdate -u pool.ntp.org >/dev/null 2>&1 || true
     else
@@ -182,7 +203,7 @@ sync_time_best_effort() {
 
 SYSCTL_BACKUP_PATH="$CONFIG_DIR/sysctl_backup.conf"
 
-# 传输层调优是否改写了 config.json（用于决定是否重启 Xray）
+# Track whether transport tuning modified Xray config so a restart can be justified.
 XRAY_CONFIG_PATCHED=0
 
 backup_sysctl_params_if_needed() {
@@ -216,10 +237,10 @@ backup_sysctl_params_if_needed() {
     "fs.file-max"
   )
 
-  info "正在为当前系统原生网络栈参数建立原始快照备份..."
+  info "Saving a snapshot of the current network kernel parameters..."
   {
-    echo "# freedom.sh 调优前原生系统参数备份快照"
-    echo "# 备份生成时间: $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "# freedom.sh original kernel parameters before tuning"
+    echo "# Backup generated:  $(date '+%Y-%m-%d %H:%M:%S')"
     for k in "${keys[@]}"; do
       local v
       v="$(sysctl -n "$k" 2>/dev/null || echo "")"
@@ -229,13 +250,13 @@ backup_sysctl_params_if_needed() {
     done
   } > "$SYSCTL_BACKUP_PATH"
   chmod 644 "$SYSCTL_BACKUP_PATH"
-  ok "调优前系统原始参数已安全存档至: $SYSCTL_BACKUP_PATH"
+  ok "Original kernel parameters saved to:  $SYSCTL_BACKUP_PATH"
 }
 
 restore_linux_kernel_tuning() {
   echo
-  warn "警告：此操作将彻底移除 freedom.sh 调优配置并恢复机器原始网络参数！"
-  read -r -p "确定要还原回调优前的系统参数吗？[y/N]: " r_ans || r_ans="N"
+  warn "Warning: this removes freedom.sh tuning and restores the original network configuration!"
+  read -r -p "Restore the original kernel parameters? [y/N]: " r_ans || r_ans="N"
   case "${r_ans:-N}" in
     y|Y|yes|YES)
       local had_limits=0
@@ -246,26 +267,26 @@ restore_linux_kernel_tuning() {
       rm -rf /etc/systemd/system/xray.service.d/10-limits.conf
       systemctl daemon-reload >/dev/null 2>&1 || true
       if (( had_limits == 1 )) && systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
-        info "正在重启 Xray 以恢复原句柄上限..."
-        systemctl restart "$SERVICE_NAME" >/dev/null 2>&1 || warn "Xray 重启失败，句柄上限将在下次重启后恢复。"
+        info "Restarting Xray to restore its previous file-descriptor limit..."
+        restart_xray_preserving_traffic >/dev/null 2>&1 || warn "Xray restart failed; the file-descriptor limit will be restored on the next restart."
       fi
 
       if [[ -f "$SYSCTL_BACKUP_PATH" ]]; then
-        info "正在应用原生快照参数: $SYSCTL_BACKUP_PATH"
+        info "Applying original kernel parameters from:  $SYSCTL_BACKUP_PATH"
         sysctl -p "$SYSCTL_BACKUP_PATH" >/dev/null 2>&1 || true
-        ok "内核网络栈参数已成功从原始快照彻底还原！"
+        ok "Kernel network parameters restored from the original snapshot."
       else
-        info "正在重载系统默认内核参数..."
+        info "Reloading default system kernel settings..."
         sysctl --system >/dev/null 2>&1 || true
-        ok "已重载系统默认设置。"
+        ok "Default system settings reloaded."
       fi
       ;;
-    *) info "已取消还原操作。" ;;
+    *) info "Restore cancelled." ;;
   esac
 }
 
-# 为所有业务 inbound 与 direct 出站补齐 TCP 传输层调优参数。
-# 合并时已有自定义值优先，不会被覆盖。
+# Apply transport socket tuning to service inbounds and the direct outbound.
+# Preserve any explicitly configured socket option during merges.
 patch_xray_sockopt_tuning() {
   XRAY_CONFIG_PATCHED=0
   [[ -f "$CONFIG_PATH" ]] || return 0
@@ -310,7 +331,7 @@ patch_xray_sockopt_tuning() {
 
   if ! "$BIN" run -test -c "$CONFIG_PATH" >/tmp/freedom-xray-test.log 2>&1; then
     if ! "$BIN" -test -config "$CONFIG_PATH" >>/tmp/freedom-xray-test.log 2>&1; then
-      warn "传输层调优配置校验失败，正在回滚原配置。"
+      warn "Transport tuning configuration failed validation; rolling back."
       if [[ -n "${BACKUP_FILE:-}" && -f "$BACKUP_FILE" ]]; then
         cp -a "$BACKUP_FILE" "$CONFIG_PATH"
       fi
@@ -324,12 +345,12 @@ patch_xray_sockopt_tuning() {
 
 tune_linux_kernel_network() {
   backup_sysctl_params_if_needed
-  info "正在应用内核与 Xray 传输层调优 (BBR, TFO, 缓冲池, 连接保持)..."
+  info "Applying kernel and Xray transport tuning (BBR, TFO, buffers, keepalive)..."
 
   modprobe tcp_bbr >/dev/null 2>&1 || true
   install -d -m 755 /etc/sysctl.d 2>/dev/null || true
   cat <<'EOF' > /etc/sysctl.d/99-xray-tuning.conf
-# Xray-core 极致吞吐与超低延迟网络栈优化
+# Optional Xray-core network stack tuning for throughput and latency.
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 net.ipv4.tcp_fastopen = 3
@@ -355,14 +376,14 @@ net.ipv4.tcp_window_scaling = 1
 fs.file-max = 2097152
 EOF
 
-  # conntrack 由防火墙 (ufw/firewalld) 加载时才存在；提高上限以支撑高并发连接
+  # conntrack can be loaded by firewall services; raise limits only when present.
   if [[ -e /proc/sys/net/netfilter/nf_conntrack_max ]]; then
     echo "net.netfilter.nf_conntrack_max = 262144" >> /etc/sysctl.d/99-xray-tuning.conf
   fi
 
   sysctl -p /etc/sysctl.d/99-xray-tuning.conf >/dev/null 2>&1 || sysctl --system >/dev/null 2>&1 || true
 
-  patch_xray_sockopt_tuning || warn "Xray 传输层调优未应用（配置保持不变），内核参数已生效。"
+  patch_xray_sockopt_tuning || warn "Xray transport tuning was not applied; the original config remains. Kernel settings are active."
 
   local need_restart=0
   (( XRAY_CONFIG_PATCHED == 1 )) && need_restart=1
@@ -376,7 +397,7 @@ LimitNPROC=512000
 EOF
     systemctl daemon-reload >/dev/null 2>&1 || true
 
-    # 句柄上限只对新的进程生效；若运行中的 Xray 仍是旧上限则需要重启
+    # File-descriptor limits apply to newly started processes; an existing Xray process may require a restart.
     local xray_pid live_nofile
     xray_pid="$(systemctl show -p MainPID --value "$SERVICE_NAME" 2>/dev/null || echo 0)"
     if [[ "$xray_pid" =~ ^[0-9]+$ ]] && ((xray_pid > 0)) && [[ -r "/proc/${xray_pid}/limits" ]]; then
@@ -388,34 +409,34 @@ EOF
   fi
 
   if (( need_restart == 1 )) && systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
-    info "正在重启 Xray 以应用传输层与句柄调优..."
-    if ! systemctl restart "$SERVICE_NAME" >/dev/null 2>&1; then
-      warn "Xray 重启失败。"
+    info "Restarting Xray to apply transport and file-descriptor tuning..."
+    if ! restart_xray_preserving_traffic >/dev/null 2>&1; then
+      warn "Xray restart failed."
       if (( XRAY_CONFIG_PATCHED == 1 )) && [[ -n "${BACKUP_FILE:-}" && -f "$BACKUP_FILE" ]]; then
-        warn "正在回滚传输层配置..."
+        warn "Rolling back transport configuration..."
         cp -a "$BACKUP_FILE" "$CONFIG_PATH"
-        systemctl restart "$SERVICE_NAME" >/dev/null 2>&1 || warn "回滚后 Xray 仍未启动，请检查日志。"
+        restart_xray_preserving_traffic >/dev/null 2>&1 || warn "Xray did not start after rollback; inspect logs."
       fi
     fi
   fi
 
-  local cc tfo xray_st="未变更"
+  local cc tfo xray_st="Unchanged"
   cc="$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo 'unknown')"
   tfo="$(sysctl -n net.ipv4.tcp_fastopen 2>/dev/null || echo 'unknown')"
-  (( XRAY_CONFIG_PATCHED == 1 )) && xray_st="已应用"
-  ok "调优完成：拥塞算法 [${cc}] | TCP Fast Open [${tfo}] | Xray 传输层 [${xray_st}]"
+  (( XRAY_CONFIG_PATCHED == 1 )) && xray_st="Applied"
+  ok "Tuning complete: congestion control [${cc}] | TCP Fast Open [${tfo}] | Xray transport [${xray_st}]"
 }
 
 benchmark_and_diagnose_system_tuning() {
   while true; do
     echo
-    echo -e "  ${BOLD}系统网络调优${NC}"
+    echo -e "  ${BOLD}System Network Tuning${NC}"
     echo "————————————————————————————————————————————————"
 
     local cur_cc cur_qdisc cur_tfo cur_idle cur_rmem cur_wmem cur_somax cur_syn cur_fmax cur_limit
     local cur_notsent cur_portrange
-    cur_cc="$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo '未知')"
-    cur_qdisc="$(sysctl -n net.core.default_qdisc 2>/dev/null || echo '未知')"
+    cur_cc="$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo 'Unknown')"
+    cur_qdisc="$(sysctl -n net.core.default_qdisc 2>/dev/null || echo 'Unknown')"
     cur_tfo="$(sysctl -n net.ipv4.tcp_fastopen 2>/dev/null || echo '0')"
     cur_idle="$(sysctl -n net.ipv4.tcp_slow_start_after_idle 2>/dev/null || echo '1')"
     cur_rmem="$(sysctl -n net.core.rmem_max 2>/dev/null || echo '0')"
@@ -424,35 +445,35 @@ benchmark_and_diagnose_system_tuning() {
     cur_syn="$(sysctl -n net.ipv4.tcp_max_syn_backlog 2>/dev/null || echo '0')"
     cur_fmax="$(sysctl -n fs.file-max 2>/dev/null || echo '0')"
     cur_notsent="$(sysctl -n net.ipv4.tcp_notsent_lowat 2>/dev/null || echo '0')"
-    cur_portrange="$(sysctl -n net.ipv4.ip_local_port_range 2>/dev/null || echo '未知')"
+    cur_portrange="$(sysctl -n net.ipv4.ip_local_port_range 2>/dev/null || echo 'Unknown')"
 
-    # 读取运行中 Xray 进程的实际句柄上限，而不是只看配置文件
-    cur_limit="$(ulimit -n 2>/dev/null || echo '未知')"
+    # Read the actual running Xray process limits rather than trusting unit configuration alone.
+    cur_limit="$(ulimit -n 2>/dev/null || echo 'Unknown')"
     local diag_pid diag_nofile
     diag_pid="$(systemctl show -p MainPID --value "$SERVICE_NAME" 2>/dev/null || echo 0)"
     if [[ "$diag_pid" =~ ^[0-9]+$ ]] && ((diag_pid > 0)) && [[ -r "/proc/${diag_pid}/limits" ]]; then
       diag_nofile="$(awk '/Max open files/ {print $4}' "/proc/${diag_pid}/limits" 2>/dev/null || true)"
       if [[ -n "$diag_nofile" ]]; then
-        cur_limit="${diag_nofile} (运行中)"
+        cur_limit="${diag_nofile} (Running)"
       fi
     elif [[ -f "/etc/systemd/system/xray.service.d/10-limits.conf" ]]; then
-      cur_limit="1000000 (待重启)"
+      cur_limit="1000000 (Pending restart)"
     fi
 
-    local rmem_mb="约 $((cur_rmem / 1024 / 1024))MB"
-    ((cur_rmem < 1048576)) && rmem_mb="约 $((cur_rmem / 1024))KB"
-    local wmem_mb="约 $((cur_wmem / 1024 / 1024))MB"
-    ((cur_wmem < 1048576)) && wmem_mb="约 $((cur_wmem / 1024))KB"
+    local rmem_mb="Approximately $((cur_rmem / 1024 / 1024))MB"
+    ((cur_rmem < 1048576)) && rmem_mb="Approximately $((cur_rmem / 1024))KB"
+    local wmem_mb="Approximately $((cur_wmem / 1024 / 1024))MB"
+    ((cur_wmem < 1048576)) && wmem_mb="Approximately $((cur_wmem / 1024))KB"
 
-    # 简洁状态摘要（3X-UI 风格）
-    echo -e "  ${BOLD}调优状态${NC}"
+    # Compact status summary.
+    echo -e "  ${BOLD}Tuning Status${NC}"
     echo "————————————————————————————————————————————————"
-    echo "  拥塞控制: ${cur_cc} | 队列规则: ${cur_qdisc} | TCP Fast Open: ${cur_tfo} | 空闲慢启动: ${cur_idle}"
-    echo "  读缓冲: ${rmem_mb} | 写缓冲: ${wmem_mb} | 待发上限: ${cur_notsent} | 本地端口: ${cur_portrange}"
-    echo "  连接队列: ${cur_somax} / ${cur_syn} | 文件句柄: ${cur_fmax} / ${cur_limit}"
+    echo "  Congestion control: ${cur_cc} | Queue discipline: ${cur_qdisc} | TCP Fast Open: ${cur_tfo} | Idle restart slow-start: ${cur_idle}"
+    echo "  Receive buffer: ${rmem_mb} | Send buffer: ${wmem_mb} | Unsent bytes limit: ${cur_notsent} | Local ports: ${cur_portrange}"
+    echo "  Connection queue: ${cur_somax} / ${cur_syn} | File descriptors: ${cur_fmax} / ${cur_limit}"
     echo "————————————————————————————————————————————————"
 
-    # 诊断与评级
+    # System tuning diagnostics and rating.
     local score=0
     [[ "$cur_cc" == "bbr" ]] && ((score += 20))
     [[ "$cur_tfo" == "3" ]] && ((score += 15))
@@ -462,44 +483,44 @@ benchmark_and_diagnose_system_tuning() {
     [[ "$cur_limit" == *"1000000"* || "$cur_limit" == *"unlimited"* ]] && ((score += 15))
 
     if ((score >= 85)); then
-      ok "评分 ${score}/100：极限性能就绪"
+      ok "Score ${score}/100：Performance tuning ready"
     elif ((score >= 25)); then
-      warn "评分 ${score}/100：基础级（仅 BBR，缺少大缓冲与 TFO 双向）"
+      warn "Score ${score}/100：Basic (BBR only; no large buffers or bidirectional TFO)"
     else
-      warn "评分 ${score}/100：未调优"
+      warn "Score ${score}/100：Not tuned"
     fi
 
-    local bk_info="未建立"
-    [[ -f "$SYSCTL_BACKUP_PATH" ]] && bk_info="${GREEN}已备份 (${SYSCTL_BACKUP_PATH})${NC}"
-    echo -e "原始参数快照状态: ${bk_info}"
+    local bk_info="Not created"
+    [[ -f "$SYSCTL_BACKUP_PATH" ]] && bk_info="${GREEN}Backed up (${SYSCTL_BACKUP_PATH})${NC}"
+    echo -e "Original settings snapshot:  ${bk_info}"
     echo "————————————————————————————————————————————————"
-    echo -e "  ${GREEN}1.${NC} 应用全栈调优（内核 + Xray 传输层）"
-    echo -e "  ${GREEN}2.${NC} 还原内核调优（Rollback）"
-    echo -e "  ${GREEN}3.${NC} 查看调优前参数备份"
-    echo -e "  ${GREEN}0.${NC} 返回主菜单"
+    echo -e "  ${GREEN}1.${NC} Apply full-stack tuning (kernel + Xray transport)"
+    echo -e "  ${GREEN}2.${NC} Restore original kernel settings (rollback)"
+    echo -e "  ${GREEN}3.${NC} View pre-tuning backup"
+    echo -e "  ${GREEN}0.${NC} Back to main menu"
     echo "————————————————————————————————————————————————"
 
-    read -r -p "请选择操作 [0-3, 默认 0]: " diag_op || diag_op="0"
+    read -r -p "Choose [0-3, default 0]: " diag_op || diag_op="0"
     case "${diag_op:-0}" in
       1)
         tune_linux_kernel_network
-        echo && read -rp "调优已应用，按回车键刷新诊断报告..." _dummy
+        echo && read -rp "Tuning applied. Press Enter to refresh diagnostics..." _dummy
         ;;
       2)
         restore_linux_kernel_tuning
-        echo && read -rp "还原已完成，按回车键刷新诊断报告..." _dummy
+        echo && read -rp "Restore complete. Press Enter to refresh diagnostics..." _dummy
         ;;
       3)
         if [[ -f "$SYSCTL_BACKUP_PATH" ]]; then
           echo
           cat "$SYSCTL_BACKUP_PATH"
         else
-          warn "尚未生成原始参数备份，首次应用调优时将自动创建快照。"
+          warn "No original-parameter backup yet; one will be created before tuning."
         fi
-        echo && read -rp "按回车键继续..." _dummy
+        echo && read -rp "Press Enter to continue..." _dummy
         ;;
       0) break ;;
-      *) warn "无效选项。" ;;
+      *) warn "Invalid choice." ;;
     esac
   done
 }
@@ -524,12 +545,12 @@ sanitize_path() {
   echo "$p"
 }
 
-# 生成 XHTTP 随机路径：128 位熵（等价 UUIDv4），无固定前缀，每次创建都不同
+# Create random XHTTP paths with UUIDv4-equivalent entropy and no fixed prefix.
 random_xhttp_path() {
   printf '/%s\n' "$(openssl rand -hex 16)"
 }
 
-# 防火墙自动化端口放行与管理 (ufw / firewalld / iptables)
+# Firewall port-management helpers for ufw, firewalld and iptables.
 auto_open_firewall_port() {
   local port="$1"
   local proto="${2:-tcp}"
@@ -538,34 +559,34 @@ auto_open_firewall_port() {
   [[ -z "$port" ]] && return 0
   local handled=0
 
-  # 1. 检测 ufw (Ubuntu/Debian)
+  # 1. Detect an active ufw firewall.
   if command -v ufw >/dev/null 2>&1; then
     if ufw status 2>/dev/null | grep -qi "Status: active"; then
       ufw allow "${port}/${proto}" comment "Xray node ${tag}" >/dev/null 2>&1 && handled=1
-      ok "防火墙 (ufw): 已自动放行端口 ${port}/${proto}"
+      ok "Firewall (ufw): allowed port ${port}/${proto}"
     fi
   fi
 
-  # 2. 检测 firewalld (CentOS/RHEL/AlmaLinux/Rocky)
+  # 2. Detect an active firewalld firewall.
   if command -v firewall-cmd >/dev/null 2>&1; then
     if systemctl is-active --quiet firewalld 2>/dev/null; then
       firewall-cmd --zone=public --add-port="${port}/${proto}" --permanent >/dev/null 2>&1 && \
       firewall-cmd --reload >/dev/null 2>&1 && handled=1
-      ok "防火墙 (firewalld): 已自动放行端口 ${port}/${proto}"
+      ok "Firewall (firewalld): allowed port ${port}/${proto}"
     fi
   fi
 
-  # 3. 检测 iptables 默认阻断并追加放行规则
+  # 3. Add an allow rule when iptables policy would otherwise block the listener.
   if command -v iptables >/dev/null 2>&1; then
     if iptables -L INPUT -n 2>/dev/null | grep -q "Chain INPUT (policy DROP)"; then
       iptables -C INPUT -p "${proto}" --dport "${port}" -j ACCEPT 2>/dev/null || \
       iptables -I INPUT -p "${proto}" --dport "${port}" -j ACCEPT 2>/dev/null && handled=1
-      ok "防火墙 (iptables): 已自动追加放行规则 ${port}/${proto}"
+      ok "Firewall (iptables): added allow rule for ${port}/${proto}"
     fi
   fi
 
   if (( handled == 0 )); then
-    info "系统防火墙未启用或未检测到活动规则，端口 ${port} 无需额外本地拦截放行。"
+    info "No active firewall detected; port ${port} requires no additional local allow rule."
   fi
 }
 
@@ -587,7 +608,7 @@ auto_close_firewall_port() {
     fi
   fi
 
-  # iptables 直连规则同步清理（避免残留放行规则）
+  # Remove managed iptables direct allow rules on cleanup.
   if command -v iptables >/dev/null 2>&1; then
     while iptables -C INPUT -p "${proto}" --dport "${port}" -j ACCEPT 2>/dev/null; do
       iptables -D INPUT -p "${proto}" --dport "${port}" -j ACCEPT 2>/dev/null || break
@@ -725,14 +746,14 @@ port_listener_summary() {
   return 1
 }
 
-# 端口冲突双层排查函数：
-# 1. 检查 Xray 内部配置是否已使用
-# 2. 检查操作系统全局网络监听
+# Inspect port collisions at two independent layers:
+# 1. Ports already declared in Xray inbounds.
+# 2. Ports already bound by system processes.
 check_port_available_strict() {
   local target_port="$1"
   local ignore_tag="${2:-}"
 
-  # 1. 检查 Xray 现有配置文件是否已占用
+  # Check existing inbound listener configuration.
   if [[ -f "$CONFIG_PATH" ]]; then
     local matched_tag
     matched_tag="$(jq -r --argjson p "$target_port" --arg itag "$ignore_tag" '
@@ -740,12 +761,12 @@ check_port_available_strict() {
     ' "$CONFIG_PATH" 2>/dev/null | head -n1 || true)"
 
     if [[ -n "$matched_tag" ]]; then
-      warn "端口 ${target_port} 已经被 Xray 内部已有节点 [${matched_tag}] 占用，不能重复使用！"
+      warn "Port ${target_port} is already used by Xray inbound [${matched_tag}]."
       return 1
     fi
   fi
 
-  # 2. 检查操作系统外部进程监听
+  # Check listener ports owned by other system processes.
   local owners
   if ! owners="$(port_listener_summary "$target_port")"; then
     return 0
@@ -758,11 +779,11 @@ check_port_available_strict() {
     non_current="$(printf '%s\n' "$names" | grep -vxF "$SERVICE_NAME" || true)"
 
     if [[ -n "$non_current" ]]; then
-      warn "检测到端口 ${target_port} 被外部系统服务/进程占用："
+      warn "Port ${target_port} is occupied by another service/process:"
       printf '%s\n' "$owners" | sed 's/^/  - /'
       for conflict_name in $non_current; do
         if service_unit_exists "$conflict_name"; then
-          read -r -p "是否尝试停止外部服务 ${conflict_name}.service 以释放端口 ${target_port}？[y/N]: " ans || ans="N"
+          read -r -p "Stop ${conflict_name}.service to free port ${target_port}? [y/N]: " ans || ans="N"
           case "${ans:-N}" in
             y|Y|yes|YES)
               systemctl stop "$conflict_name" || true
@@ -772,14 +793,14 @@ check_port_available_strict() {
           esac
         fi
       done
-      # 再次确认
+      # Verify that the target port has actually been released.
       local recheck
       recheck="$(port_listener_summary "$target_port" || true)"
       if [[ -n "$recheck" ]]; then
         local recheck_non
         recheck_non="$(printf '%s\n' "$recheck" | awk '{print $1}' | sed 's#^.*/##' | grep -vxF "$SERVICE_NAME" || true)"
         if [[ -n "$recheck_non" ]]; then
-          warn "端口 ${target_port} 仍被占用，请更换端口。"
+          warn "Port ${target_port} is still occupied; choose another port."
           return 1
         fi
       fi
@@ -789,9 +810,9 @@ check_port_available_strict() {
   return 0
 }
 
-# 交互式端口采集：结果写入全局 PORT_RESULT。
-# 刻意不使用 $(prompt_and_check_port ...) 捕获：交互函数在子 shell 中执行会
-# 导致 read 的输入/提示行为异常，也容易被日志文本污染返回值。
+# Interactive port prompt stores the result in the global PORT_RESULT variable.
+# Avoid command substitution around interactive prompts: it runs in a subshell
+# and can break read input or mix diagnostics into the result.
 PORT_RESULT=""
 
 prompt_and_check_port() {
@@ -801,19 +822,19 @@ prompt_and_check_port() {
   local p=""
 
   while true; do
-    read -r -p "${prompt_text} (默认 ${def_port}): " p || fatal "输入已终止。"
+    read -r -p "${prompt_text} (default ${def_port}): " p || fatal "Input cancelled."
     p="${p:-$def_port}"
     if ! valid_port "$p"; then
-      warn "端口无效，请输入 1-65535 之间的有效数字。"
+      warn "Invalid port. Choose 1-65535."
       continue
     fi
-    # 规范化：去掉前导零，避免 "0443" 之类输入导致 jq --argjson 解析失败
+    # Normalize numeric ports by removing leading zeros before passing to jq --argjson.
     p=$((10#$p))
     if check_port_available_strict "$p" "$ignore_tag"; then
       PORT_RESULT="$p"
       return 0
     fi
-    warn "端口 ${p} 不可用，请更换其他端口。"
+    warn "Port ${p} is unavailable; choose another port."
   done
 }
 
@@ -827,7 +848,7 @@ detect_xui_environment() {
 
 ensure_xray_systemd_service() {
   if ! service_unit_exists "$SERVICE_NAME"; then
-    info "正在为独立 Xray 生成标准 systemd 守护服务文件..."
+    info "Creating a standard systemd service for standalone Xray..."
     local svc_bin="${BIN:-/usr/local/bin/xray}"
     cat <<EOF > /etc/systemd/system/xray.service
 [Unit]
@@ -849,18 +870,18 @@ LimitNOFILE=1000000
 [Install]
 WantedBy=multi-user.target
 EOF
-    systemctl daemon-reload >/dev/null 2>&1 || warn "systemd daemon-reload 失败，请手动执行 systemctl daemon-reload。"
+    systemctl daemon-reload >/dev/null 2>&1 || warn "systemd daemon-reload failed; run systemctl daemon-reload manually."
     systemctl enable xray >/dev/null 2>&1 || true
-    ok "已创建并启用标准 systemd 服务：/etc/systemd/system/xray.service"
+    ok "Created and enabled standard systemd service: /etc/systemd/system/xray.service"
   fi
 }
 
-# 通过 XTLS 官方脚本安装/更新 Xray-core（先完整下载再执行，避免 curl 失败时静默执行空脚本）
+# Download and run the official Xray installer only after validating that the download succeeded.
 install_xray_via_official_script() {
   local installer
   installer="$(curl -fsSL --connect-timeout 8 https://github.com/XTLS/Xray-install/raw/main/install-release.sh 2>/dev/null || true)"
   if [[ -z "$installer" ]]; then
-    warn "无法下载官方 Xray-install 安装脚本，请检查服务器网络或 DNS。"
+    warn "Unable to download the official Xray installer. Check DNS and network connectivity."
     return 1
   fi
   bash -c "$installer" @ install
@@ -873,45 +894,45 @@ ensure_xray_installed() {
 
     if [[ -n "$xui_xray" && -x "$xui_xray" ]]; then
       echo
-      info "【系统环境探测】检测到本机已安装 3X-UI 面板，其内部私有 Xray 位于："
+      info "Detected an existing 3x-ui panel. Its private Xray binary is located at:"
       echo -e "  -> ${CYAN}${BOLD}${xui_xray}${NC}"
-      warn "说明：3X-UI 将 Xray 私有沙盒化在面板自身目录下，默认并未暴露给 Linux 系统全局 PATH。"
+      warn "3x-ui keeps its Xray binary inside the panel directory and does not expose it on the system PATH."
       echo
-      echo "请选择核心处理方式："
-      echo "1) 安装官方最新独立 Xray-core 系统服务 (推荐，路径标准独立，与 3X-UI 彻底解耦互不干扰) [默认]"
-      echo "2) 直接复用 3X-UI 内置的 Xray 二进制核心 (软链接至 /usr/local/bin/xray，秒级免下载)"
-      echo "0) 退出脚本"
-      read -r -p "请选择 [1/2, 默认 1]: " xui_choice || xui_choice="1"
+      echo "Choose an Xray installation method:"
+      echo "1) Install the official standalone Xray-core system service (recommended; independent of 3x-ui) [default]"
+      echo "2) Reuse the Xray binary bundled with 3x-ui (symlink to /usr/local/bin/xray; no download)"
+      echo "0) Exit"
+      read -r -p "Choose [1/2, default 1]: " xui_choice || xui_choice="1"
       case "${xui_choice:-1}" in
         2)
           ln -sf "$xui_xray" /usr/local/bin/xray
-          ok "已成功将 3X-UI 内置核心软链接至全局路径 /usr/local/bin/xray！"
+          ok "Linked 3x-ui's Xray binary to /usr/local/bin/xray."
           ensure_xray_systemd_service
           ;;
-        0) fatal "已退出。" ;;
+        0) fatal "Exited." ;;
         *)
-          info "正在执行官方 Xray-install 安装/更新..."
+          info "Running the official Xray installer/updater..."
           if ! install_xray_via_official_script; then
-            fatal "Xray-core 安装失败，请检查网络后重试。"
+            fatal "Xray-core installation failed. Check network access and try again."
           fi
-          command -v xray >/dev/null 2>&1 || fatal "Xray 安装后仍未找到 xray 命令，请检查网络或权限。"
+          command -v xray >/dev/null 2>&1 || fatal "Xray command was not found after installation. Check permissions and PATH."
           systemctl enable xray >/dev/null 2>&1 || true
-          ok "Xray-core 安装并启用服务成功！"
+          ok "Xray-core installed and enabled successfully."
           ;;
       esac
     else
-      warn "未在当前系统路径中找到 xray 二进制文件。"
-      read -r -p "是否使用 XTLS 官方 Xray-install 脚本自动安装最新 Xray-core？[Y/n]: " ans || ans="Y"
+      warn "No xray executable found in the current PATH."
+      read -r -p "Install the latest Xray-core using the official XTLS installer? [Y/n]: " ans || ans="Y"
       case "${ans:-Y}" in
-        n|N|no|NO) fatal "已取消安装，脚本退出。" ;;
+        n|N|no|NO) fatal "Installation cancelled; exiting." ;;
         *)
-          info "正在执行官方 Xray-install 安装/更新..."
+          info "Running the official Xray installer/updater..."
           if ! install_xray_via_official_script; then
-            fatal "Xray-core 安装失败，请检查网络后重试。"
+            fatal "Xray-core installation failed. Check network access and try again."
           fi
-          command -v xray >/dev/null 2>&1 || fatal "Xray 安装后仍未找到 xray 命令，请检查网络或权限。"
+          command -v xray >/dev/null 2>&1 || fatal "Xray command was not found after installation. Check permissions and PATH."
           systemctl enable xray >/dev/null 2>&1 || true
-          ok "Xray-core 安装并启用服务成功！"
+          ok "Xray-core installed and enabled successfully."
           ;;
       esac
     fi
@@ -921,7 +942,7 @@ ensure_xray_installed() {
   ensure_xray_systemd_service
   local ver
   ver="$(get_xray_core_version)"
-  ok "已定位 Xray-core：${BIN} (${ver})"
+  ok "Found Xray-core: ${BIN} (${ver})"
 }
 
 CORE_VERSION_CACHE=""
@@ -943,76 +964,116 @@ get_xray_core_version() {
   echo "Xray unknown"
 }
 
+# Shared with the Go Bot via flock(2): covers each entire read/modify/write/restart action.
+# The dashboard does not hold the lock while waiting for a menu choice.
+locked_config_operation() (
+  install -d -m 755 "$CONFIG_DIR" || exit 1
+  if ! command -v flock >/dev/null 2>&1; then
+    warn "util-linux flock is missing; refusing an unlocked configuration change."
+    exit 1
+  fi
+  exec 9>"$CONFIG_DIR/.freedom-config.lock" || exit 1
+  if ! flock -w 20 9; then
+    warn "Another CLI or Bot operation holds the Xray config lock. Timed out after 20 seconds."
+    exit 1
+  fi
+  "$@"
+)
 backup_existing_config() {
   install -d -m 755 "$CONFIG_DIR"
   BACKUP_FILE=""
   if [[ -f "$CONFIG_PATH" ]]; then
     BACKUP_FILE="${CONFIG_PATH}.bak.$(date +%Y%m%d%H%M%S)"
     cp -a "$CONFIG_PATH" "$BACKUP_FILE"
-    info "已创建配置回滚快照：$BACKUP_FILE"
+    info "Created rollback snapshot: $BACKUP_FILE"
     ls -1t "${CONFIG_PATH}".bak.* 2>/dev/null | tail -n +8 | xargs -r rm -f || true
   fi
 }
 
-# 原子化写入配置：先校验 JSON 合法性，再落盘。
-# 杜绝 jq 失败时 `> CONFIG_PATH` 把用户配置写成空文件的事故。
+# Atomically replace config only after validating generated JSON.
+# Never redirect a failed jq result directly into the live configuration file.
+# Match the real Xray systemd identity before tightening config permissions.
+# A root:root 0640 config otherwise breaks services running as nobody.
+set_xray_config_permissions() {
+  local target="${1:-$CONFIG_PATH}"
+  [[ -f "$target" ]] || return 0
+  local service_user service_group
+  service_user="$(systemctl show "$SERVICE_NAME" -p User --value 2>/dev/null || true)"
+  service_group="$(systemctl show "$SERVICE_NAME" -p Group --value 2>/dev/null || true)"
+  if [[ -n "$service_user" && "$service_user" != "root" ]]; then
+    [[ -n "$service_group" ]] || service_group="$(id -gn "$service_user" 2>/dev/null || true)"
+    if [[ -z "$service_group" ]]; then
+      warn "Cannot determine the group of Xray service user ${service_user}; refusing to write potentially unreadable secrets."
+      return 1
+    fi
+    chown "root:${service_group}" "$target" || return 1
+  else
+    chown root:root "$target" || return 1
+  fi
+  chmod 640 "$target" || return 1
+}
 commit_config() {
   local new_json="$1"
   if [[ -z "$new_json" ]]; then
-    warn "配置生成结果为空，已放弃本次写入（原配置保持不变）。"
+    warn "Generated config is empty. No changes were made."
     return 1
   fi
   if ! printf '%s\n' "$new_json" | jq empty >/dev/null 2>&1; then
-    warn "配置生成结果不是合法 JSON，已放弃本次写入（原配置保持不变）。"
+    warn "Generated config is not valid JSON. No changes were made."
     return 1
   fi
   local tmp_file="${CONFIG_PATH}.tmp.$$"
   if ! printf '%s\n' "$new_json" > "$tmp_file"; then
     rm -f "$tmp_file"
-    warn "配置临时文件写入失败，原配置保持不变。"
+    warn "Unable to write temporary config. The original remains unchanged."
     return 1
   fi
-  chmod 644 "$tmp_file" 2>/dev/null || true
+  chmod 640 "$tmp_file" 2>/dev/null || true
+  if ! set_xray_config_permissions "$tmp_file"; then
+    rm -f "$tmp_file"
+    warn "Unable to set config file permissions; no changes committed."
+    return 1
+  fi
   if ! mv -f "$tmp_file" "$CONFIG_PATH"; then
     rm -f "$tmp_file"
-    warn "配置替换失败，原配置保持不变。"
+    warn "Unable to replace config. The original remains unchanged."
     return 1
   fi
   return 0
 }
 
 validate_and_restart_service() {
-  info "检查 Xray 配置文件语法与内核校验"
-  jq empty "$CONFIG_PATH" || fatal_with_rollback "JSON 语法错误：$CONFIG_PATH"
+  info "Checking Xray configuration syntax and core validation"
+  jq empty "$CONFIG_PATH" || fatal_with_rollback "Invalid JSON syntax: $CONFIG_PATH"
 
   if ! "$BIN" run -test -c "$CONFIG_PATH" >/tmp/freedom-xray-test.log 2>&1; then
     if ! "$BIN" -test -config "$CONFIG_PATH" >/tmp/freedom-xray-test.log 2>&1; then
       cat /tmp/freedom-xray-test.log >&2
-      fatal_with_rollback "Xray 配置校验失败，已中止并提示回滚。"
+      fatal_with_rollback "Xray configuration validation failed; aborted with rollback option."
     fi
   fi
-  ok "Xray 配置文件测试校验通过！"
+  ok "Xray configuration validation passed."
 
-  info "正在平滑重载/重启服务：$SERVICE_NAME"
+  info "Reloading/restarting service: $SERVICE_NAME"
   if ! service_unit_exists "$SERVICE_NAME"; then
-    warn "未找到 systemd 服务 ${SERVICE_NAME}.service，仅更新了配置文件：$CONFIG_PATH"
+    warn "systemd service ${SERVICE_NAME}.service was not found; only the config was updated: $CONFIG_PATH"
     return 0
   fi
 
-  if ! systemctl restart "$SERVICE_NAME"; then
+  if ! restart_xray_preserving_traffic; then
     print_service_diagnostics "$SERVICE_NAME"
-    fatal_with_rollback "${SERVICE_NAME} 重启命令执行失败"
+    fatal_with_rollback "${SERVICE_NAME} Restart command failed"
   fi
 
   sleep 2
   if ! systemctl is-active --quiet "$SERVICE_NAME"; then
     print_service_diagnostics "$SERVICE_NAME"
-    fatal_with_rollback "${SERVICE_NAME} 启动后未处于 active 状态"
+    fatal_with_rollback "${SERVICE_NAME} Not active after startup"
   fi
-  ok "${SERVICE_NAME}.service 运行正常！"
+  ok "${SERVICE_NAME}.service is running normally."
 }
 
-# 密钥与证书辅助生成工具
+# Helpers for generating keys and certificates.
 get_or_create_shared_uuid() {
   local uid=""
   if [[ -f "$CONFIG_PATH" ]]; then
@@ -1035,7 +1096,7 @@ get_or_create_shared_email() {
   echo "$em"
 }
 
-# REALITY X25519 密钥对：结果写入全局 REALITY_PRIV / REALITY_PUB
+# REALITY X25519 key generation writes to REALITY_PRIV and REALITY_PUB.
 REALITY_PRIV=""
 REALITY_PUB=""
 
@@ -1047,30 +1108,30 @@ get_or_create_shared_reality_keys() {
 
   if [[ -z "$priv" ]]; then
     local out
-    out="$("$BIN" x25519 2>&1)" || fatal "xray x25519 执行失败"
+    out="$("$BIN" x25519 2>&1)" || fatal "xray x25519 command failed"
     priv="$(field_after_colon "$out" "PrivateKey|Private key|Private")"
     pub="$(field_after_colon "$out" "Password|PublicKey|Public key|Public")"
   else
-    # 从已有私钥反推公钥，保证新旧节点使用同一组密钥
+    # Derive the public key from an existing REALITY private key to preserve identity.
     local out
     out="$("$BIN" x25519 -i "$priv" 2>&1 || true)"
     pub="$(field_after_colon "$out" "Password|PublicKey|Public key|Public")"
     if [[ -z "$pub" ]]; then
       local tmpout
-      tmpout="$("$BIN" x25519 2>&1)" || fatal "xray x25519 执行失败"
+      tmpout="$("$BIN" x25519 2>&1)" || fatal "xray x25519 command failed"
       priv="$(field_after_colon "$tmpout" "PrivateKey|Private key|Private")"
       pub="$(field_after_colon "$tmpout" "Password|PublicKey|Public key|Public")"
     fi
   fi
 
-  [[ -n "$priv" && -n "$pub" ]] || fatal "无法生成或解析 REALITY X25519 密钥对，请检查 Xray-core 版本。"
+  [[ -n "$priv" && -n "$pub" ]] || fatal "Unable to generate or parse REALITY X25519 keys. Check the Xray-core version."
 
   REALITY_PRIV="$priv"
   REALITY_PUB="$pub"
   return 0
 }
 
-# 由 REALITY 私钥反推公钥（用于生成分享链接），失败时返回空字符串
+# Derive the REALITY public key for sharing links; return empty on failure.
 derive_reality_public_key() {
   local priv="$1"
   [[ -n "$priv" ]] || { echo ""; return 0; }
@@ -1079,15 +1140,15 @@ derive_reality_public_key() {
   field_after_colon "$out" "Password|PublicKey|Public key|Public"
 }
 
-# 判断当前核心是否支持某个子命令（vlessenc / mldsa65 需要较新核心）
+# Check whether the installed Xray core supports optional subcommands.
 xray_supports_subcommand() {
   local sub="$1"
   [[ -n "${BIN:-}" && -x "$BIN" ]] || return 1
   "$BIN" help 2>&1 | grep -qw "$sub"
 }
 
-# 生成 VLESS Encryption 的 ML-KEM-768 服务端/客户端字符串对
-# 结果写入全局 VLESSENC_DECRYPTION / VLESSENC_ENCRYPTION
+# Generate a paired VLESS ML-KEM-768 server/client encryption configuration.
+# The result is returned in VLESSENC_DECRYPTION and VLESSENC_ENCRYPTION.
 VLESSENC_DECRYPTION=""
 VLESSENC_ENCRYPTION=""
 
@@ -1105,8 +1166,8 @@ generate_vlessenc_mlkem_pair() {
   return 0
 }
 
-# 生成 ML-DSA-65 后量子签名种子 / 校验值
-# 结果写入全局 MLDSA_SEED / MLDSA_VERIFY
+# Generate an ML-DSA-65 seed and verification value.
+# The result is returned in MLDSA_SEED and MLDSA_VERIFY.
 MLDSA_SEED=""
 MLDSA_VERIFY=""
 
@@ -1123,7 +1184,7 @@ generate_mldsa65_pair() {
   return 0
 }
 
-# 由种子推导 Verify（pqv），用于分享链接
+# Derive the shared-link verification value (pqv) from an ML-DSA seed.
 derive_mldsa65_verify() {
   local seed="$1"
   [[ -n "$seed" ]] || { echo ""; return 0; }
@@ -1131,12 +1192,12 @@ derive_mldsa65_verify() {
   out="$("$BIN" mldsa65 -i "$seed" 2>&1 || true)"
   verify="$(printf '%s\n' "$out" | awk -F': *' '/^Verify:/ {v=$2} END {print v}' | tr -d '[:space:]')"
   if [[ -z "$verify" ]]; then
-    warn "无法从 mldsa65Seed 推导 Verify，导出的链接将缺少 pqv 参数。"
+    warn "Unable to derive ML-DSA Verify from mldsa65Seed; exported links will lack pqv."
   fi
   printf '%s\n' "$verify"
 }
 
-# 自签名 ECC 证书生成（失败自动回退 RSA）
+# Generate a self-signed ECC certificate, with an RSA fallback on failure.
 generate_self_signed_cert() {
   local domain="$1"
   local cert_file="${CERTS_DIR}/${domain}.crt"
@@ -1152,7 +1213,7 @@ generate_self_signed_cert() {
   return 0
 }
 
-# TLS 证书选择：结果写入全局 TLS_CERT_FILE / TLS_KEY_FILE
+# TLS certificate selection stores file paths in TLS_CERT_FILE and TLS_KEY_FILE.
 TLS_CERT_FILE=""
 TLS_KEY_FILE=""
 
@@ -1163,33 +1224,33 @@ setup_tls_certificate() {
   TLS_KEY_FILE=""
 
   echo
-  echo -e "${BOLD}请选择 TLS 证书提供方式（针对域名：${domain}）：${NC}"
-  echo "1) 自动生成自签名 ECC 证书 (推荐配合 Cloudflare SSL Full 模式，秒级完成且免 80 端口与域名解析等待)"
-  echo "2) 手动指定已有证书与私钥绝对路径"
-  echo "3) 使用 acme.sh 自动申请免费证书 (需 80 端口空闲且域名已解析到本机)"
+  echo -e "${BOLD}Choose a TLS certificate source for domain: ${domain}）：${NC}"
+  echo "1) Generate a self-signed ECC certificate (fast; Cloudflare Full mode; no HTTP-01 validation)"
+  echo "2) Use existing certificate and private key files"
+  echo "3) Issue a free certificate using acme.sh (requires port 80 and DNS pointing to this VPS)"
 
   local cert_file key_file
   while true; do
-    read -r -p "证书模式选择 [1/2/3，默认 1]: " cm_sel || fatal "输入已终止。"
+    read -r -p "Certificate option [1/2/3, default 1]: " cm_sel || fatal "Input cancelled."
     case "${cm_sel:-1}" in
       1)
-        info "正在为 ${domain} 生成自签名 ECC 证书 (prime256v1，有效期 10 年)..."
-        generate_self_signed_cert "$domain" || fatal "自签名证书生成失败"
+        info "Generating a self-signed ECC certificate for ${domain} (prime256v1, 10-year validity)..."
+        generate_self_signed_cert "$domain" || fatal "Failed to generate a self-signed certificate"
         TLS_CERT_FILE="${CERTS_DIR}/${domain}.crt"
         TLS_KEY_FILE="${CERTS_DIR}/${domain}.key"
-        ok "自签名证书生成成功：${TLS_CERT_FILE}"
+        ok "Generated self-signed certificate: ${TLS_CERT_FILE}"
         return 0
         ;;
       2)
         while true; do
-          read -r -p "请输入证书 fullchain 文件绝对路径 (.crt/.pem): " cert_file || fatal "输入已终止。"
+          read -r -p "Enter absolute path to fullchain certificate (.crt/.pem): " cert_file || fatal "Input cancelled."
           [[ -f "$cert_file" ]] && break
-          warn "文件不存在：$cert_file，请重新输入。"
+          warn "File does not exist: $cert_file. Try again."
         done
         while true; do
-          read -r -p "请输入私钥 private key 文件绝对路径 (.key): " key_file || fatal "输入已终止。"
+          read -r -p "Enter absolute path to private key (.key): " key_file || fatal "Input cancelled."
           [[ -f "$key_file" ]] && break
-          warn "文件不存在：$key_file，请重新输入。"
+          warn "File does not exist: $key_file. Try again."
         done
         TLS_CERT_FILE="$cert_file"
         TLS_KEY_FILE="$key_file"
@@ -1199,7 +1260,7 @@ setup_tls_certificate() {
         local acme_ok=0
         if ! port_listener_summary "80" 2>/dev/null | grep -q .; then
           if [[ ! -x "$HOME/.acme.sh/acme.sh" ]]; then
-            info "安装 acme.sh 客户端..."
+            info "Installing acme.sh..."
             curl -fsSL https://get.acme.sh | sh -s email="admin@${domain}" >/dev/null 2>&1 || true
           fi
           local acme_cmd="$HOME/.acme.sh/acme.sh"
@@ -1219,16 +1280,16 @@ setup_tls_certificate() {
           chmod 644 "${CERTS_DIR}/${domain}.crt" 2>/dev/null || true
           TLS_CERT_FILE="${CERTS_DIR}/${domain}.crt"
           TLS_KEY_FILE="${CERTS_DIR}/${domain}.key"
-          ok "acme.sh 证书申请成功！"
+          ok "acme.sh successfully issued a certificate."
           return 0
         fi
-        warn "80 端口被占用或 acme.sh 申请失败，自动回退为自签名 ECC 证书（配合 Cloudflare SSL Full 模式完全可用）。"
-        generate_self_signed_cert "$domain" || fatal "自签名证书生成失败"
+        warn "Port 80 is unavailable or ACME failed. Falling back to a self-signed ECC certificate for Cloudflare Full mode."
+        generate_self_signed_cert "$domain" || fatal "Failed to generate a self-signed certificate"
         TLS_CERT_FILE="${CERTS_DIR}/${domain}.crt"
         TLS_KEY_FILE="${CERTS_DIR}/${domain}.key"
         return 0
         ;;
-      *) warn "请输入 1, 2 或 3。" ;;
+      *) warn "Choose 1, 2 or 3." ;;
     esac
   done
 }
@@ -1242,9 +1303,10 @@ ensure_stats_api_scaffold() {
   if ! jq -e '.inbounds[]? | select(.tag == "api-internal")' "$CONFIG_PATH" >/dev/null 2>&1; then need_update=1; fi
   if ! jq -e '.outbounds[]? | select(.tag == "api")' "$CONFIG_PATH" >/dev/null 2>&1; then need_update=1; fi
   if ! jq -e '.policy.levels."0".statsUserUplink' "$CONFIG_PATH" >/dev/null 2>&1; then need_update=1; fi
+  if ! jq -e '.policy.levels."0".statsUserOnline == true' "$CONFIG_PATH" >/dev/null 2>&1; then need_update=1; fi
 
   if (( need_update == 1 )); then
-    info "检测到配置文件缺少 API/流量统计模块，正在平滑升级 Xray 配置脚手架..."
+    info "Xray config lacks API/traffic statistics. Updating the config scaffold..."
     local updated
     updated="$(jq '
       .stats = (.stats // {}) |
@@ -1261,7 +1323,8 @@ ensure_stats_api_scaffold() {
         downlinkOnly: 5,
         bufferSize: 512,
         statsUserUplink: true,
-        statsUserDownlink: true
+        statsUserDownlink: true,
+        statsUserOnline: true
       }) |
       (if ([.inbounds[]? | select(.tag == "api-internal")] | length) == 0 then
         .inbounds = [{
@@ -1287,31 +1350,31 @@ ensure_stats_api_scaffold() {
       else . end)
     ' "$CONFIG_PATH" 2>/dev/null || true)"
     if [[ -z "$updated" ]]; then
-      warn "统计模块 JSON 升级生成失败，原配置保持不变。"
+      warn "Unable to generate updated Stats API JSON; original config preserved."
       return 1
     fi
     commit_config "$updated" || return 1
-    ok "Xray API 与流量统计脚手架注入完成！"
+    ok "Xray API and traffic statistics scaffold installed."
     if service_unit_exists "$SERVICE_NAME" && systemctl is-active --quiet "$SERVICE_NAME"; then
-      systemctl restart "$SERVICE_NAME" >/dev/null 2>&1 || true
+      restart_xray_preserving_traffic >/dev/null 2>&1 || true
     fi
   fi
 }
 
-# 基础框架初始化（确保 config.json 存在基础框架：log, stats, api, policy, outbounds, routing）
+# Ensure the base config contains log, stats, api, policy, outbounds and routing.
 ensure_config_scaffold() {
   install -d -m 755 "$CONFIG_DIR"
   if [[ -f "$CONFIG_PATH" ]]; then
-    # 验证是否为合法 JSON 且包含 inbounds
+    # Reject malformed JSON or configurations missing the inbounds array.
     if jq -e '.inbounds' "$CONFIG_PATH" >/dev/null 2>&1; then
-      ensure_stats_api_scaffold || warn "统计模块初始化失败，流量看板可能不可用（原配置保持不变）。"
+      ensure_stats_api_scaffold || warn "Stats API initialization failed; the traffic dashboard may be unavailable. Original config preserved."
       return 0
     fi
-    warn "已存在的 $CONFIG_PATH 不是有效的 Xray 配置（缺少 inbounds 或 JSON 损坏），将先备份再重建脚手架。"
+    warn "Existing $CONFIG_PATH is not a valid Xray config; backing it up before rebuilding."
     backup_existing_config
   fi
 
-  info "正在初始化 Xray-core 基础工程脚手架配置..."
+  info "Initializing base Xray-core configuration scaffold..."
   local rules_json='[
     {"type":"field","domain":["geosite:geolocation-!cn"],"outboundTag":"direct"},
     {"type":"field","domain":["geosite:cn"],"outboundTag":"block"},
@@ -1341,7 +1404,8 @@ ensure_config_scaffold() {
             downlinkOnly: 5,
             bufferSize: 512,
             statsUserUplink: true,
-            statsUserDownlink: true
+            statsUserDownlink: true,
+            statsUserOnline: true
           }
         },
         system: {
@@ -1396,14 +1460,14 @@ ensure_config_scaffold() {
     }' > "${CONFIG_PATH}.tmp.$$"
   if ! jq empty "${CONFIG_PATH}.tmp.$$" >/dev/null 2>&1; then
     rm -f "${CONFIG_PATH}.tmp.$$"
-    fatal "脚手架配置生成失败（jq 输出非法 JSON）。"
+    fatal "Failed to generate valid scaffold JSON using jq."
   fi
   mv -f "${CONFIG_PATH}.tmp.$$" "$CONFIG_PATH"
-  chmod 644 "$CONFIG_PATH"
-  ok "基础架构配置脚手架已就绪。"
+  set_xray_config_permissions "$CONFIG_PATH" || fatal "Unable to initialize config file permissions"
+  ok "Base configuration scaffold is ready."
 }
 
-# 构造具体的 Inbound JSON 对象
+# Build the inbound JSON configuration objects.
 build_inbound_tcp_reality() {
   local in_port="$1"
   local in_tag="$2"
@@ -1522,12 +1586,7 @@ build_inbound_xhttp_reality() {
         xhttpSettings: {
           path: $path,
           mode: $mode,
-          extra: {
-            xPaddingBytes: "100-1000",
-            scMaxEachPostBytes: 1000000,
-            scMaxBufferedPosts: 30,
-            scStreamUpServerSecs: "20-80"
-          }
+          xPaddingBytes: "100-1000"
         },
         sockopt: {
           tcpFastOpen: true,
@@ -1594,14 +1653,10 @@ build_inbound_xhttp_tls() {
         xhttpSettings: {
           path: $path,
           mode: $mode,
-          extra: {
-            xPaddingBytes: "100-1000",
-            scMaxEachPostBytes: 1000000,
-            scMaxBufferedPosts: 30,
-            scStreamUpServerSecs: "20-80"
-          }
+          xPaddingBytes: "100-1000"
         },
         sockopt: {
+          trustedXForwardedFor: ["CF-Connecting-IP"],
           tcpFastOpen: true,
           tcpCongestion: "bbr",
           tcpNoDelay: true,
@@ -1618,16 +1673,16 @@ build_inbound_xhttp_tls() {
     }'
 }
 
-# ==================== 多用户与实时流量统计体系 ====================
+# Multi-user management and live traffic accounting.
 
 get_all_system_users() {
   [[ -f "$CONFIG_PATH" ]] || return 0
   jq -r '.inbounds[]? | select(.tag != "api-internal" and .settings.clients != null) | .settings.clients[]? | "\(.email // "admin")|\(.id)"' "$CONFIG_PATH" 2>/dev/null | sort -u || true
 }
 
-# ==================== 节点辅助元数据 (VLESS Encryption 客户端串) ====================
-# Xray 服务端配置里只有 decryption，客户端链接需要配对的 encryption 串。
-# 这些信息无法写进 config.json（未知字段会导致校验失败），因此单独存档。
+# Inbound-specific auxiliary metadata for VLESS client encryption.
+# Xray stores decryption on the server while the client link needs matching encryption.
+# Store the paired string separately; Xray rejects unknown top-level config keys.
 meta_ensure() {
   install -d -m 755 "$CONFIG_DIR" 2>/dev/null || true
   if [[ ! -f "$META_PATH" ]]; then
@@ -1666,7 +1721,7 @@ meta_del() {
   return 0
 }
 
-# 节点的客户端加密串（无则返回 none）
+# Retrieve the client encryption string for an inbound (empty if unavailable).
 node_client_encryption() {
   local tag="$1"
   local enc
@@ -1678,11 +1733,11 @@ node_client_encryption() {
   fi
 }
 
-# 服务端启用了 VLESS 加密但元数据缺少配对串时提示（旧版本创建的节点常见）
+# Warn when VLESS Encryption is enabled but the paired client string was not saved.
 warn_if_client_encryption_missing() {
   local tag="$1" dec="$2" enc="$3"
   if [[ "$dec" != "none" && "$enc" == "none" ]]; then
-    warn "节点 ${tag} 启用了 VLESS 加密，但缺少客户端配对串（可能由旧版本创建）；生成的链接将无法连接，请重新创建该节点。"
+    warn "Inbound ${tag} enables VLESS Encryption but lacks the paired client encryption string (possibly created by an older version). Recreate the inbound."
   fi
 }
 
@@ -1700,6 +1755,42 @@ format_bytes() {
     awk -v b="$b" 'BEGIN {printf "%.2f GB", b/1073741824}'
   else
     awk -v b="$b" 'BEGIN {printf "%.2f TB", b/1099511627776}'
+  fi
+}
+
+# Persistent traffic accounting across controlled restarts.
+
+get_or_update_persistent_user_traffic() {
+  local email="$1"
+  local live_up="${2:-0}"
+  local live_down="${3:-0}"
+
+  install -d -m 755 "$CONFIG_DIR"
+  [[ -f "$STATS_STORE_PATH" ]] || echo '{"users":{}}' > "$STATS_STORE_PATH"
+
+  local updated
+  updated="$(jq --arg email "$email" --argjson up "$live_up" --argjson down "$live_down" '
+    .users[$email] = (
+      (.users[$email] // {"total_up":0, "total_down":0, "last_up":0, "last_down":0}) as $u |
+      (if $up >= $u.last_up then ($up - $u.last_up) else $up end) as $delta_up |
+      (if $down >= $u.last_down then ($down - $u.last_down) else $down end) as $delta_down |
+      {
+        total_up: ($u.total_up + $delta_up),
+        total_down: ($u.total_down + $delta_down),
+        last_up: $up,
+        last_down: $down
+      }
+    )
+  ' "$STATS_STORE_PATH" 2>/dev/null || true)"
+
+  if [[ -n "$updated" ]]; then
+    echo "$updated" > "$STATS_STORE_PATH"
+    local p_up p_down
+    p_up="$(echo "$updated" | jq -r --arg email "$email" ".users[\$email].total_up // $live_up")"
+    p_down="$(echo "$updated" | jq -r --arg email "$email" ".users[\$email].total_down // $live_down")"
+    echo "${p_up}|${p_down}"
+  else
+    echo "${live_up}|${live_down}"
   fi
 }
 
@@ -1721,36 +1812,68 @@ get_xray_stats_json() {
   fi
 }
 
+# Encode the full XHTTP settings required by v2rayN/v2rayNG. Keep mode both
+# in the flat URI field and inside extra for compatibility with 3x-ui imports.
+# Client-facing XHTTP mode remains a top-level URL option, not in extra.
+xhttp_extra_query() {
+  local inbound_json="$1" padding extra
+  padding="$(jq -r '.streamSettings.xhttpSettings.extra.xPaddingBytes // .streamSettings.xhttpSettings.xPaddingBytes // "100-1000"' <<< "$inbound_json")" || return 1
+  extra="$(jq -nc --arg padding "$padding" '{xPaddingBytes:$padding}')" || return 1
+  url_encode "$extra"
+}
+
+# External port mapping is only metadata for exported XHTTP+TLS URLs.
+# Does not alter Xray listener, TLS, firewall, or Cloudflare Origin Rules.
+public_share_port_for_inbound() {
+  local tag="$1" listen="$2" net="$3" sec="$4" mapped=""
+  if [[ "$net" == "xhttp" && "$sec" == "tls" && -f "$PUBLIC_PORTS_PATH" ]]; then
+    local configured
+    if ! jq -e '.nodes | type=="object"' "$PUBLIC_PORTS_PATH" >/dev/null 2>&1; then
+      warn "Public port metadata is corrupted; inbound $tag will use listener port $listen."
+    else
+      configured="$(jq -c --arg tag "$tag" '.nodes[$tag] // empty' "$PUBLIC_PORTS_PATH" 2>/dev/null || true)"
+      if [[ -n "$configured" ]]; then
+        mapped="$(jq -er --arg tag "$tag" --argjson listen "$listen" '.nodes[$tag] | select(.listen_port == $listen) | .public_port | select(type=="number" and .>=1 and .<=65535)' "$PUBLIC_PORTS_PATH" 2>/dev/null || true)"
+        [[ -n "$mapped" ]] || warn "Public-port mapping for inbound $tag is invalid or stale; ignoring the old mapping." 
+      fi
+    fi
+  fi
+  if [[ "$mapped" =~ ^[0-9]+$ ]]; then printf "%s" "$mapped"; else printf "%s" "$listen"; fi
+}
+
 show_user_node_links() {
   local users
   users="$(get_all_system_users)"
   if [[ -z "$users" ]]; then
-    warn "当前无任何用户记录。"
+    warn "No user records found."
     return 0
   fi
 
-  local user_arr=()
-  local i=0
-  echo
-  echo -e "  ${BOLD}请选择要导出分享链接的用户${NC}"
-  while IFS='|' read -r email uuid; do
-    [[ -z "$email" ]] && continue
-    user_arr+=("${email}|${uuid}")
-    echo "$((i+1))) 用户名: ${email} | UUID: ${uuid}"
-    i=$((i + 1))
-  done <<< "$users"
-  echo "0) 取消并返回"
+  local sel_email="${1:-}" sel_uuid="${2:-}"
+  if [[ -z "$sel_email" || -z "$sel_uuid" ]]; then
+    local user_arr=()
+    local i=0
+    echo
+    echo -e "  ${BOLD}Select a user to export links${NC}"
+    while IFS='|' read -r email uuid; do
+      [[ -z "$email" ]] && continue
+      user_arr+=("${email}|${uuid}")
+      echo "$((i+1))) Username: ${email} | UUID: ${uuid}"
+      i=$((i + 1))
+    done <<< "$users"
+    echo "0) Cancel and return"
 
-  read -r -p "请选择用户序号 [1-${i}]: " u_sel || u_sel=""
-  [[ "$u_sel" == "0" || -z "$u_sel" ]] && return 0
-  if ! [[ "$u_sel" =~ ^[0-9]+$ ]] || ((u_sel < 1 || u_sel > i)); then
-    warn "无效序号。"
-    return 0
+    local u_sel
+    read -r -p "Choose user [1-${i}]: " u_sel || u_sel=""
+    [[ "$u_sel" == "0" || -z "$u_sel" ]] && return 0
+    if ! [[ "$u_sel" =~ ^[0-9]+$ ]] || ((u_sel < 1 || u_sel > i)); then
+      warn "Invalid selection."
+      return 0
+    fi
+    local chosen="${user_arr[$((u_sel-1))]}"
+    sel_email="${chosen%%|*}"
+    sel_uuid="${chosen##*|}"
   fi
-
-  local chosen="${user_arr[$((u_sel-1))]}"
-  local sel_email="${chosen%%|*}"
-  local sel_uuid="${chosen##*|}"
 
   local server_ip
   server_ip="$(get_public_ip)"
@@ -1764,13 +1887,13 @@ show_user_node_links() {
   n_count="$(echo "$nodes_json" | jq 'length')"
 
   if (( n_count == 0 )); then
-    warn "当前尚未配置任何业务节点。"
+    warn "No managed inbounds have been configured."
     return 0
   fi
 
   echo
-  echo -e "  ${BOLD}${GREEN}用户 [${sel_email}] 专属节点配置与链接 (共 ${n_count} 个节点)${NC}"
-  echo -e "  用户 UUID: ${CYAN}${sel_uuid}${NC}"
+  echo -e "  ${BOLD}${GREEN}User [${sel_email}] inbound configurations and links (${n_count} inbounds)${NC}"
+  echo -e "  User UUID: ${CYAN}${sel_uuid}${NC}"
   echo "—————————————————————————————————————————————————————————————————"
 
   local node_links=()
@@ -1783,8 +1906,10 @@ show_user_node_links() {
     port="$(echo "$ib_json" | jq -r '.port')"
     net="$(echo "$ib_json" | jq -r '.streamSettings.network // "tcp"')"
     sec="$(echo "$ib_json" | jq -r '.streamSettings.security // "none"')"
+    local share_port
+    share_port="$(public_share_port_for_inbound "$tag" "$port" "$net" "$sec")"
 
-    # 该用户在此节点上的实际凭证（不同节点可能尚未同步该用户）
+    # Select the user's actual credentials for each inbound assignment.
     local node_user_id node_flow
     node_user_id="$(echo "$ib_json" | jq -r --arg em "$sel_email" '[.settings.clients[]? | select(.email == $em) | .id] | first // empty' 2>/dev/null || true)"
     node_flow="$(echo "$ib_json" | jq -r --arg em "$sel_email" '[.settings.clients[]? | select(.email == $em) | .flow] | first // empty' 2>/dev/null || true)"
@@ -1792,8 +1917,8 @@ show_user_node_links() {
     if [[ -z "$node_user_id" ]]; then
       node_links+=("")
       echo
-      echo -e "${BOLD}${CYAN}[节点 $((idx+1))] ${tag}${NC} (端口: ${port} | 协议: ${net}+${sec})"
-      warn "该用户尚未同步到此节点，已跳过链接生成。"
+      echo -e "${BOLD}${CYAN}[Inbound $((idx+1))] ${tag}${NC} (Port: ${port} | Protocol: ${net}+${sec})"
+      warn "This user is not assigned to the inbound; skipping link generation."
       idx=$((idx + 1))
       continue
     fi
@@ -1810,7 +1935,7 @@ show_user_node_links() {
       local priv
       priv="$(echo "$ib_json" | jq -r '.streamSettings.realitySettings.privateKey // ""')"
       pbk="$(derive_reality_public_key "$priv")"
-      [[ -n "$pbk" ]] || warn "节点 ${tag} 无法推导 REALITY 公钥，生成的链接可能不可用。"
+      [[ -n "$pbk" ]] || warn "Cannot derive the REALITY public key for inbound ${tag}; the exported link may be unusable."
 
       local seed vfy
       seed="$(echo "$ib_json" | jq -r '.streamSettings.realitySettings.mldsa65Seed // ""')"
@@ -1820,14 +1945,15 @@ show_user_node_links() {
       fi
 
       if [[ "$net" == "tcp" ]]; then
-        [[ -z "$node_flow" ]] && node_flow="xtls-rprx-vision"
-        link="vless://${node_user_id}@${host_for_link}:${port}?type=tcp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F&flow=${node_flow}&encryption=$(url_encode "$enc_param")#$(url_encode "${tag}-${sel_email%%@*}")"
+        local node_flow_query=""
+        [[ -n "$node_flow" ]] && node_flow_query="&flow=$(url_encode "$node_flow")"
+        link="vless://${node_user_id}@${host_for_link}:${share_port}?type=tcp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F${node_flow_query}&encryption=$(url_encode "$enc_param")#$(url_encode "${tag}-${sel_email%%@*}")"
       elif [[ "$net" == "xhttp" ]]; then
         path="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.path // "/"')"
         mode="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.mode // "auto"')"
         local flow_param=""
-        [[ -n "$node_flow" ]] && flow_param="&flow=${node_flow}"
-        link="vless://${node_user_id}@${host_for_link}:${port}?type=xhttp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&host=${sni}&sid=${sid}&spx=%2F&path=$(url_encode "$path")&mode=${mode}${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "${tag}-${sel_email%%@*}")"
+        [[ -n "$node_flow" && "$enc_param" != "none" ]] && flow_param="&flow=$(url_encode "$node_flow")"
+        link="vless://${node_user_id}@${host_for_link}:${share_port}?type=xhttp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F&path=$(url_encode "$path")&mode=${mode}&extra=$(xhttp_extra_query "$ib_json")${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "${tag}-${sel_email%%@*}")"
       fi
     elif [[ "$sec" == "tls" ]]; then
       local cert_file domain path mode
@@ -1837,21 +1963,21 @@ show_user_node_links() {
       path="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.path // "/"')"
       mode="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.mode // "auto"')"
       local flow_param=""
-      [[ -n "$node_flow" ]] && flow_param="&flow=${node_flow}"
-      link="vless://${node_user_id}@${domain}:${port}?type=xhttp&security=tls&sni=${domain}&host=${domain}&fp=chrome&path=$(url_encode "$path")&mode=${mode}${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "${tag}-${sel_email%%@*}")"
+      [[ -n "$node_flow" && "$enc_param" != "none" ]] && flow_param="&flow=$(url_encode "$node_flow")"
+      link="vless://${node_user_id}@${domain}:${share_port}?type=xhttp&security=tls&sni=${domain}&alpn=h2&fp=chrome&ech=$(url_encode "$XHTTP_CDN_ECH_CONFIG")&path=$(url_encode "$path")&mode=${mode}&extra=$(xhttp_extra_query "$ib_json")${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "${tag}-${sel_email%%@*}")"
     fi
 
     node_links+=("$link")
     echo
-    echo -e "${BOLD}${CYAN}[节点 $((idx+1))] ${tag}${NC} (端口: ${port} | 协议: ${net}+${sec})"
+    echo -e "${BOLD}${CYAN}[Inbound $((idx+1))] ${tag}${NC} (Port: ${port} | Protocol: ${net}+${sec})"
     if [[ -n "$link" ]]; then
-      echo -e "  - ${GREEN}${BOLD}VLESS 专属导入链接：${NC}\n    ${link}"
+      echo -e "  - ${GREEN}${BOLD}VLESS import link:${NC}\n    ${link}"
     fi
     idx=$((idx + 1))
   done
 
   echo
-  read -r -p "是否需要生成某节点的终端二维码？(输入序号 1-${n_count}，直接回车跳过): " qr_idx || qr_idx=""
+  read -r -p "Generate a terminal QR code for an inbound? Choose 1-${n_count}, or press Enter to skip: " qr_idx || qr_idx=""
   if [[ "$qr_idx" =~ ^[0-9]+$ ]] && ((1 <= qr_idx && qr_idx <= n_count)); then
     local sel_link="${node_links[$((qr_idx-1))]}"
     if [[ -n "$sel_link" ]]; then
@@ -1860,172 +1986,90 @@ show_user_node_links() {
       fi
       if command -v qrencode >/dev/null 2>&1; then
         echo
-        qrencode -t ANSIUTF8 "$sel_link" || warn "二维码输出异常，请使用链接导入。"
+        qrencode -t ANSIUTF8 "$sel_link" || warn "QR output failed; import using the VLESS link instead."
       fi
     fi
   fi
-  echo && read -rp "按回车键继续..." _dummy
+  echo && read -rp "Press Enter to continue..." _dummy
 }
 
+# Shared CLI/TG user directory engine (the Go binary needs no Telegram token for local use).
+ensure_user_manager_binary() {
+  if [[ -x "$BOT_BIN_PATH" ]]; then return 0; fi
+  warn "Independent user management requires the freedom-bot binary. Install it from the Telegram Bot menu (no token needed for local management)."
+  return 1
+}
+list_independent_user_names() {
+  "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-list-users
+}
 add_new_user_interactive() {
-  ensure_stats_api_scaffold || warn "统计模块初始化失败，流量看板可能不可用（原配置保持不变）。"
-  echo
-  echo -e "  ${BOLD}添加用户${NC}"
-  local new_email
-  while true; do
-    read -r -p "请输入用户标识名称 (任意字符或邮箱，如 alice/phone/admin，直接回车随机分配): " in_name || in_name=""
-    in_name="$(echo "$in_name" | tr -d '[:space:]|>')"
-    if [[ -z "$in_name" ]]; then
-      new_email="user-$(openssl rand -hex 2)"
-      info "已自动分配随机用户标识: ${new_email}"
-      break
-    fi
-    new_email="$in_name"
-    break
-  done
-
-  if get_all_system_users | awk -F'|' -v e="$new_email" '$1 == e { found = 1 } END { exit !found }'; then
-    warn "用户标识 [${new_email}] 已存在，请勿重复添加！"
-    return 0
-  fi
-
-  local gen_uuid
-  gen_uuid="$("$BIN" uuid 2>/dev/null || cat /proc/sys/kernel/random/uuid | tr -d '[:space:]')"
-  local new_uuid
-  read -r -p "用户 UUID (直接回车全自动随机生成，或手动粘贴指定 UUID): " custom_uuid || custom_uuid=""
-  new_uuid="${custom_uuid:-$gen_uuid}"
-  new_uuid="${new_uuid//[[:space:]]/}"
-  if ! [[ "$new_uuid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
-    warn "UUID 格式无效，应形如 xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx。"
-    return 0
-  fi
-
-  backup_existing_config
-  local updated
-  updated="$(jq --arg email "$new_email" --arg id "$new_uuid" '
-    .inbounds = [
-      .inbounds[] |
-      if .tag == "api-internal" then .
-      else
-        .settings.clients = (.settings.clients // []) + [
-          {
-            id: $id,
-            email: $email
-          } + (
-            if (.settings.clients[0].flow // "") != "" then { flow: .settings.clients[0].flow } else {} end
-          )
-        ]
-      end
-    ]
-  ' "$CONFIG_PATH")"
-
-  commit_config "$updated" || { warn "新用户写入失败，原配置保持不变。"; return 1; }
-
-  validate_and_restart_service
-  ok "新用户 [${new_email}] 已成功添加并同步下发至所有活跃节点！"
-  echo "  - 用户 UUID: ${new_uuid}"
-  echo && read -rp "按回车键继续..." _dummy
-}
-
-delete_user_interactive() {
-  ensure_stats_api_scaffold || warn "统计模块初始化失败，流量看板可能不可用（原配置保持不变）。"
-  local users
-  users="$(get_all_system_users)"
-  if [[ -z "$users" ]]; then
-    warn "当前系统没有任何用户记录可供删除。"
-    return 0
-  fi
-
-  local user_arr=()
-  local i=0
-  echo
-  echo -e "  ${BOLD}请选择要删除的用户序号${NC}"
-  echo "————————————————————————————————————————————————"
-  while IFS='|' read -r email uuid; do
-    [[ -z "$email" ]] && continue
-    user_arr+=("${email}|${uuid}")
-    echo -e "  ${GREEN}$((i+1)).${NC} 用户名: ${email} | UUID: ${uuid}"
-    i=$((i + 1))
-  done <<< "$users"
-  echo "————————————————————————————————————————————————"
-  echo -e "  ${GREEN}0.${NC} 取消并返回"
-  echo "————————————————————————————————————————————————"
-
-  if (( i <= 1 )); then
-    warn "系统当前仅存 1 个用户，删除该用户将导致所有节点无法连接！请至少保留 1 个用户。"
-    echo && read -rp "按回车键继续..." _dummy
-    return 0
-  fi
-
-  read -r -p "请输入要删除的用户序号 [1-${i}]: " del_sel || del_sel=""
-  [[ "$del_sel" == "0" || -z "$del_sel" ]] && return 0
-
-  if ! [[ "$del_sel" =~ ^[0-9]+$ ]] || ((del_sel < 1 || del_sel > i)); then
-    warn "序号无效，操作取消。"
-    return 0
-  fi
-
-  local chosen="${user_arr[$((del_sel-1))]}"
-  local del_email="${chosen%%|*}"
-  local del_uuid="${chosen##*|}"
-
-  read -r -p "确认彻底删除用户 [${del_email}]？[y/N]: " confirm_del || confirm_del="N"
-  case "${confirm_del:-N}" in
-    y|Y|yes|YES)
-      backup_existing_config
-      local updated
-      updated="$(jq --arg email "$del_email" --arg id "$del_uuid" '
-        .inbounds = [
-          .inbounds[] |
-          if .tag == "api-internal" then .
-          else
-            .settings.clients = [ .settings.clients[]? | select(.email != $email and .id != $id) ]
-          end
-        ]
-      ' "$CONFIG_PATH")"
-
-      if ! commit_config "$updated"; then
-        warn "删除用户失败：配置写入未通过校验，原配置保持不变。"
-        echo && read -rp "按回车键继续..." _dummy
-        return 1
-      fi
-      validate_and_restart_service
-      "$BIN" api statsquery --server=127.0.0.1:10085 -pattern "user>>>${del_email}>>>" -reset=true >/dev/null 2>&1 || true
-      ok "用户 [${del_email}] 已成功从所有节点注销并断开连接。"
-      echo && read -rp "按回车键继续..." _dummy
-      ;;
+  ensure_user_manager_binary || return 1
+  local username selection node="" total
+  read -r -p "New username (create unassigned by default): " username || return 0
+  if ! [[ "$username" =~ ^[A-Za-z0-9_.@-]{1,48}$ ]];then warn "Invalid username.";return 1;fi
+  total="$(jq '[.inbounds[]? | select(.protocol=="vless" and .tag!="api-internal")] | length' "$CONFIG_PATH")"
+  echo "0) Create user without assigning an inbound (recommended)"
+  jq -r '[.inbounds[]? | select(.protocol=="vless" and .tag!="api-internal") | .tag] | to_entries[] | "\(.key+1)) \(.value)"' "$CONFIG_PATH"
+  echo "a) Assign every existing inbound (use caution)"
+  read -r -p "Assign inbound number [default 0]: " selection || selection="0"
+  case "$selection" in
+    ""|0) ;;
+    a|A) node="all" ;;
     *)
-      info "已取消删除。"
-      echo && read -rp "按回车键继续..." _dummy
+      if ! [[ "$selection" =~ ^[0-9]+$ ]] || ((10#$selection < 1 || 10#$selection > total));then warn "Invalid selection";return 1;fi
+      node="$(jq -r --argjson ix "$((10#$selection-1))" '[.inbounds[]? | select(.protocol=="vless" and .tag!="api-internal") | .tag][$ix] // empty' "$CONFIG_PATH")"
+      [[ -n "$node" ]] || return 1
       ;;
   esac
+  "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-user-action add -local-user "$username" -local-node "$node"
 }
-
+delete_user_interactive() {
+  ensure_user_manager_binary || return 1
+  local username confirm
+  list_independent_user_names
+  read -r -p "Username to delete (Enter cancels): " username || return 0
+  [[ -n "$username" ]] || return 0
+  read -r -p "Delete user $username and all inbound assignments? [y/N]: " confirm || confirm="N"
+  case "$confirm" in
+    y|Y|yes|YES) "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-user-action delete -local-user "$username" ;;
+    *) info "Cancelled" ;;
+  esac
+}
 reset_traffic_stats_interactive() {
-  ensure_stats_api_scaffold || warn "统计模块初始化失败，流量看板可能不可用（原配置保持不变）。"
+  ensure_stats_api_scaffold || warn "Stats API initialization failed; the traffic dashboard may be unavailable. Original config preserved."
   if ! service_unit_exists "$SERVICE_NAME" || ! systemctl is-active --quiet "$SERVICE_NAME"; then
-    warn "Xray 服务未运行，无法连接 StatsService API。"
+    warn "Xray is not running; StatsService is unavailable."
     return 0
   fi
 
   echo
-  echo -e "  ${BOLD}清零流量${NC}"
+  echo -e "  ${BOLD}Reset Traffic${NC}"
   echo "————————————————————————————————————————————————"
-  echo -e "  ${GREEN}1.${NC} 重置所有用户流量"
-  echo -e "  ${GREEN}2.${NC} 重置指定用户流量"
-  echo -e "  ${GREEN}0.${NC} 取消并返回"
+  echo -e "  ${GREEN}1.${NC} Reset traffic for all users"
+  echo -e "  ${GREEN}2.${NC} Reset traffic for one user"
+  echo -e "  ${GREEN}0.${NC} Cancel and return"
   echo "————————————————————————————————————————————————"
-  read -r -p "请选择 [0-2]: " r_sel || r_sel="0"
+  read -r -p "Choose [0-2]: " r_sel || r_sel="0"
   case "${r_sel:-0}" in
     1)
-      read -r -p "确认清零所有用户的流量？[y/N]: " conf || conf="N"
+      read -r -p "Reset traffic for all users? [y/N]: " conf || conf="N"
       case "${conf:-N}" in
         y|Y|yes|YES)
-          "$BIN" api statsquery --server=127.0.0.1:10085 -pattern "user>>>" -reset=true >/dev/null 2>&1 || true
-          ok "已成功清零所有用户的流量计数器！"
-          echo && read -rp "按回车键继续..." _dummy
+          if ! "$BIN" api statsquery --server=127.0.0.1:10085 -pattern "user>>>" -reset=true >/dev/null 2>&1; then
+            warn "Unable to reset Xray counters; persisted data was not modified."
+            return 1
+          fi
+          # Reset the durable local counters when Xray runtime counters are cleared.
+          if [[ -x "$BOT_BIN_PATH" ]]; then
+            "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-traffic-reset-locked || return 1
+          elif [[ -f "$STATS_STORE_PATH" ]]; then
+            warn "The updated Bot management binary is missing; cannot reset the SQLite ledger safely."
+            return 1
+          fi
+          ok "Xray counters and persisted traffic totals reset."
+          echo && read -rp "Press Enter to continue..." _dummy
           ;;
-        *) info "已取消。" ;;
+        *) info "Cancelled。" ;;
       esac
       ;;
     2)
@@ -2033,45 +2077,209 @@ reset_traffic_stats_interactive() {
       users="$(get_all_system_users)"
       local u_arr=() i=0
       echo
-      echo -e "  ${BOLD}请选择要清零流量的用户${NC}"
+      echo -e "  ${BOLD}Select the user whose traffic should be reset${NC}"
       echo "————————————————————————————————————————————————"
       while IFS='|' read -r em id; do
         [[ -z "$em" ]] && continue
         u_arr+=("$em")
-        echo -e "  ${GREEN}$((i+1)).${NC} 用户名: ${em}"
+        echo -e "  ${GREEN}$((i+1)).${NC} Username: ${em}"
         i=$((i + 1))
       done <<< "$users"
       echo "————————————————————————————————————————————————"
-      echo -e "  ${GREEN}0.${NC} 取消"
+      echo -e "  ${GREEN}0.${NC} Cancel"
       echo "————————————————————————————————————————————————"
-      read -r -p "请输入用户序号 [1-${i}]: " u_idx || u_idx=""
+      read -r -p "Enter user number [1-${i}]: " u_idx || u_idx=""
       [[ "$u_idx" == "0" || -z "$u_idx" ]] && return 0
       if [[ "$u_idx" =~ ^[0-9]+$ ]] && ((1 <= u_idx && u_idx <= i)); then
         local target_em="${u_arr[$((u_idx-1))]}"
-        "$BIN" api statsquery --server=127.0.0.1:10085 -pattern "user>>>${target_em}>>>" -reset=true >/dev/null 2>&1 || true
-        ok "已成功清零用户 [${target_em}] 的流量计数！"
-        echo && read -rp "按回车键继续..." _dummy
+        if ! "$BIN" api statsquery --server=127.0.0.1:10085 -pattern "user>>>${target_em}>>>" -reset=true >/dev/null 2>&1; then
+          warn "Core user counter reset failed; persisted data was not changed."
+          return 1
+        fi
+        if [[ -x "$BOT_BIN_PATH" ]]; then
+          "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-traffic-reset-locked -local-user "$target_em" || return 1
+        else
+          warn "Update the Bot before resetting user totals in the SQLite ledger."
+          return 1
+        fi
+        ok "Reset traffic totals for user [${target_em}]."
+        echo && read -rp "Press Enter to continue..." _dummy
       else
-        warn "序号无效。"
+        warn "Invalid number."
       fi
       ;;
     *) ;;
   esac
 }
 
+# User detail menu avoids selecting the same user repeatedly for each action.
+# Match both email and UUID to avoid editing another user's inbound credential.
+manage_single_user_interactive() {
+  ensure_user_manager_binary || return 1
+  local users="" name id
+  while IFS= read -r name; do
+    [[ -z "$name" ]] && continue
+    id=""
+    if [[ -f "$CONFIG_DIR/freedom-users.json" ]]; then
+      id="$(jq -r --arg name "$name" '.users[$name].id // empty' "$CONFIG_DIR/freedom-users.json" 2>/dev/null || true)"
+    fi
+    if [[ -z "$id" ]]; then
+      id="$(jq -r --arg name "$name" '[.inbounds[]? | .settings.clients[]? | select(.email==$name) | .id] | first // empty' "$CONFIG_PATH")"
+    fi
+    [[ -n "$id" ]] && users+="${name}|${id}"$'\n'
+  done < <(list_independent_user_names)
+  if [[ -z "$users" ]]; then warn "No users."; return 0; fi
+
+  local entries=() email uuid idx=0
+  echo
+  echo -e "  ${BOLD}Select a user to manage${NC}"
+  while IFS='|' read -r email uuid; do
+    [[ -z "$email" || -z "$uuid" ]] && continue
+    entries+=("${email}|${uuid}")
+    echo "  $((++idx))) ${email} | ${uuid}"
+  done <<< "$users"
+  echo "  0) Back"
+
+  local pick
+  read -r -p "User number [1-${idx}]: " pick || pick=""
+  [[ -z "$pick" || "$pick" == "0" ]] && return 0
+  if ! [[ "$pick" =~ ^[0-9]+$ ]] || ((10#$pick < 1 || 10#$pick > idx)); then
+    warn "Invalid user number."
+    return 1
+  fi
+  local selected="${entries[$((10#$pick-1))]}"
+  local selected_email="${selected%%|*}" selected_uuid="${selected##*|}"
+
+  while true; do
+    echo
+    echo -e "  ${BOLD}User: ${selected_email}${NC}"
+    echo "  UUID: ${selected_uuid}"
+    echo "  1) View all inbound links and QR codes for this user"
+    echo "  2) Rename this user"
+    echo "  3) Rotate this user's UUID across all assigned inbounds"
+    echo "  4) Assign / unassign inbounds"
+    echo "  0) Back to user list"
+    local action
+    read -r -p "Choose [0-4]: " action || action="0"
+    case "$action" in
+      1) show_user_node_links "$selected_email" "$selected_uuid" ;;
+      2)
+        rename_managed_user "$selected_email" "$selected_uuid" || true
+        return 0
+        ;;
+      3)
+        rotate_managed_user_uuid "$selected_email" "$selected_uuid" || true
+        return 0
+        ;;
+      4) manage_user_node_binding_interactive "$selected_email" || true ;;
+      0|"") return 0 ;;
+      *) warn "Invalid choice." ;;
+    esac
+  done
+}
+
+
+manage_user_node_binding_interactive() {
+  ensure_user_manager_binary || return 1
+  local name="$1" node selection state action confirm
+  echo "User: $name"
+  jq -r '[.inbounds[]? | select(.protocol=="vless" and .tag!="api-internal")] | to_entries[] | "\(.key+1)) \(.value.tag) / port \(.value.port)"' "$CONFIG_PATH"
+  read -r -p "Select inbound number to modify (0 cancels): " selection || return 0
+  [[ "$selection" == "0" ]] && return 0
+  if ! [[ "$selection" =~ ^[0-9]+$ ]] || ((10#$selection < 1));then warn "Invalid inbound number.";return 1;fi
+  node="$(jq -r --argjson idx "$((10#$selection-1))" '[.inbounds[]? | select(.protocol=="vless" and .tag!="api-internal") | .tag][$idx] // empty' "$CONFIG_PATH")"
+  [[ -n "$node" ]] || { warn "Inbound not found.";return 1; }
+  state="$(jq -r --arg tag "$node" --arg name "$name" '[.inbounds[] | select(.tag==$tag) | .settings.clients[]? | select(.email==$name)] | length' "$CONFIG_PATH")"
+  action="assign"
+  if ((state>0));then action="unassign";fi
+  read -r -p "Run $action for inbound $node? [y/N]: " confirm || confirm="N"
+  case "$confirm" in
+    y|Y|yes|YES) "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-user-action "$action" -local-user "$name" -local-node "$node" ;;
+    *) info "Cancelled。" ;;
+  esac
+}
+
+rename_managed_user() {
+  ensure_user_manager_binary || return 1
+  local old_name="$1" new_name
+  read -r -p "New username (Enter cancels): " new_name || return 0
+  [[ -z "$new_name" ]] && return 0
+  "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-user-action rename -local-user "$old_name" -local-new-name "$new_name"
+}
+rotate_managed_user_uuid() {
+  ensure_user_manager_binary || return 1
+  local name="$1" confirm
+  read -r -p "Rotate UUID for $name? Existing links will stop working. [y/N]: " confirm || confirm="N"
+  case "$confirm" in
+    y|Y|yes|YES) "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-user-action rotate -local-user "$name" ;;
+    *) info "Cancelled" ;;
+  esac
+}
+
+toggle_user_status_interactive() {
+  if [[ ! -x "$BOT_BIN_PATH" || ! -f "$BOT_CONFIG_PATH" ]]; then
+    warn "Suspend/restore requires the installed freedom-bot management binary."
+    return 1
+  fi
+  echo
+  echo "1) Suspend active user"
+  echo "2) Restore suspended user"
+  echo "0) Cancel"
+  local option operation raw_users
+  read -r -p "Choose [0-2]: " option || option="0"
+  case "$option" in
+    1) operation="disable"; raw_users="$(get_all_system_users | cut -d "|" -f1 | sort -u)" ;;
+    2) operation="enable";
+       raw_users=""
+       if [[ -f "$CONFIG_DIR/freedom-disabled-users.json" ]]; then
+         raw_users="$(jq -r '.users | keys[]' "$CONFIG_DIR/freedom-disabled-users.json" 2>/dev/null || true)"
+       fi ;;
+    *) return 0 ;;
+  esac
+  local names=() name idx=0
+  while IFS= read -r name; do
+    [[ -z "$name" ]] && continue
+    names+=("$name")
+    printf "  %d. %s\n" "$((++idx))" "$name"
+  done <<< "$raw_users"
+  if ((idx==0)); then warn "No matching users."; return 0; fi
+  local selection selected confirm
+  read -r -p "Choose user number [1-${idx}]: " selection || selection=""
+  if ! [[ "$selection" =~ ^[0-9]+$ ]] || ((10#$selection < 1 || 10#$selection > idx)); then
+    warn "Invalid number; operation cancelled."; return 0
+  fi
+  selected="${names[$((10#$selection-1))]}"
+  read -r -p "Run ${operation} for ${selected}? Xray will restart. [y/N]: " confirm || confirm="N"
+  case "$confirm" in
+    y|Y|yes|YES)
+      "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-user-action "$operation" -local-user "$selected" || warn "Operation failed. Check the local configuration or logs." ;;
+    *) info "Cancelled。" ;;
+  esac
+}
 user_management_menu() {
-  ensure_stats_api_scaffold || warn "统计模块初始化失败，流量看板可能不可用（原配置保持不变）。"
+  locked_config_operation ensure_stats_api_scaffold || warn "Stats API initialization failed; the traffic dashboard may be unavailable. Original config preserved."
   while true; do
     local stats_data
     stats_data="$(get_xray_stats_json)"
+    local stored_stats=""
+    if [[ -x "$BOT_BIN_PATH" ]]; then
+      "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-traffic-snapshot >/dev/null 2>&1 || warn "Traffic sampling failed; showing the last saved totals."
+      stored_stats="$(cat "$STATS_STORE_PATH" 2>/dev/null || true)"
+      if ! jq -e '.users | type=="object"' <<< "$stored_stats" >/dev/null 2>&1; then
+        warn "Unable to read the persistent traffic ledger; showing current Xray runtime counters."
+        stored_stats=""
+      fi
+    else
+      warn "Bot manager is not installed; statistics are collected on demand and cannot be persisted in the background."
+    fi
 
     local users
     users="$(get_all_system_users)"
 
     echo
-    echo -e "  ${BOLD}用户与流量统计${NC}"
+    echo -e "  ${BOLD}Users and Traffic${NC}"
     echo "—————————————————————————————————————————————————————————————————————————————————————"
-    printf "${BOLD}%-6s %-20s %-38s %-12s %-12s %-12s${NC}\n" "序号" "用户名 (Email)" "UUID" "上传流量" "下载流量" "总流量"
+    printf "${BOLD}%-6s %-20s %-38s %-12s %-12s %-12s${NC}\n" "No." "Username (email)" "UUID" "Upload" "Download" "Total traffic"
     echo "—————————————————————————————————————————————————————————————————————————————————————"
 
     local user_list=()
@@ -2082,16 +2290,33 @@ user_management_menu() {
         user_list+=("${u_email}|${u_id}")
         idx=$((idx + 1))
 
-        local up_bytes down_bytes total_bytes
-        up_bytes="$(jq -r --arg email "$u_email" '.stat[]? | select(.name == ("user>>>" + $email + ">>>traffic>>>uplink")) | .value // "0"' <<<"$stats_data" | tail -n1)"
-        down_bytes="$(jq -r --arg email "$u_email" '.stat[]? | select(.name == ("user>>>" + $email + ">>>traffic>>>downlink")) | .value // "0"' <<<"$stats_data" | tail -n1)"
-        [[ -z "$up_bytes" ]] && up_bytes=0
-        [[ -z "$down_bytes" ]] && down_bytes=0
-        total_bytes=$((up_bytes + down_bytes))
+        local live_up live_down
+        live_up="$(jq -r --arg email "$u_email" '.stat[]? | select(.name == ("user>>>" + $email + ">>>traffic>>>uplink")) | .value // "0"' <<<"$stats_data" | tail -n1)"
+        live_down="$(jq -r --arg email "$u_email" '.stat[]? | select(.name == ("user>>>" + $email + ">>>traffic>>>downlink")) | .value // "0"' <<<"$stats_data" | tail -n1)"
+        [[ -z "$live_up" ]] && live_up=0
+        [[ -z "$live_down" ]] && live_down=0
+
+        local persisted p_up p_down total_bytes
+        if [[ -n "$stored_stats" ]]; then
+          p_up="$(jq -r --arg email "$u_email" '.users[$email].total_up // 0' <<< "$stored_stats")"
+          p_down="$(jq -r --arg email "$u_email" '.users[$email].total_down // 0' <<< "$stored_stats")"
+          persisted="${p_up}|${p_down}"
+        elif [[ -x "$BOT_BIN_PATH" ]]; then
+          # Do not write from the CLI when the journal is unreadable. The Go
+          # collector owns all updates and preserves damaged files for repair.
+          persisted="${live_up}|${live_down}"
+        else
+          persisted="$(get_or_update_persistent_user_traffic "$u_email" "$live_up" "$live_down")"
+        fi
+        p_up="${persisted%%|*}"
+        p_down="${persisted##*|}"
+        [[ -z "$p_up" ]] && p_up="$live_up"
+        [[ -z "$p_down" ]] && p_down="$live_down"
+        total_bytes=$((p_up + p_down))
 
         local up_fmt down_fmt total_fmt
-        up_fmt="$(format_bytes "$up_bytes")"
-        down_fmt="$(format_bytes "$down_bytes")"
+        up_fmt="$(format_bytes "$p_up")"
+        down_fmt="$(format_bytes "$p_down")"
         total_fmt="$(format_bytes "$total_bytes")"
 
         printf "%-6s %-20s %-38s %-12s %-12s %-12s\n" \
@@ -2100,31 +2325,35 @@ user_management_menu() {
     fi
 
     if (( idx == 0 )); then
-      echo "当前暂无用户记录。请添加用户或通过添加新节点自动初始化用户。"
+      echo "No users found. Create an independent user and explicitly assign an inbound."
     fi
     echo "—————————————————————————————————————————————————————————————————————————————————————"
-    echo -e "  ${GREEN}1.${NC} 查看用户链接 / 二维码"
-    echo -e "  ${GREEN}2.${NC} 添加用户"
-    echo -e "  ${GREEN}3.${NC} 删除用户"
-    echo -e "  ${GREEN}4.${NC} 清零流量"
-    echo -e "  ${GREEN}5.${NC} 刷新统计"
-    echo -e "  ${GREEN}0.${NC} 返回主菜单"
+    echo -e "  ${GREEN}1.${NC} View user links and QR codes"
+    echo -e "  ${GREEN}2.${NC} Add user"
+    echo -e "  ${GREEN}3.${NC} Delete user"
+    echo -e "  ${GREEN}4.${NC} Reset Traffic"
+    echo -e "  ${GREEN}5.${NC} Refresh statistics"
+    echo -e "  ${GREEN}6.${NC} Manage a selected user (links / rename / UUID)"
+    echo -e "  ${GREEN}7.${NC} Suspend / restore users (requires freedom-bot)"
+    echo -e "  ${GREEN}0.${NC} Back to main menu"
     echo "—————————————————————————————————————————————————————————————————————————————————————"
 
-    read -r -p "请选择操作 [0-5]: " u_sel || u_sel="0"
+    read -r -p "Choose action [0-7]: " u_sel || u_sel="0"
     case "${u_sel:-0}" in
       1) show_user_node_links || true ;;
       2) add_new_user_interactive || true ;;
       3) delete_user_interactive || true ;;
-      4) reset_traffic_stats_interactive || true ;;
+      4) locked_config_operation reset_traffic_stats_interactive || true ;;
       5) ;;
+      6) manage_single_user_interactive || true ;;
+      7) toggle_user_status_interactive || true ;;
       0) return 0 ;;
-      *) warn "无效选项，请重新选择。" ;;
+      *) warn "Invalid option; try again." ;;
     esac
   done
 }
 
-# ==================== 在线检查更新与升级中心 ====================
+# Online update and release management.
 
 get_remote_script_version() {
   local url="$RAW_SCRIPT_URL"
@@ -2146,96 +2375,81 @@ get_remote_xray_version() {
   echo "$ver"
 }
 
+# Only the script and an already installed Bot are eligible for combined updates.
+# Xray-core remains a separate, explicitly confirmed upgrade.
 update_freedom_script() {
-  info "正在检测 freedom.sh 远端最新版本..."
-  local r_ver
-  r_ver="$(get_remote_script_version)"
-  if [[ -z "$r_ver" ]]; then
-    warn "无法获取 GitHub 远端脚本版本，请检查网络或 GitHub 连通性。"
+  info "Downloading the latest freedom.sh from GitHub main (content-based update detection)..."
+  local tmp_file
+  tmp_file="$(mktemp /tmp/freedom_update_XXXXXXXX.sh)" || return 1
+  if ! curl --proto "=https" -fsSL --connect-timeout 8 --max-time 50 --retry 2 "$RAW_SCRIPT_URL" -o "$tmp_file"; then
+    rm -f "$tmp_file"
+    warn "Official GitHub download failed. The installed script was not modified; third-party mirrors are not trusted."
     return 1
   fi
-
-  echo -e "当前本地脚本版本: ${BOLD}${CYAN}${SCRIPT_VERSION}${NC}"
-  echo -e "GitHub 远端最新版本: ${BOLD}${GREEN}${r_ver}${NC}"
-
-  if [[ "$SCRIPT_VERSION" == "$r_ver" ]]; then
-    ok "当前脚本已是最新版本 (${SCRIPT_VERSION})！"
-    read -r -p "是否依然强制重新下载最新脚本覆盖更新？[y/N]: " f_ans || f_ans="N"
-    case "${f_ans:-N}" in
-      y|Y|yes|YES) ;;
-      *) return 0 ;;
-    esac
-  else
-    info "发现新版本脚本可用！"
+  if ! head -n 1 "$tmp_file" | grep -q "^#!/usr/bin/env bash" ||
+     ! grep -q '^SCRIPT_VERSION=' "$tmp_file" || ! bash -n "$tmp_file"; then
+    rm -f "$tmp_file"
+    warn "Script validation failed: expected marker missing or invalid Bash syntax. Installed version unchanged."
+    return 1
   fi
-
-  local tmp_file="/tmp/freedom_update_$$.sh"
-  info "正在下载最新脚本代码..."
-  if ! curl -fsSL "$RAW_SCRIPT_URL" -o "$tmp_file" 2>/dev/null; then
-    warn "官方 GitHub raw 下载失败，尝试使用加速镜像下载..."
-    if ! curl -fsSL "$GHPROXY_SCRIPT_URL" -o "$tmp_file" 2>/dev/null; then
+  local target="/usr/local/bin/freedom"
+  if [[ -f "$target" ]] && cmp -s "$tmp_file" "$target"; then
+    rm -f "$tmp_file"
+    ok "Manager script matches GitHub main."
+    maybe_offer_bot_refresh --force
+    return $?
+  fi
+  if [[ -f "$target" ]]; then
+    if ! cp -a "$target" "${target}.previous"; then
       rm -f "$tmp_file"
-      warn "下载失败，请检查网络连通性。"
+      warn "Unable to back up the previous script; update cancelled."
       return 1
     fi
   fi
-
-  if ! bash -n "$tmp_file" 2>/dev/null; then
-    rm -f "$tmp_file"
-    warn "下载的脚本语法校验失败，已中止覆盖以保护系统！"
+  if ! install -m 755 "$tmp_file" "${target}.next" || ! mv -f "${target}.next" "$target"; then
+    rm -f "$tmp_file" "${target}.next"
+    warn "Manager installation failed; previous copy retained at ${target}.previous."
     return 1
   fi
-
-  install -m 755 "$tmp_file" /usr/local/bin/freedom
-  if [[ -f "$0" && "$0" != "/usr/local/bin/freedom" ]]; then
-    cp -f "$tmp_file" "$0" 2>/dev/null || true
-    chmod +x "$0" 2>/dev/null || true
-  fi
   rm -f "$tmp_file"
-
-  ok "freedom.sh 脚本已成功升级至最新版本！"
-  ok "系统快捷指令已同步配置：随时在终端输入 ${BOLD}freedom${NC} 即可唤出控制台！"
-  echo
-  read -r -p "是否立即重新执行新版脚本？[Y/n]: " r_ans || r_ans="Y"
-  case "${r_ans:-Y}" in
-    n|N|no|NO) ;;
-    *) exec /usr/local/bin/freedom ;;
-  esac
+  ok "Latest freedom.sh installed. Previous backup: ${target}.previous"
+  info "Restart the manager to receive the Bot sync prompt. Xray-core will not be upgraded automatically."
+  exec "$target"
 }
 
 upgrade_xray_core_official() {
-  info "正在查询 Xray-core 官方最新版本..."
-  local cur_ver="未知"
+  info "Checking the latest official Xray-core version..."
+  local cur_ver="Unknown"
   if [[ -n "${BIN:-}" ]] && [[ -x "$BIN" ]]; then
     cur_ver="$($BIN version 2>&1 | head -n1 || true)"
-    cur_ver="${cur_ver:-未知}"
+    cur_ver="${cur_ver:-Unknown}"
   fi
   local r_tag
   r_tag="$(get_remote_xray_version)"
 
-  echo -e "当前本地核心版本: ${BOLD}${CYAN}${cur_ver}${NC}"
-  echo -e "GitHub 官方最新 Release: ${BOLD}${GREEN}${r_tag:-无法获取(将直接执行官方安装升级)}${NC}"
+  echo -e "Installed core version:  ${BOLD}${CYAN}${cur_ver}${NC}"
+  echo -e "Latest official GitHub release:  ${BOLD}${GREEN}${r_tag:-Unavailable (will use official installer)}${NC}"
   echo
-  read -r -p "确认调用 XTLS 官方 Xray-install 脚本执行升级？[Y/n]: " c_ans || c_ans="Y"
+  read -r -p "Run the official XTLS Xray installer to upgrade? [Y/n]: " c_ans || c_ans="Y"
   case "${c_ans:-Y}" in
     n|N|no|NO) return 0 ;;
   esac
 
-  info "正在运行官方 Xray-install 升级核心..."
+  info "Running official Xray-core installer..."
   local installer
   installer="$(curl -fsSL --connect-timeout 8 https://github.com/XTLS/Xray-install/raw/main/install-release.sh 2>/dev/null || true)"
   if [[ -z "$installer" ]]; then
-    warn "无法下载官方 Xray-install 脚本，请检查网络后重试。"
+    warn "Unable to download the official Xray installer; check network connectivity."
     return 1
   fi
   if ! bash -c "$installer" @ install; then
-    warn "官方 Xray-install 执行失败，请检查网络后重试。"
+    warn "Official Xray installer failed; check logs and network connectivity."
     return 1
   fi
   local new_bin
   new_bin="$(command -v xray || true)"
   if [[ -z "$new_bin" || ! -x "$new_bin" ]]; then
-    warn "升级后仍未找到 xray 可执行文件，请检查安装结果。"
+    warn "No Xray executable found after upgrade; inspect installation."
     return 1
   fi
   BIN="$new_bin"
@@ -2245,34 +2459,34 @@ upgrade_xray_core_official() {
 
   local new_ver
   new_ver="$("$BIN" version 2>&1 | head -n1 || true)"
-  ok "Xray-core 已成功更新至：${new_ver:-未知版本}！"
+  ok "Xray-core successfully updated to: ${new_ver:-Unknown version}！"
 }
 
 update_rule_assets_interactive() {
-  info "正在更新官方 GeoIP / GeoSite 路由规则数据..."
+  info "Updating official GeoIP / GeoSite assets..."
   local installer
   installer="$(curl -fsSL --connect-timeout 8 https://github.com/XTLS/Xray-install/raw/main/install-release.sh 2>/dev/null || true)"
   if [[ -n "$installer" ]] && bash -c "$installer" @ install-geodata; then
-    ok "GeoIP / GeoSite 规则数据更新完成。"
+    ok "GeoIP / GeoSite assets updated."
   else
-    warn "Geo 数据更新异常（网络受限或官方脚本获取失败），继续执行 1stream 资产更新..."
+    warn "Geo data update failed; continuing with the 1stream asset update."
   fi
 
-  info "正在拉取最新构建的 1stream.dat 分流规则资产..."
+  info "Downloading the latest 1stream.dat routing asset..."
   install -d -m 755 /usr/local/share/xray
-  local stream_url="https://github.com/u-fw/xray-rule-assets/releases/download/1stream-latest/1stream.dat"
+  local stream_url="https://github.com/u-fw/freedom-xray/releases/download/1stream-latest/1stream.dat"
   local tmp_dat="/usr/local/share/xray/1stream.dat.tmp"
   if curl -fsSL --connect-timeout 8 "$stream_url" -o "$tmp_dat" 2>/dev/null; then
     mv -f "$tmp_dat" /usr/local/share/xray/1stream.dat
     chmod 644 /usr/local/share/xray/1stream.dat
-    ok "1stream.dat 资产已成功更新到 /usr/local/share/xray/1stream.dat！"
+    ok "Updated /usr/local/share/xray/1stream.dat successfully."
   else
     rm -f "$tmp_dat"
-    warn "1stream.dat 下载未完成，请检查网络。"
+    warn "1stream.dat download failed; check network connectivity."
   fi
 
   validate_and_restart_service
-  ok "规则资产更新流程完毕！"
+  ok "Routing asset updates completed."
 }
 
 system_update_center_menu() {
@@ -2281,52 +2495,61 @@ system_update_center_menu() {
     cur_core="$(get_xray_core_version)"
 
     echo
-    echo -e "  ${BOLD}在线更新${NC}"
-    echo -e "  脚本: ${SCRIPT_VERSION} | 核心: ${cur_core}"
+    echo -e "  ${BOLD}Online Updates${NC}"
+    echo -e "  Script: ${SCRIPT_VERSION} | Core: ${cur_core}"
     echo "————————————————————————————————————————————————"
-    echo -e "  ${GREEN}1.${NC} 更新 freedom.sh"
-    echo -e "  ${GREEN}2.${NC} 升级 Xray-core"
-    echo -e "  ${GREEN}3.${NC} 更新 GeoIP / GeoSite / 1stream.dat"
-    echo -e "  ${GREEN}4.${NC} 检查组件版本"
-    echo -e "  ${GREEN}0.${NC} 返回主菜单"
+    echo -e "  ${GREEN}1.${NC} Update manager and installed Bot"
+    echo -e "  ${GREEN}2.${NC} Upgrade Xray-core"
+    echo -e "  ${GREEN}3.${NC} Update GeoIP / GeoSite / 1stream.dat"
+    echo -e "  ${GREEN}4.${NC} Check component versions"
+    echo -e "  ${GREEN}5.${NC} Update Telegram Bot only"
+    echo -e "  ${GREEN}0.${NC} Back to main menu"
     echo "————————————————————————————————————————————————"
 
-    read -r -p "请选择升级操作 [0-4]: " up_sel || up_sel="0"
+    read -r -p "Choose update action [0-5]: " up_sel || up_sel="0"
     case "${up_sel:-0}" in
       1)
         update_freedom_script || true
-        echo && read -rp "按回车键继续..." _dummy
+        echo && read -rp "Press Enter to continue..." _dummy
+        ;;
+      5)
+        if [[ -x "$BOT_BIN_PATH" || -f "$BOT_CONFIG_PATH" ]]; then
+          install_or_update_freedom_bot || warn "Bot update failed; check logs."
+        else
+          warn "Bot not installed; configure it in the Telegram Bot menu first."
+        fi
+        echo && read -rp "Press Enter to continue..." _dummy
         ;;
       2)
         upgrade_xray_core_official || true
-        echo && read -rp "按回车键继续..." _dummy
+        echo && read -rp "Press Enter to continue..." _dummy
         ;;
       3)
         update_rule_assets_interactive || true
-        echo && read -rp "按回车键继续..." _dummy
+        echo && read -rp "Press Enter to continue..." _dummy
         ;;
       4)
-        info "正在获取 GitHub 远端版本数据..."
+        info "Fetching upstream versions from GitHub..."
         local r_sc r_xr
         r_sc="$(get_remote_script_version)"
         r_xr="$(get_remote_xray_version)"
         echo
-        echo -e "组件名称           本地运行版本           GitHub 远端最新"
+        echo -e "Component           Installed version        GitHub latest"
         echo "─────────────────────────────────────────────────────────────────"
-        printf "%-18s %-22s %-20s\n" "freedom.sh" "$SCRIPT_VERSION" "${r_sc:-检测失败}"
-        printf "%-18s %-22s %-20s\n" "Xray-core" "$cur_core" "${r_xr:-检测失败}"
+        printf "%-18s %-22s %-20s\n" "freedom.sh" "$SCRIPT_VERSION" "${r_sc:-Check failed}"
+        printf "%-18s %-22s %-20s\n" "Xray-core" "$cur_core" "${r_xr:-Check failed}"
         echo "─────────────────────────────────────────────────────────────────"
-        echo && read -rp "按回车键继续..." _dummy
+        echo && read -rp "Press Enter to continue..." _dummy
         ;;
       0) return 0 ;;
-      *) warn "无效选项。" ;;
+      *) warn "Invalid choice." ;;
     esac
   done
 }
 
-# ==================== 业务管理功能 ====================
+# Managed inbound operations.
 
-# 1. 列表与查看节点详情
+# 1. List inbounds and show details.
 list_and_show_nodes() {
   ensure_config_scaffold
   local nodes_json
@@ -2335,7 +2558,7 @@ list_and_show_nodes() {
   count="$(echo "$nodes_json" | jq 'length')"
 
   if ((count == 0)); then
-    warn "当前配置文件中尚未添加任何业务节点服务。"
+    warn "No managed inbounds are configured."
     return 0
   fi
 
@@ -2346,7 +2569,7 @@ list_and_show_nodes() {
   host_for_link="$(url_host "$server_ip")"
 
   echo
-  echo -e "  ${BOLD}${GREEN}当前托管的 Xray-core 业务节点列表 (共 ${count} 个)${NC}"
+  echo -e "  ${BOLD}${GREEN}Managed Xray-core inbounds (${count})${NC}"
   echo "—————————————————————————————————————————————————————————————————"
 
   local i=0
@@ -2359,15 +2582,22 @@ list_and_show_nodes() {
     port="$(echo "$ib_json" | jq -r '.port')"
     net="$(echo "$ib_json" | jq -r '.streamSettings.network // "tcp"')"
     sec="$(echo "$ib_json" | jq -r '.streamSettings.security // "none"')"
+    local share_port
+    share_port="$(public_share_port_for_inbound "$tag" "$port" "$net" "$sec")"
     uuid="$(echo "$ib_json" | jq -r '.settings.clients[0].id // empty')"
     email="$(echo "$ib_json" | jq -r '.settings.clients[0].email // "admin@freedom"')"
     local client_count
     client_count="$(echo "$ib_json" | jq '.settings.clients | length')"
 
     echo
-    echo -e "${BOLD}${CYAN}[节点序号 $((i+1))] Tag: ${tag}${NC}"
-    echo "  - 端口: ${port} | 传输层: ${net} | 安全层: ${sec} | 客户端数: ${client_count} 个"
-    echo "  - 默认用户: ${email} (${uuid})"
+    echo -e "${BOLD}${CYAN}[Inbound $((i+1))] Tag: ${tag}${NC}"
+    echo "  - Listen port: ${port} | Public port: ${share_port} | Transport: ${net} | Security: ${sec} | Clients: ${client_count}"
+    if [[ -z "$uuid" ]]; then
+      info "No users assigned to this inbound. Assign access in user management before exporting links."
+      i=$((i+1))
+      continue
+    fi
+    echo "  - Displayed user: ${email} (${uuid})"
 
     local enc_param
     enc_param="$(node_client_encryption "$tag")"
@@ -2392,9 +2622,10 @@ list_and_show_nodes() {
 
       if [[ "$net" == "tcp" ]]; then
         flow="$(echo "$ib_json" | jq -r '.settings.clients[0].flow // ""')"
-        [[ -n "$flow" ]] || flow="xtls-rprx-vision"
-        link="vless://${uuid}@${host_for_link}:${port}?type=tcp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F&flow=${flow}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
-        echo "  - 伪装 SNI: ${sni} | shortId: ${sid} | 流控: ${flow}"
+        local flow_param=""
+        [[ -n "$flow" ]] && flow_param="&flow=${flow}"
+        link="vless://${uuid}@${host_for_link}:${share_port}?type=tcp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
+        echo "  - Decoy SNI: ${sni} | shortId: ${sid} | Flow: ${flow}"
       elif [[ "$net" == "xhttp" ]]; then
         path="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.path // "/"')"
         mode="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.mode // "auto"')"
@@ -2402,11 +2633,11 @@ list_and_show_nodes() {
         local dec
         dec="$(echo "$ib_json" | jq -r '.settings.decryption // "none"')"
         local flow_param=""
-        if [[ -n "$flow" ]]; then
-          flow_param="&flow=${flow}"
+        if [[ -n "$flow" && "$enc_param" != "none" ]]; then
+          flow_param="&flow=$(url_encode "$flow")"
         fi
-        link="vless://${uuid}@${host_for_link}:${port}?type=xhttp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&host=${sni}&sid=${sid}&spx=%2F&path=$(url_encode "$path")&mode=${mode}${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
-        echo "  - 伪装 SNI: ${sni} | XHTTP 路径: ${path} | 模式: ${mode} | 流控: ${flow:-无} | 解密层: ${dec}"
+        link="vless://${uuid}@${host_for_link}:${share_port}?type=xhttp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F&path=$(url_encode "$path")&mode=${mode}&extra=$(xhttp_extra_query "$ib_json")${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
+        echo "  - Decoy SNI: ${sni} | XHTTP path: ${path} | Mode: ${mode} | Flow: ${flow:-none} | Decryption: ${dec}"
       fi
     elif [[ "$sec" == "tls" ]]; then
       local cert_file domain path mode flow
@@ -2417,27 +2648,27 @@ list_and_show_nodes() {
       mode="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.mode // "auto"')"
       flow="$(echo "$ib_json" | jq -r '.settings.clients[0].flow // empty')"
       local flow_param=""
-      if [[ -n "$flow" ]]; then
-        flow_param="&flow=${flow}"
+      if [[ -n "$flow" && "$enc_param" != "none" ]]; then
+        flow_param="&flow=$(url_encode "$flow")"
       fi
-      link="vless://${uuid}@${domain}:${port}?type=xhttp&security=tls&sni=${domain}&host=${domain}&fp=chrome&path=$(url_encode "$path")&mode=${mode}${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
-      echo "  - TLS 域名/SNI: ${domain} | XHTTP 路径: ${path} | 模式: ${mode} | 流控: ${flow:-无} (CDN 代理适配)"
-      echo -e "  - ${CYAN}[Cloudflare ECH 增强提示]${NC} 客户端支持 ECH 时，可设置 Outer SNI 为: ${BOLD}cloudflare-ech.com${NC}，配合 DoH: ${BOLD}https://dns.alidns.com/dns-query${NC}，实现真实域名零泄露！"
+      link="vless://${uuid}@${domain}:${share_port}?type=xhttp&security=tls&sni=${domain}&alpn=h2&fp=chrome&ech=$(url_encode "$XHTTP_CDN_ECH_CONFIG")&path=$(url_encode "$path")&mode=${mode}&extra=$(xhttp_extra_query "$ib_json")${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
+      echo "  - TLS domain/SNI: ${domain} | XHTTP path: ${path} | Mode: ${mode} | Flow: ${flow:-none} (CDN proxy mode)"
+      info "ECH parameters are included in the client link. The CDN must publish valid ECH DNS records and the client must support ECH; remove ECH when troubleshooting."
     fi
 
     if [[ "$enc_param" != "none" ]]; then
-      echo "  - 后量子加密: ML-KEM-768 (配对客户端 encryption 已写入分享链接)"
+      echo "  - Post-quantum encryption: ML-KEM-768 (Paired client encryption was included in the sharing link)"
     fi
 
     if [[ -n "$link" ]]; then
-      echo -e "  - ${GREEN}${BOLD}VLESS 链接：${NC}\n    ${link}"
+      echo -e "  - ${GREEN}${BOLD}VLESS link:${NC}\n    ${link}"
     fi
 
     i=$((i + 1))
   done
 
   echo
-  read -r -p "是否需要生成某节点的终端二维码？(输入序号 1-${count}，直接回车跳过): " qr_idx || qr_idx=""
+  read -r -p "Generate a terminal QR code? Choose inbound 1-${count}, or press Enter to skip: " qr_idx || qr_idx=""
   if [[ "$qr_idx" =~ ^[0-9]+$ ]] && ((1 <= qr_idx && qr_idx <= count)); then
     local target_i=$((qr_idx - 1))
     local ib_json
@@ -2447,7 +2678,14 @@ list_and_show_nodes() {
     port="$(echo "$ib_json" | jq -r '.port')"
     net="$(echo "$ib_json" | jq -r '.streamSettings.network // "tcp"')"
     sec="$(echo "$ib_json" | jq -r '.streamSettings.security // "none"')"
+    local share_port
+    share_port="$(public_share_port_for_inbound "$tag" "$port" "$net" "$sec")"
     uuid="$(echo "$ib_json" | jq -r '.settings.clients[0].id // empty')"
+    if [[ -z "$uuid" ]]; then
+      warn "Selected inbound has no assigned users. Assign a user before generating a QR code."
+      echo && read -rp "Press Enter to return to the main menu..." _dummy
+      return 0
+    fi
 
     local enc_param
     enc_param="$(node_client_encryption "$tag")"
@@ -2470,16 +2708,17 @@ list_and_show_nodes() {
       fi
       flow="$(echo "$ib_json" | jq -r '.settings.clients[0].flow // empty')"
       if [[ "$net" == "tcp" ]]; then
-        [[ -n "$flow" ]] || flow="xtls-rprx-vision"
-        target_link="vless://${uuid}@${host_for_link}:${port}?type=tcp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F&flow=${flow}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
+        local flow_param=""
+        [[ -n "$flow" ]] && flow_param="&flow=${flow}"
+        target_link="vless://${uuid}@${host_for_link}:${share_port}?type=tcp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
       else
         path="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.path // "/"')"
         mode="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.mode // "auto"')"
         local flow_param=""
-        if [[ -n "$flow" ]]; then
-          flow_param="&flow=${flow}"
+        if [[ -n "$flow" && "$enc_param" != "none" ]]; then
+          flow_param="&flow=$(url_encode "$flow")"
         fi
-        target_link="vless://${uuid}@${host_for_link}:${port}?type=xhttp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&host=${sni}&sid=${sid}&spx=%2F&path=$(url_encode "$path")&mode=${mode}${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
+        target_link="vless://${uuid}@${host_for_link}:${share_port}?type=xhttp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F&path=$(url_encode "$path")&mode=${mode}&extra=$(xhttp_extra_query "$ib_json")${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
       fi
     elif [[ "$sec" == "tls" ]]; then
       local cert_file domain path mode flow
@@ -2490,10 +2729,10 @@ list_and_show_nodes() {
       mode="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.mode // "auto"')"
       flow="$(echo "$ib_json" | jq -r '.settings.clients[0].flow // empty')"
       local flow_param=""
-      if [[ -n "$flow" ]]; then
-        flow_param="&flow=${flow}"
+      if [[ -n "$flow" && "$enc_param" != "none" ]]; then
+        flow_param="&flow=$(url_encode "$flow")"
       fi
-      target_link="vless://${uuid}@${domain}:${port}?type=xhttp&security=tls&sni=${domain}&host=${domain}&fp=chrome&path=$(url_encode "$path")&mode=${mode}${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
+      target_link="vless://${uuid}@${domain}:${share_port}?type=xhttp&security=tls&sni=${domain}&alpn=h2&fp=chrome&ech=$(url_encode "$XHTTP_CDN_ECH_CONFIG")&path=$(url_encode "$path")&mode=${mode}&extra=$(xhttp_extra_query "$ib_json")${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
     fi
 
     if [[ -n "$target_link" ]]; then
@@ -2502,91 +2741,91 @@ list_and_show_nodes() {
       fi
       if command -v qrencode >/dev/null 2>&1; then
         echo
-        qrencode -t ANSIUTF8 "$target_link" || warn "二维码输出异常，请直接使用上面的 URL 链接。"
+        qrencode -t ANSIUTF8 "$target_link" || warn "QR output failed; use the URL link above."
       fi
     fi
   fi
-  echo && read -rp "按回车键返回主菜单..." _dummy
+  echo && read -rp "Press Enter to return to the main menu..." _dummy
 }
 
-# 交互询问 VLESS Encryption 模式：结果写入全局 ASK_VDEC / ASK_VENC。
-# 使用全局变量而非 echo 返回，避免与日志输出/子 shell 互相污染。
+# Ask about VLESS Encryption; return selection via ASK_VDEC and ASK_VENC.
+# Use globals rather than echo to keep prompts out of command-substitution output.
 ASK_VDEC="none"
 ASK_VENC="none"
 
 ask_vless_encryption_mode() {
   ASK_VDEC="none"
   ASK_VENC="none"
-  local title="${1:-VLESS 后量子加密选项 (ML-KEM-768)：}"
+  local title="${1:-VLESS post-quantum encryption (ML-KEM-768):}"
   if ! xray_supports_subcommand vlessenc; then
-    info "当前 Xray-core 不支持 vlessenc 子命令，本次节点加密层使用 none。"
+    info "This Xray-core lacks the vlessenc subcommand. Using no VLESS Encryption for this inbound."
     return 0
   fi
   local enc_opt=""
   echo
   echo -e "${BOLD}${title}${NC}"
-  echo "1) none (极速默认)"
-  echo "2) ML-KEM-768 (抗量子加密)"
-  read -r -p "选择加密模式 [1/2, 默认 1]: " enc_opt || enc_opt="1"
+  echo "1) none (fast default)"
+  echo "2) ML-KEM-768 (post-quantum encryption)"
+  read -r -p "Encryption mode [1/2, default 1]: " enc_opt || enc_opt="1"
   if [[ "${enc_opt:-1}" == "2" ]]; then
     if generate_vlessenc_mlkem_pair; then
       ASK_VDEC="$VLESSENC_DECRYPTION"
       ASK_VENC="$VLESSENC_ENCRYPTION"
-      ok "已启用 VLESS ML-KEM-768 后量子加密。"
+      ok "Enabled VLESS ML-KEM-768 post-quantum encryption."
     else
-      warn "vlessenc 输出解析失败，已回退为 none。"
+      warn "Could not parse vlessenc output; falling back to none."
     fi
   fi
 }
 
-# 交互询问 REALITY ML-DSA-65 抗量子签名：结果写入全局 ASK_MLDSA_SEED
+# Ask about REALITY ML-DSA-65 signatures; store the seed in ASK_MLDSA_SEED.
 ASK_MLDSA_SEED=""
 
 ask_mldsa65_signature() {
   ASK_MLDSA_SEED=""
   xray_supports_subcommand mldsa65 || return 0
   local ans=""
-  read -r -p "是否启用 REALITY ML-DSA-65 抗量子签名？[y/N]: " ans || ans=""
+  read -r -p "Enable REALITY ML-DSA-65 post-quantum signatures? [y/N]: " ans || ans=""
   case "${ans:-N}" in
     y|Y|yes|YES)
       if generate_mldsa65_pair; then
         ASK_MLDSA_SEED="$MLDSA_SEED"
-        ok "已启用 ML-DSA-65 后量子签名。"
+        ok "Enabled ML-DSA-65 post-quantum signatures."
       else
-        warn "mldsa65 生成失败，本次跳过签名（不影响节点创建）。"
+        warn "ML-DSA-65 key generation failed; continuing without signatures."
       fi
       ;;
   esac
 }
 
-# 2. 添加新节点 (原子模板 1/2/3 扩展)
+# 2. Create a new inbound from one of three base templates.
 add_new_node_interactive() {
   ensure_config_scaffold
   echo
-  echo -e "  ${BOLD}添加节点${NC}"
+  echo -e "  ${BOLD}Add inbound${NC}"
   echo "————————————————————————————————————————————————"
-  echo -e "  ${GREEN}1.${NC} VLESS + TCP + REALITY + Vision（直连）"
-  echo -e "  ${GREEN}2.${NC} VLESS + XHTTP + REALITY（免域名）"
+  echo -e "  ${GREEN}1.${NC} VLESS + TCP + REALITY + Vision (direct)"
+  echo -e "  ${GREEN}2.${NC} VLESS + XHTTP + REALITY (no domain required)"
   echo -e "  ${GREEN}3.${NC} VLESS + XHTTP + TLS（CDN）"
-  echo -e "  ${GREEN}0.${NC} 返回主菜单"
+  echo -e "  ${GREEN}0.${NC} Back to main menu"
   echo "————————————————————————————————————————————————"
 
   local t_sel
-  read -r -p "请选择模板序号 [1-3, 默认 1]: " t_sel || t_sel="1"
+  read -r -p "Choose template [1-3, default 1]: " t_sel || t_sel="1"
   t_sel="${t_sel:-1}"
   [[ "$t_sel" == "0" ]] && return 0
 
-  # 1. 端口收集与严格冲突排查（结果经全局 PORT_RESULT 返回，避免命令替换污染）
+  # Validate the requested port; return PORT_RESULT without command substitution.
   local new_port
   case "$t_sel" in
-    1) prompt_and_check_port "请输入新节点监听端口" "443" ;;
-    2) prompt_and_check_port "请输入新节点监听端口" "8443" ;;
-    3) prompt_and_check_port "请输入新节点监听端口 (若过 CDN 建议 443/2053/8443 等)" "2053" ;;
-    *) warn "无效选项，返回主菜单。"; return 0 ;;
+    1) prompt_and_check_port "Enter new inbound listener port" "443" ;;
+    2) prompt_and_check_port "Enter new inbound listener port" "8443" ;;
+    3) prompt_and_check_port "Enter new inbound listener port (for a CDN, consider 443/2053/8443)" "2053" ;;
+    *) warn "Invalid option; returning to the main menu."; return 0 ;;
   esac
   new_port="$PORT_RESULT"
 
-  # 2. 收集 Tag（严格去重，避免重复 tag 导致 Xray 校验失败）
+  # Collect a unique inbound tag; duplicate tags invalidate Xray config.
   local default_tag="node-${new_port}"
   case "$t_sel" in
     1) default_tag="TCP-REALITY-${new_port}" ;;
@@ -2594,17 +2833,18 @@ add_new_node_interactive() {
     3) default_tag="XHTTP-TLS-CDN-${new_port}" ;;
   esac
   local new_tag
-  read -r -p "节点标签 Tag (默认 ${default_tag}): " new_tag || new_tag=""
+  read -r -p "Inbound tag (default ${default_tag}): " new_tag || new_tag=""
   new_tag="${new_tag:-$default_tag}"
   if jq -e --arg t "$new_tag" '[.inbounds[]? | select(.tag == $t)] | length > 0' "$CONFIG_PATH" >/dev/null 2>&1; then
-    warn "节点标签 [${new_tag}] 已存在，请使用其他标签后重试。"
+    warn "Inbound tag [${new_tag}] already exists; choose a different tag."
     return 1
   fi
 
-  # 3. 自动生成或继承主用户 UUID 与标识 (静默全自动，无需打扰用户)
+  # New inbounds never implicitly authorize any user. A temporary UUID is only used
+  # for template generation; the clients array is cleared before committing.
   local new_uuid new_email
-  new_uuid="$(get_or_create_shared_uuid)"
-  new_email="$(get_or_create_shared_email)"
+  new_uuid="$("$BIN" uuid 2>/dev/null || cat /proc/sys/kernel/random/uuid)"
+  new_email="unbound-template"
 
   local new_inbound_json=""
   local client_enc_for_meta="none"
@@ -2612,7 +2852,7 @@ add_new_node_interactive() {
   if [[ "$t_sel" == "1" ]]; then
     # TCP + REALITY
     local sni
-    read -r -p "REALITY 伪装域名/SNI (默认 ${DEFAULT_SNI}): " sni || sni=""
+    read -r -p "REALITY decoy domain/SNI (default ${DEFAULT_SNI}): " sni || sni=""
     sni="$(sanitize_domain "${sni:-$DEFAULT_SNI}")"
 
     get_or_create_shared_reality_keys
@@ -2620,7 +2860,7 @@ add_new_node_interactive() {
     local sid
     sid="$(openssl rand -hex 8 | tr -d '[:space:]')"
 
-    ask_vless_encryption_mode "VLESS 后量子加密选项 (ML-KEM-768)："
+    ask_vless_encryption_mode "VLESS post-quantum encryption (ML-KEM-768):"
     local vdec="$ASK_VDEC"
     client_enc_for_meta="$ASK_VENC"
 
@@ -2632,7 +2872,7 @@ add_new_node_interactive() {
   elif [[ "$t_sel" == "2" ]]; then
     # XHTTP + REALITY
     local sni
-    read -r -p "REALITY 伪装域名/SNI (默认 ${DEFAULT_SNI}): " sni || sni=""
+    read -r -p "REALITY decoy domain/SNI (default ${DEFAULT_SNI}): " sni || sni=""
     sni="$(sanitize_domain "${sni:-$DEFAULT_SNI}")"
 
     get_or_create_shared_reality_keys
@@ -2643,12 +2883,12 @@ add_new_node_interactive() {
     local rand_path
     rand_path="$(random_xhttp_path)"
     local xpath
-    read -r -p "XHTTP 请求路径 (直接回车使用随机 ${rand_path}): " xpath || xpath=""
+    read -r -p "XHTTP path (Enter for random ${rand_path}): " xpath || xpath=""
     xpath="$(sanitize_path "${xpath:-$rand_path}")"
 
-    echo "XHTTP 流控模式：1) auto (默认自适应)  2) packet-up (分块上传)  3) stream-up  4) stream-one"
+    echo "XHTTP mode: 1) auto (adaptive default)  2) packet-up (chunked upload)  3) stream-up  4) stream-one"
     local xmode_sel
-    read -r -p "选择模式 [1-4，默认 1]: " xmode_sel || xmode_sel="1"
+    read -r -p "Choose mode [1-4, default 1]: " xmode_sel || xmode_sel="1"
     local xmode="auto"
     case "${xmode_sel:-1}" in
       2) xmode="packet-up" ;;
@@ -2657,12 +2897,14 @@ add_new_node_interactive() {
       *) xmode="auto" ;;
     esac
 
-    ask_vless_encryption_mode "VLESS 后量子加密选项 (ML-KEM-768)："
+    ask_vless_encryption_mode "VLESS post-quantum encryption (ML-KEM-768):"
     local vdec="$ASK_VDEC" in_flow=""
     client_enc_for_meta="$ASK_VENC"
     if [[ "$vdec" != "none" ]]; then
       in_flow="xtls-rprx-vision"
-      ok "已启用 ML-KEM-768，并为该节点启用 Vision 穿透流控。"
+      ok "Enabled ML-KEM-768 and Vision for the encrypted inbound."
+    else
+      info "VLESS Encryption is disabled; Vision is not enabled."
     fi
 
     ask_mldsa65_signature
@@ -2674,98 +2916,74 @@ add_new_node_interactive() {
     # XHTTP + TLS (CDN)
     local domain
     while true; do
-      read -r -p "请输入用于 CDN 代理的真实解析域名 (如 cdn.example.com): " domain || domain=""
+      read -r -p "Enter the CDN hostname (for example cdn.example.com): " domain || domain=""
       domain="$(sanitize_domain "${domain:-}")"
       [[ -n "$domain" ]] && break
-      warn "过 CDN 模式必须提供真实域名。"
+      warn "CDN mode requires a valid hostname."
     done
 
     setup_tls_certificate "$domain"
     local cert_file="$TLS_CERT_FILE" key_file="$TLS_KEY_FILE"
     if [[ -z "$cert_file" || -z "$key_file" || ! -f "$cert_file" || ! -f "$key_file" ]]; then
-      warn "TLS 证书获取失败（证书或私钥文件缺失），操作已取消。"
+      warn "TLS certificate or key file is missing; operation cancelled."
       return 1
     fi
 
     local rand_path
     rand_path="$(random_xhttp_path)"
     local xpath
-    read -r -p "XHTTP 请求路径 (直接回车使用随机 ${rand_path}): " xpath || xpath=""
+    read -r -p "XHTTP path (Enter for random ${rand_path}): " xpath || xpath=""
     xpath="$(sanitize_path "${xpath:-$rand_path}")"
 
-    echo "XHTTP 流控模式：1) auto (默认推荐)  2) packet-up (Cloudflare CDN 100% 穿透兼容)"
+    echo "XHTTP mode: 1) auto (recommended)  2) packet-up (CDN-compatible chunked upload)"
     local xmode_sel
-    read -r -p "选择模式 [1/2，默认 1]: " xmode_sel || xmode_sel="1"
+    read -r -p "Choose mode [1/2, default 1]: " xmode_sel || xmode_sel="1"
     local xmode="auto"
     [[ "${xmode_sel:-1}" == "2" ]] && xmode="packet-up"
 
-    ask_vless_encryption_mode "VLESS 后量子加密选项 (ML-KEM-768)："
+    ask_vless_encryption_mode "VLESS post-quantum encryption (ML-KEM-768):"
     local vdec="$ASK_VDEC" in_flow=""
     client_enc_for_meta="$ASK_VENC"
     if [[ "$vdec" != "none" ]]; then
       in_flow="xtls-rprx-vision"
-      ok "已启用 ML-KEM-768，并为该节点启用 Vision 穿透流控。"
+      ok "Enabled ML-KEM-768 and Vision for the encrypted inbound."
     fi
 
     new_inbound_json="$(build_inbound_xhttp_tls "$new_port" "$new_tag" "$new_uuid" "$cert_file" "$key_file" "$xpath" "$xmode" "$vdec" "$in_flow" "$new_email")"
   fi
 
   if [[ -z "$new_inbound_json" ]]; then
-    warn "节点配置生成失败，操作已取消（原配置未改动）。"
+    warn "Failed to generate inbound config; operation cancelled. Original configuration retained."
     return 1
   fi
 
-  # 写入配置文件（原子提交 + JSON 校验，绝不覆盖成空文件）
+  # New inbounds start without users; never duplicate existing admin/user assignments.
+  new_inbound_json="$(jq -c '.settings.clients = []' <<< "$new_inbound_json")" || return 1
+  # Commit configuration atomically after JSON validation.
   backup_existing_config
   local updated_config
   updated_config="$(jq --argjson new_in "$new_inbound_json" '.inbounds += [$new_in]' "$CONFIG_PATH")"
-  commit_config "$updated_config" || { warn "写入配置失败，已保留原始配置。"; return 1; }
+  commit_config "$updated_config" || { warn "Failed to write config; original configuration retained."; return 1; }
 
-  # 记录客户端配对 encryption（Xray 配置不允许未知字段）
+  # Store paired client encryption separately because Xray rejects unknown fields.
   if [[ "$client_enc_for_meta" != "none" ]]; then
     if meta_set "$new_tag" "client_encryption" "$client_enc_for_meta"; then
-      ok "已保存该节点的客户端加密串（用于生成可用的分享链接）。"
+      ok "Saved the inbound's paired client encryption string for link exports."
     else
-      warn "客户端加密串保存失败，分享链接可能无法直接使用，请重新生成节点。"
+      warn "Failed to save the client encryption string; exported links may not work. Recreate this inbound."
     fi
   fi
 
-  # 自动同步系统中现存的其他多用户至该新节点 (若有)
-  local all_users
-  all_users="$(get_all_system_users)"
-  if [[ -n "$all_users" ]]; then
-    while IFS='|' read -r ex_email ex_uuid; do
-      [[ -z "$ex_email" || -z "$ex_uuid" ]] && continue
-      if jq -e --arg tag "$new_tag" --arg id "$ex_uuid" --arg em "$ex_email" '
-        .inbounds[] | select(.tag == $tag) | .settings.clients[]? | select(.id == $id or .email == $em)
-      ' "$CONFIG_PATH" >/dev/null 2>&1; then
-        continue
-      fi
-      local u_sync
-      u_sync="$(jq --arg tag "$new_tag" --arg email "$ex_email" --arg id "$ex_uuid" '
-        .inbounds = [
-          .inbounds[] |
-          if .tag != $tag then .
-          else
-            .settings.clients = (.settings.clients // []) + [
-              { id: $id, email: $email } + (
-                if (.settings.clients[0].flow // "") != "" then { flow: .settings.clients[0].flow } else {} end
-              )
-            ]
-          end
-        ]
-      ' "$CONFIG_PATH")"
-      commit_config "$u_sync" || { warn "同步多用户到新节点时写入失败，已跳过剩余用户。"; break; }
-    done <<< "$all_users"
-  fi
+  # Users are assigned explicitly; do not synchronize users to new inbounds automatically.
+  info "New inbound has no assigned users. Assign a user in user management before connecting."
 
   validate_and_restart_service
   auto_open_firewall_port "$new_port" "tcp" "$new_tag"
-  ok "新节点 [${new_tag}] 添加成功！"
+  ok "Created inbound [${new_tag}]."
   list_and_show_nodes
 }
 
-# 3. 删除已有节点
+# 3. Delete an inbound.
 delete_node_interactive() {
   ensure_config_scaffold
   local nodes_json
@@ -2774,12 +2992,12 @@ delete_node_interactive() {
   count="$(echo "$nodes_json" | jq 'length')"
 
   if ((count == 0)); then
-    warn "当前无任何业务节点可供删除。"
+    warn "No managed inbounds available to delete."
     return 0
   fi
 
   echo
-  echo -e "  ${BOLD}请选择要删除的业务节点序号${NC}"
+  echo -e "  ${BOLD}Select the inbound to delete${NC}"
   echo "————————————————————————————————————————————————"
   local i=0
   while ((i < count)); do
@@ -2789,18 +3007,18 @@ delete_node_interactive() {
     port="$(echo "$ib_json" | jq -r '.port')"
     net="$(echo "$ib_json" | jq -r '.streamSettings.network')"
     sec="$(echo "$ib_json" | jq -r '.streamSettings.security')"
-    echo -e "  ${GREEN}$((i+1)).${NC} 标签: ${tag} | 端口: ${port} | 协议: ${net}+${sec}"
+    echo -e "  ${GREEN}$((i+1)).${NC} Tag: ${tag} | Port: ${port} | Protocol: ${net}+${sec}"
     i=$((i + 1))
   done
   echo "————————————————————————————————————————————————"
-  echo -e "  ${GREEN}0.${NC} 取消并返回"
+  echo -e "  ${GREEN}0.${NC} Cancel and return"
   echo "————————————————————————————————————————————————"
 
-  read -r -p "请输入要删除的节点序号 [1-${count}]: " del_sel || del_sel=""
+  read -r -p "Inbound to delete [1-${count}]: " del_sel || del_sel=""
   [[ "$del_sel" == "0" || -z "$del_sel" ]] && return 0
 
   if ! [[ "$del_sel" =~ ^[0-9]+$ ]] || ((del_sel < 1 || del_sel > count)); then
-    warn "序号无效，操作取消。"
+    warn "Invalid number; operation cancelled."
     return 0
   fi
 
@@ -2809,31 +3027,57 @@ delete_node_interactive() {
   del_tag="$(echo "$nodes_json" | jq -r --argjson idx "$del_idx" '.[$idx].tag')"
   del_port="$(echo "$nodes_json" | jq -r --argjson idx "$del_idx" '.[$idx].port')"
 
-  read -r -p "确认彻底删除节点 [${del_tag}] (端口: ${del_port})？[y/N]: " confirm_del || confirm_del="N"
+  read -r -p "Permanently delete inbound [${del_tag}] (port: ${del_port})? [y/N]: " confirm_del || confirm_del="N"
   case "${confirm_del:-N}" in
     y|Y|yes|YES)
       backup_existing_config
       local updated_config
       updated_config="$(jq --arg dtag "$del_tag" '.inbounds = [ .inbounds[] | select(.tag != $dtag) ]' "$CONFIG_PATH")"
       if ! commit_config "$updated_config"; then
-        warn "删除节点失败：配置写入未通过校验，原配置保持不变。"
-        echo && read -rp "按回车键返回主菜单..." _dummy
+        warn "Failed to delete inbound: the new config did not pass validation. Original config retained."
+        echo && read -rp "Press Enter to return to the main menu..." _dummy
         return 1
       fi
-      meta_del "$del_tag" || warn "节点元数据清理失败，可手动检查：${META_PATH}"
+      meta_del "$del_tag" || warn "Failed to clean inbound metadata; inspect manually: ${META_PATH}"
       validate_and_restart_service
       auto_close_firewall_port "$del_port" "tcp"
-      ok "节点 [${del_tag}] 已成功移除，防火墙端口 ${del_port} 已清理。"
-      echo && read -rp "按回车键返回主菜单..." _dummy
+      ok "Deleted inbound [${del_tag}] and removed the firewall rule for port ${del_port}."
+      echo && read -rp "Press Enter to return to the main menu..." _dummy
       ;;
     *)
-      info "已取消删除。"
-      echo && read -rp "按回车键返回主菜单..." _dummy
+      info "Deletion cancelled."
+      echo && read -rp "Press Enter to return to the main menu..." _dummy
       ;;
   esac
 }
 
-# 4. 修改节点配置
+# 4. Edit an inbound.
+# Edit only the client-facing public-port sidecar, never Xray listening ports.
+set_node_public_port_interactive() {
+  local tag="$1" listen="$2" net="$3" sec="$4" value confirm tmp raw data
+  if [[ "$net" != "xhttp" || "$sec" != "tls" ]]; then warn "Only XHTTP + TLS is supported"; return 1; fi
+  info "Current listener port: $listen. This setting does not create a Cloudflare Origin Rule or restart Xray."
+  read -r -p "Public HTTPS port (for example 443; 0 clears): " value || return 0
+  if ! [[ "$value" =~ ^[0-9]{1,5}$ ]] || ((10#$value > 65535));then warn "Invalid port";return 1;fi
+  value="$((10#$value))"
+  [[ "$value" == "0" || "$value" == "$listen" ]] || info "Verify Cloudflare Origin Rules map public port $value to origin port $listen."
+  read -r -p "Update exported port metadata? [y/N]: " confirm || confirm="N"
+  case "$confirm" in y|Y|yes|YES);; *) info "Cancelled";return 0;; esac
+  install -d -m 755 "$CONFIG_DIR" || return 1
+  tmp="$(mktemp "$CONFIG_DIR/.freedom-public-ports.XXXXXX")" || return 1
+  if [[ -f "$PUBLIC_PORTS_PATH" ]];then
+    if ! raw="$(jq -c '.' "$PUBLIC_PORTS_PATH")";then rm -f "$tmp";warn "Metadata is corrupted; refusing overwrite";return 1;fi
+  else raw='{"nodes":{}}';fi
+  if [[ "$value" == "0" || "$value" == "$listen" ]];then
+    data="$(jq -c --arg tag "$tag" '.nodes = (.nodes // {}) | .nodes |= del(.[$tag])' <<< "$raw")" || { rm -f "$tmp";return 1; }
+  else
+    data="$(jq -c --arg tag "$tag" --argjson listen "$listen" --argjson port "$value" '.nodes = (.nodes // {}) | .nodes[$tag]={listen_port:$listen,public_port:$port}' <<< "$raw")" || { rm -f "$tmp";return 1; }
+  fi
+  if ! printf "%s\n" "$data" > "$tmp" || ! chmod 600 "$tmp" || ! mv -f "$tmp" "$PUBLIC_PORTS_PATH";then
+    rm -f "$tmp";warn "Save failed";return 1
+  fi
+  ok "Saved: $tag client port $(public_share_port_for_inbound "$tag" "$listen" "$net" "$sec") → listener $listen. Xray was not restarted."
+}
 modify_node_interactive() {
   ensure_config_scaffold
   local nodes_json
@@ -2842,12 +3086,12 @@ modify_node_interactive() {
   count="$(echo "$nodes_json" | jq 'length')"
 
   if ((count == 0)); then
-    warn "当前无任何业务节点可供修改。"
+    warn "No managed inbounds to edit."
     return 0
   fi
 
   echo
-  echo -e "  ${BOLD}请选择要修改的业务节点序号${NC}"
+  echo -e "  ${BOLD}Select the inbound to edit${NC}"
   echo "————————————————————————————————————————————————"
   local i=0
   while ((i < count)); do
@@ -2857,18 +3101,18 @@ modify_node_interactive() {
     port="$(echo "$ib_json" | jq -r '.port')"
     net="$(echo "$ib_json" | jq -r '.streamSettings.network')"
     sec="$(echo "$ib_json" | jq -r '.streamSettings.security')"
-    echo -e "  ${GREEN}$((i+1)).${NC} 标签: ${tag} | 端口: ${port} | 协议: ${net}+${sec}"
+    echo -e "  ${GREEN}$((i+1)).${NC} Tag: ${tag} | Port: ${port} | Protocol: ${net}+${sec}"
     i=$((i + 1))
   done
   echo "————————————————————————————————————————————————"
-  echo -e "  ${GREEN}0.${NC} 取消并返回"
+  echo -e "  ${GREEN}0.${NC} Cancel and return"
   echo "————————————————————————————————————————————————"
 
-  read -r -p "请输入要修改的节点序号 [1-${count}]: " mod_sel || mod_sel=""
+  read -r -p "Choose inbound to edit [1-${count}]: " mod_sel || mod_sel=""
   [[ "$mod_sel" == "0" || -z "$mod_sel" ]] && return 0
 
   if ! [[ "$mod_sel" =~ ^[0-9]+$ ]] || ((mod_sel < 1 || mod_sel > count)); then
-    warn "序号无效，操作取消。"
+    warn "Invalid number; operation cancelled."
     return 0
   fi
 
@@ -2880,60 +3124,46 @@ modify_node_interactive() {
   cur_net="$(echo "$current_json" | jq -r '.streamSettings.network')"
 
   echo
-  info "当前正在修改节点 [${cur_tag}] (端口: ${cur_port} | 传输层: ${cur_net})"
+  info "Editing inbound [${cur_tag}] (port: ${cur_port}, transport: ${cur_net})"
   echo "————————————————————————————————————————————————"
-  echo -e "  ${GREEN}1.${NC} 修改监听端口"
-  echo -e "  ${GREEN}2.${NC} 修改主用户 UUID"
-  echo -e "  ${GREEN}3.${NC} 修改伪装域名 / SNI"
-  echo -e "  ${GREEN}4.${NC} 修改 XHTTP 访问路径 (仅限 xhttp 节点)"
-  echo -e "  ${GREEN}0.${NC} 取消"
+  echo -e "  ${GREEN}1.${NC} Change listener port"
+  echo -e "  ${GREEN}2.${NC} UUID belongs to an independent user; change it in User Management"
+  echo -e "  ${GREEN}3.${NC} Change decoy hostname / SNI"
+  echo -e "  ${GREEN}4.${NC} Change XHTTP request path (XHTTP only)"
+  echo -e "  ${GREEN}5.${NC} Configure CDN public port (Origin Rule)"
+  echo -e "  ${GREEN}0.${NC} Cancel"
   echo "————————————————————————————————————————————————"
 
-  read -r -p "请选择修改项目 [0-4]: " item_sel || item_sel=""
+  read -r -p "Choose field to change [0-5]: " item_sel || item_sel=""
   case "$item_sel" in
     1)
-      prompt_and_check_port "请输入新端口" "$cur_port" "$cur_tag"
+      prompt_and_check_port "Enter new port" "$cur_port" "$cur_tag"
       local new_p="$PORT_RESULT"
       backup_existing_config
       local updated
       updated="$(jq --arg tag "$cur_tag" --argjson p "$new_p" '
         (.inbounds[] | select(.tag == $tag)).port = $p
       ' "$CONFIG_PATH")"
-      commit_config "$updated" || { warn "端口修改写入失败，原配置保持不变。"; return 1; }
+      commit_config "$updated" || { warn "Failed to update port; original configuration retained."; return 1; }
       validate_and_restart_service
       if [[ "$new_p" != "$cur_port" ]]; then
         auto_close_firewall_port "$cur_port" "tcp"
         auto_open_firewall_port "$new_p" "tcp" "$cur_tag"
       fi
-      ok "节点 [${cur_tag}] 端口已修改为: ${new_p} (防火墙已同步更新)"
+      ok "Changed inbound [${cur_tag}] listener port to ${new_p}; firewall rules updated."
       ;;
     2)
-      local new_uuid
-      read -r -p "请输入新的 UUID: " new_uuid || new_uuid=""
-      new_uuid="${new_uuid//[[:space:]]/}"
-      [[ -n "$new_uuid" ]] || { warn "UUID 不能为空"; return 0; }
-      if ! [[ "$new_uuid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
-        warn "UUID 格式无效，应形如 xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx。"
-        return 0
-      fi
-      backup_existing_config
-      local updated
-      updated="$(jq --arg tag "$cur_tag" --arg uid "$new_uuid" '
-        (.inbounds[] | select(.tag == $tag)).settings.clients[0].id = $uid
-      ' "$CONFIG_PATH")"
-      commit_config "$updated" || { warn "UUID 修改写入失败，原配置保持不变。"; return 1; }
-      validate_and_restart_service
-      ok "节点 [${cur_tag}] 主用户 UUID 已更新！"
+      warn "UUID belongs to the independent user identity; use User Management to change it."
       ;;
     3)
       local new_sni
-      read -r -p "请输入新的 SNI / 伪装域名: " new_sni || new_sni=""
+      read -r -p "New SNI / decoy hostname: " new_sni || new_sni=""
       new_sni="$(sanitize_domain "$new_sni")"
-      [[ -n "$new_sni" ]] || { warn "域名不能为空"; return 0; }
+      [[ -n "$new_sni" ]] || { warn "Domain must not be empty"; return 0; }
       local cur_sec
       cur_sec="$(echo "$current_json" | jq -r '.streamSettings.security // "none"')"
       if [[ "$cur_sec" != "reality" && "$cur_sec" != "tls" ]]; then
-        warn "当前节点安全层为 ${cur_sec}，不存在可修改的 SNI / 伪装域名。"
+        warn "Inbound security is ${cur_sec}; there is no editable SNI / decoy hostname."
         return 0
       fi
       backup_existing_config
@@ -2949,242 +3179,326 @@ modify_node_interactive() {
           else . end
         )
       ' "$CONFIG_PATH")"
-      commit_config "$updated" || { warn "SNI 修改写入失败，原配置保持不变。"; return 1; }
+      commit_config "$updated" || { warn "SNI edit failed; original configuration retained."; return 1; }
       validate_and_restart_service
-      ok "节点 [${cur_tag}] 伪装域名已更新为: ${new_sni}"
+      ok "Changed inbound [${cur_tag}] decoy hostname to ${new_sni}."
       ;;
     4)
       if [[ "$cur_net" != "xhttp" ]]; then
-        warn "当前节点并非 xhttp 传输层，无法修改 XHTTP 路径。"
+        warn "This inbound does not use XHTTP; its path cannot be edited."
         return 0
       fi
       local new_path rand_path
       rand_path="$(random_xhttp_path)"
-      read -r -p "请输入新的 XHTTP 路径 (直接回车使用随机 ${rand_path}): " new_path || new_path=""
+      read -r -p "New XHTTP path (Enter for random ${rand_path}): " new_path || new_path=""
       new_path="$(sanitize_path "${new_path:-$rand_path}")"
-      [[ -n "$new_path" ]] || { warn "路径不能为空。"; return 0; }
+      [[ -n "$new_path" ]] || { warn "Path must not be empty."; return 0; }
       backup_existing_config
       local updated
       updated="$(jq --arg tag "$cur_tag" --arg path "$new_path" '
         (.inbounds[] | select(.tag == $tag)).streamSettings.xhttpSettings.path = $path
       ' "$CONFIG_PATH")"
-      commit_config "$updated" || { warn "路径修改写入失败，原配置保持不变。"; return 1; }
+      commit_config "$updated" || { warn "Failed to update path; original configuration retained."; return 1; }
       validate_and_restart_service
-      ok "节点 [${cur_tag}] XHTTP 路径已更新为: ${new_path}"
+      ok "Changed inbound [${cur_tag}] XHTTP path to ${new_path}."
       ;;
-    *) info "已取消修改。" ;;
+    5) set_node_public_port_interactive "$cur_tag" "$cur_port" "$cur_net" "$(echo "$current_json" | jq -r '.streamSettings.security // "none"')" ;;
+    *) info "Edit cancelled." ;;
   esac
-  echo && read -rp "按回车键返回主菜单..." _dummy
+  echo && read -rp "Press Enter to return to the main menu..." _dummy
 }
 
-# 5. 服务运维管理
+# 5. Service operations.
 service_operations_menu() {
   while true; do
     echo
-    echo -e "  ${BOLD}服务运维${NC}"
+    echo -e "  ${BOLD}Service Operations${NC}"
     echo "————————————————————————————————————————————————"
-    echo -e "  ${GREEN}1.${NC} 启动 Xray"
-    echo -e "  ${GREEN}2.${NC} 停止 Xray"
-    echo -e "  ${GREEN}3.${NC} 重启 Xray"
-    echo -e "  ${GREEN}4.${NC} 查看服务状态"
-    echo -e "  ${GREEN}5.${NC} 查看运行日志"
-    echo -e "  ${GREEN}0.${NC} 返回主菜单"
+    echo -e "  ${GREEN}1.${NC} Start Xray"
+    echo -e "  ${GREEN}2.${NC} Stop Xray"
+    echo -e "  ${GREEN}3.${NC} Restart Xray"
+    echo -e "  ${GREEN}4.${NC} View service status"
+    echo -e "  ${GREEN}5.${NC} View service logs"
+    echo -e "  ${GREEN}0.${NC} Back to main menu"
     echo "————————————————————————————————————————————————"
 
-    read -r -p "请选择操作 [0-5]: " op_sel || op_sel="0"
+    read -r -p "Choose action [0-5]: " op_sel || op_sel="0"
     case "${op_sel:-0}" in
       1)
         if ! service_unit_exists "$SERVICE_NAME"; then
-          warn "未找到 ${SERVICE_NAME}.service，请先在主菜单执行“安装/修复 Xray 服务”。"
+          warn "Service ${SERVICE_NAME}.service was not found. Install/repair the Xray service first."
         elif systemctl start "$SERVICE_NAME"; then
           sleep 1
           if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
-            ok "Xray 服务启动成功！"
+            ok "Xray service started."
           else
-            warn "启动未就绪，请查看状态或日志。"
+            warn "Service is not ready; inspect status and logs."
           fi
         else
-          warn "Xray 服务启动失败，请查看状态或日志排查。"
+          warn "Xray failed to start; inspect status and logs."
         fi
-        echo && read -rp "按回车键继续..." _dummy
+        echo && read -rp "Press Enter to continue..." _dummy
         ;;
       2)
         if systemctl stop "$SERVICE_NAME"; then
-          ok "Xray 服务已停止。"
+          ok "Xray service stopped."
         else
-          warn "停止 Xray 服务失败，请检查服务状态。"
+          warn "Unable to stop Xray; check service status."
         fi
-        echo && read -rp "按回车键继续..." _dummy
+        echo && read -rp "Press Enter to continue..." _dummy
         ;;
       3)
-        if systemctl restart "$SERVICE_NAME"; then
+        if restart_xray_preserving_traffic; then
           sleep 1
           if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
-            ok "Xray 服务重启成功！"
+            ok "Xray service restarted."
           else
-            warn "服务重启未就绪，请检查配置与日志。"
+            warn "Service is not ready after restart; check config and logs."
           fi
         else
-          warn "重启命令执行失败，请检查配置与日志。"
+          warn "Restart command failed; check config and logs."
         fi
-        echo && read -rp "按回车键继续..." _dummy
+        echo && read -rp "Press Enter to continue..." _dummy
         ;;
       4)
         echo
         systemctl status "$SERVICE_NAME" --no-pager -l || true
-        echo && read -rp "按回车键继续..." _dummy
+        echo && read -rp "Press Enter to continue..." _dummy
         ;;
       5)
         echo
         journalctl -u "$SERVICE_NAME" -n 50 --no-pager || true
-        echo && read -rp "按回车键继续..." _dummy
+        echo && read -rp "Press Enter to continue..." _dummy
         ;;
       0) break ;;
-      *) warn "无效选项，请重新选择。" ;;
+      *) warn "Invalid option; try again." ;;
     esac
   done
 }
 
 # ─────────────────────────────────────────────────────────────
-# 6. Telegram 机器人管理模块 (freedom-bot, 参考 3X-UI 架构)
+# 6. Telegram Bot integration; modeled on the existing standalone core manager.
 # ─────────────────────────────────────────────────────────────
 
 get_bot_status_str() {
   if ! [[ -x "$BOT_BIN_PATH" ]]; then
-    echo -e "${RED}未安装${NC}"
+    echo -e "${RED}Not installed${NC}"
     return
   fi
   if ! [[ -f "$BOT_CONFIG_PATH" ]]; then
-    echo -e "${YELLOW}未配置${NC}"
+    echo -e "${YELLOW}Not configured${NC}"
     return
   fi
   if systemctl is-active --quiet "$BOT_SERVICE" 2>/dev/null; then
-    echo -e "${GREEN}运行中${NC}"
+    echo -e "${GREEN}Running${NC}"
   else
-    echo -e "${YELLOW}已停止${NC}"
+    echo -e "${YELLOW}Stopped${NC}"
   fi
 }
 
+# Check once per installed script revision whether to synchronize an existing Bot.
+# Old CLI versions re-exec the new script after downloading it; this first-run
+# hook means the user does not need to find a separate Bot submenu.
+maybe_offer_bot_refresh() {
+  [[ -x "$BOT_BIN_PATH" && -f "$BOT_CONFIG_PATH" ]] || return 0
+  local installed_script="/usr/local/bin/freedom"
+  [[ -f "$installed_script" ]] || return 0
+  local script_hash stamp="$CONFIG_DIR/.freedom-bot-sync-script.sha256"
+  script_hash="$(sha256sum "$installed_script" | awk '{print $1}')"
+  [[ "$script_hash" =~ ^[a-fA-F0-9]{64}$ ]] || return 1
+  if [[ "${1:-}" != "--force" && -r "$stamp" && "$(cat "$stamp")" == "$script_hash" ]]; then
+    return 0
+  fi
+  echo
+  info "An installed Telegram Bot was detected. The latest binary can be synchronized from the official GitHub Release."
+  local ans
+  read -r -p "Synchronize the Telegram Bot update? [y/N] (Xray-core will not be changed): " ans || ans="N"
+  case "$ans" in
+    y|Y|yes|YES)
+      if ! install_or_update_freedom_bot; then
+        warn "Bot update failed; the old binary was retained or rollback attempted. Retry from the manager."
+        return 1
+      fi
+      ;;
+    *) info "Skipped Bot synchronization; use Online Updates to upgrade later.";;
+  esac
+  if ! (umask 077; printf "%s\n" "$script_hash" > "${stamp}.next" && mv -f "${stamp}.next" "$stamp"); then
+    warn "Unable to persist Bot update check marker; the installed version is unaffected."
+  fi
+}
 install_or_update_freedom_bot() {
   echo
-  info "正在检测系统 CPU 架构与 Freedom Bot 最新程序..."
+  info "Checking architecture and latest Freedom Bot binary..."
   local arch=""
   case "$(uname -m)" in
     x86_64|amd64) arch="amd64" ;;
     aarch64|arm64) arch="arm64" ;;
-    *) fatal "暂不支持的 CPU 架构: $(uname -m)" ;;
+    *) fatal "Unsupported CPU architecture: $(uname -m)" ;;
   esac
 
   local bin_name="freedom-bot-linux-${arch}"
   local dl_url="https://github.com/${GITHUB_REPO}/releases/download/bot-latest/${bin_name}"
-  local proxy_dl_url="https://ghproxy.net/${dl_url}"
-
-  info "目标架构: linux/${arch}，准备拉取最新预编译二进制..."
-  local tmp_bin="/tmp/${bin_name}.tmp"
-  rm -f "$tmp_bin"
-
-  if curl -fsSL -m 30 "$proxy_dl_url" -o "$tmp_bin" 2>/dev/null; then
-    ok "通过加速镜像下载完成。"
-  elif curl -fsSL -m 30 "$dl_url" -o "$tmp_bin" 2>/dev/null; then
-    ok "通过 GitHub 直连下载完成。"
-  else
-    warn "未能直接从 GitHub Release 下载预编译包。"
-    warn "可能 Release 正在编译打包中，或者网络受限。"
-    rm -f "$tmp_bin"
+  info "Target: linux/${arch}. Fetching binary and checksum from the official GitHub Release..."
+  local tmp_dir
+  tmp_dir="$(mktemp -d)" || return 1
+  local tmp_bin="$tmp_dir/$bin_name" sums_file="$tmp_dir/${bin_name}.sha256"
+  if ! curl --proto "=https" -fsSL --retry 2 -m 60 "$dl_url" -o "$tmp_bin" || \
+     ! curl --proto "=https" -fsSL --retry 2 -m 30 "${dl_url}.sha256" -o "$sums_file"; then
+    warn "Unable to download binary and checksum from the official GitHub Release. Third-party mirrors are not trusted."
+    rm -rf "$tmp_dir"
     return 1
   fi
-
-  chmod +x "$tmp_bin"
-  # 严格校验下载产物：必须是 Linux ELF 且能正常输出版本，防止把 CDN 错误页当二进制安装
-  local magic
+  local expected actual
+  expected="$(awk -v name="$bin_name" '$2 == name { print $1; exit }' "$sums_file")"
+  actual="$(sha256sum "$tmp_bin" | awk '{print $1}')"
+  if ! [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || [[ "$expected" != "$actual" ]]; then
+    warn "Bot release SHA-256 verification failed; refusing installation."
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  chmod 755 "$tmp_bin"
+  local magic bot_ver
   magic="$(head -c 4 "$tmp_bin" 2>/dev/null | od -An -tx1 | tr -d ' \n')"
-  if [[ "$magic" != "7f454c46" ]]; then
-    warn "下载文件不是合法的 Linux ELF 可执行程序（可能是网络错误页），已放弃安装。"
-    rm -f "$tmp_bin"
+  if [[ "$magic" != "7f454c46" ]] || ! bot_ver="$("$tmp_bin" -v 2>/dev/null)"; then
+    warn "Downloaded file is not an executable ELF Bot."
+    rm -rf "$tmp_dir"
     return 1
   fi
-  local bot_ver=""
-  if ! bot_ver="$("$tmp_bin" -v 2>/dev/null)"; then
-    warn "下载的二进制无法执行（架构不匹配或依赖缺失），已放弃安装。"
-    rm -f "$tmp_bin"
+  [[ ! -f "$BOT_BIN_PATH" ]] || cp -a "$BOT_BIN_PATH" "${BOT_BIN_PATH}.previous"
+  if ! install -m 755 "$tmp_bin" "${BOT_BIN_PATH}.next" || ! mv -f "${BOT_BIN_PATH}.next" "$BOT_BIN_PATH"; then
+    warn "Failed to install Bot binary; backup retained."
+    rm -rf "$tmp_dir"
     return 1
   fi
-  mv "$tmp_bin" "$BOT_BIN_PATH"
-  chmod 755 "$BOT_BIN_PATH"
-  ok "Freedom Bot 已就绪: $BOT_BIN_PATH (${bot_ver})"
+  rm -rf "$tmp_dir"
+  ok "Freedom Bot is ready: $BOT_BIN_PATH (${bot_ver})"
+  if ! "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-traffic-install; then
+    warn "Unable to install independent freedom-stats collector. Re-run the explicit collector installation after reviewing logs."
+  fi
 
-  # 若服务存在且已配置，则自动重载
+  # After a Bot upgrade, restart its service so the new commands are loaded.
   if [[ -f "$BOT_CONFIG_PATH" ]] && [[ -f "$BOT_SERVICE_FILE" ]]; then
-    if systemctl restart "$BOT_SERVICE" 2>/dev/null; then
-      ok "freedom-bot 守护进程已自动重新加载。"
+    if systemctl restart "$BOT_SERVICE" && sleep 2 && systemctl is-active --quiet "$BOT_SERVICE"; then
+      ok "freedom-bot restarted and is running the updated binary:$("$BOT_BIN_PATH" -v 2>/dev/null)"
     else
-      warn "freedom-bot 自动重载失败，请在机器人菜单中查看日志。"
+      warn "Updated Bot failed startup verification; attempting to restore the previous binary."
+      if [[ -s "${BOT_BIN_PATH}.previous" ]]; then
+        install -m 755 "${BOT_BIN_PATH}.previous" "$BOT_BIN_PATH" || return 1
+        systemctl restart "$BOT_SERVICE" || warn "Previous Bot failed to start; inspect systemctl and journalctl."
+      fi
+      warn "See logs: journalctl -u freedom-bot -n 50 --no-pager"
+      return 1
     fi
   fi
 }
 
 configure_freedom_bot_interactive() {
   echo
-  echo -e "  ${BOLD}配置 Telegram 机器人${NC}"
-  echo "提示：需先在 Telegram 中找 @BotFather 创建机器人获取 Token；"
-  echo "可在 Telegram 找 @userinfobot 获取您本人的数字 Chat ID 作为管理员。"
+  echo -e "  ${BOLD}Configure Telegram Bot${NC}"
+  echo "Create a bot with @BotFather to obtain your Telegram Bot token."
+  echo "Use @userinfobot to find your numeric Telegram user ID for administration."
   echo "─────────────────────────────────────────────────────────────────"
 
   local cur_token=""
   local cur_admins=""
   local cur_proxy=""
   local cur_hours=12
+  local cur_mutations=false
+  local cur_updates=false cur_core_updates=false cur_sensitive_backup=false
 
   if [[ -f "$BOT_CONFIG_PATH" ]]; then
     cur_token="$(jq -r '.token // ""' "$BOT_CONFIG_PATH" 2>/dev/null || true)"
     cur_admins="$(jq -r '(.admin_ids // []) | join(",")' "$BOT_CONFIG_PATH" 2>/dev/null || true)"
     cur_proxy="$(jq -r '.socks5_proxy // ""' "$BOT_CONFIG_PATH" 2>/dev/null || true)"
     cur_hours="$(jq -r '.report_hours // 12' "$BOT_CONFIG_PATH" 2>/dev/null || echo 12)"
+    cur_mutations="$(jq -r '.allow_mutations // false' "$BOT_CONFIG_PATH" 2>/dev/null || echo false)"
+    cur_updates="$(jq -r '.allow_updates // false' "$BOT_CONFIG_PATH" 2>/dev/null || echo false)"
+    cur_core_updates="$(jq -r '.allow_core_updates // false' "$BOT_CONFIG_PATH" 2>/dev/null || echo false)"
+    cur_sensitive_backup="$(jq -r '.allow_sensitive_backup // false' "$BOT_CONFIG_PATH" 2>/dev/null || echo false)"
   fi
 
-  local cur_token_display="未设置"
+  local cur_token_display="Not set"
   if [[ -n "$cur_token" ]]; then
-    cur_token_display="${cur_token:0:8}...(已隐藏)"
+    cur_token_display="${cur_token:0:8}...(hidden)"
   fi
-  read -r -p "请输入 Telegram Bot Token [当前: ${cur_token_display}]: " in_token || in_token=""
+  read -r -p "Enter Telegram Bot token [current: ${cur_token_display}]: " in_token || in_token=""
   local final_token="${in_token:-$cur_token}"
   if [[ -z "$final_token" ]]; then
-    warn "Bot Token 不能为空，配置未保存。"
+    warn "Bot token is required; configuration not saved."
     return 1
   fi
   if ! [[ "$final_token" =~ ^[0-9]{5,}:[A-Za-z0-9_-]{20,}$ ]]; then
-    warn "Bot Token 格式不正确（应形如 123456789:AA...），配置未保存。"
+    warn "Invalid Bot token format (expected 123456789:AA...); configuration not saved."
     return 1
   fi
 
-  read -r -p "请输入管理员 Telegram User ID (多个用英文逗号分隔) [当前: ${cur_admins:-未设置}]: " in_admins || in_admins=""
+  read -r -p "Enter administrator Telegram user IDs (comma-separated) [current: ${cur_admins:-Not set}]: " in_admins || in_admins=""
   local final_admins="${in_admins:-$cur_admins}"
   local json_admins
   json_admins="$(printf '%s' "$final_admins" | tr ',' '\n' | sed 's/[^0-9]//g' | grep -v '^$' | jq -R . | jq -s 'map(tonumber)')"
   if [[ -z "$json_admins" || "$json_admins" == "[]" ]]; then
-    warn "至少需要指定一个数字管理员 User ID 以保证安全性，配置未保存。"
+    warn "At least one numeric administrator user ID is required; configuration not saved."
     return 1
   fi
 
-  read -r -p "请输入 SOCKS5 代理地址 (可选，例如 127.0.0.1:10808，回车跳过) [当前: ${cur_proxy:-无}]: " in_proxy || in_proxy=""
+  read -r -p "SOCKS5 proxy (optional; e.g., 127.0.0.1:10808) [current: ${cur_proxy:-none}]: " in_proxy || in_proxy=""
   local final_proxy="${in_proxy:-$cur_proxy}"
 
-  read -r -p "请输入定时系统/流量报告推送间隔 (小时，0=关闭) [当前: ${cur_hours}]: " in_hours || in_hours=""
+  read -r -p "Periodic system/traffic report interval (hours, 0 disables) [current: ${cur_hours}]: " in_hours || in_hours=""
   local final_hours="${in_hours:-$cur_hours}"
   if ! [[ "$final_hours" =~ ^[0-9]+$ ]] || ((final_hours > 168)); then
-    warn "报告间隔必须为 0-168 之间的整数小时，配置未保存。"
+    warn "Report interval must be an integer between 0 and 168 hours; configuration not saved."
     return 1
   fi
+
+  local in_mutations final_mutations="$cur_mutations"
+  read -r -p "Allow Telegram administrators to edit Xray users? [y/N; current ${cur_mutations}] (default off): " in_mutations || in_mutations=""
+  case "$in_mutations" in
+    y|Y|yes|YES) final_mutations=true ;;
+    n|N|no|NO) final_mutations=false ;;
+    "") ;;
+    *) warn "Invalid remote-mutations choice; configuration not saved."; return 1 ;;
+  esac
+
+  local in_updates in_core_updates final_updates="$cur_updates" final_core_updates="$cur_core_updates"
+  read -r -p "Allow administrators to check and update the manager/Bot? [y/N; current ${cur_updates}]: " in_updates || in_updates=""
+  case "$in_updates" in
+    y|Y|yes|YES) final_updates=true ;;
+    n|N|no|NO) final_updates=false ;;
+    "") ;;
+    *) warn "Invalid update-permission choice"; return 1 ;;
+  esac
+  read -r -p "Additionally allow remote Xray-core upgrades? [y/N; current ${cur_core_updates}] (client compatibility may change): " in_core_updates || in_core_updates=""
+  case "$in_core_updates" in
+    y|Y|yes|YES) final_core_updates=true ;;
+    n|N|no|NO) final_core_updates=false ;;
+    "") ;;
+    *) warn "Invalid core-update permission choice"; return 1 ;;
+  esac
+  if [[ "$final_updates" != "true" ]]; then final_core_updates=false; fi
+
+  local in_sensitive_backup final_sensitive_backup="$cur_sensitive_backup"
+  read -r -p "Allow Telegram to send full Xray backups containing private keys? [y/N; current ${cur_sensitive_backup}] (default off): " in_sensitive_backup || in_sensitive_backup=""
+  case "$in_sensitive_backup" in
+    y|Y|yes|YES) final_sensitive_backup=true ;;
+    n|N|no|NO) final_sensitive_backup=false ;;
+    "") ;;
+    *) warn "Invalid sensitive-backup permission choice"; return 1 ;;
+  esac
 
   install -d -m 755 "$CONFIG_DIR"
 
-  # 原子写入并校验：避免 jq 失败时把 bot.json 清空成 0 字节
+  # Write Bot configuration atomically; never truncate bot.json on a jq failure.
   local bot_tmp="${BOT_CONFIG_PATH}.tmp.$$"
   if ! jq -n \
     --arg token "$final_token" \
     --argjson admins "$json_admins" \
     --arg proxy "$final_proxy" \
     --argjson hours "$final_hours" \
+    --argjson mutations "$final_mutations" \
+    --argjson updates "$final_updates" \
+    --argjson core_updates "$final_core_updates" \
+    --argjson sensitive_backup "$final_sensitive_backup" \
     --arg xray_cfg "$CONFIG_PATH" \
     --arg xray_bin "$BIN" \
     '{
@@ -3192,29 +3506,33 @@ configure_freedom_bot_interactive() {
       admin_ids: $admins,
       socks5_proxy: $proxy,
       report_hours: $hours,
+      allow_mutations: $mutations,
+      allow_updates: $updates,
+      allow_core_updates: $core_updates,
+      allow_sensitive_backup: $sensitive_backup,
       xray_config_path: $xray_cfg,
       xray_bin_path: $xray_bin,
       stats_api_server: "127.0.0.1:10085"
     }' > "$bot_tmp"; then
     rm -f "$bot_tmp"
-    warn "机器人配置生成失败（参数格式异常），配置未保存。"
+    warn "Unable to generate Bot configuration (invalid input); nothing was saved."
     return 1
   fi
   chmod 600 "$bot_tmp" 2>/dev/null || true
   mv -f "$bot_tmp" "$BOT_CONFIG_PATH"
-  ok "配置已成功保存至 $BOT_CONFIG_PATH"
+  ok "Configuration saved to $BOT_CONFIG_PATH"
 
-  # 如果二进制尚未安装，自动提示安装
+  # Install the Bot binary when it is not already available.
   if ! [[ -x "$BOT_BIN_PATH" ]]; then
-    warn "检测到尚未安装 freedom-bot 二进制，正在自动拉取安装..."
+    warn "freedom-bot is not installed; downloading the binary..."
     if ! install_or_update_freedom_bot; then
-      warn "自动安装失败，可稍后在菜单中选择“安装 / 升级 freedom-bot”重试。"
+      warn "Automatic installation failed; retry using Install/Upgrade Bot in the menu."
       return 1
     fi
   fi
 
-  # 编写/更新 systemd 服务
-  info "正在注册 systemd 守护进程服务: $BOT_SERVICE_FILE"
+  # Create or update the systemd service unit.
+  info "Registering systemd service:  $BOT_SERVICE_FILE"
   cat > "$BOT_SERVICE_FILE" <<EOF
 [Unit]
 Description=freedom-bot - Telegram Bot for freedom.sh & Xray-core
@@ -3228,27 +3546,38 @@ ExecStart=${BOT_BIN_PATH} -c ${BOT_CONFIG_PATH}
 Restart=on-failure
 RestartSec=5s
 LimitNOFILE=65535
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
   if ! systemctl daemon-reload; then
-    warn "systemd 守护进程重载失败，请检查 systemctl 状态。"
+    warn "Failed to reload systemd service units; check systemctl."
     return 1
   fi
-  systemctl enable "$BOT_SERVICE" >/dev/null 2>&1 || warn "设置 ${BOT_SERVICE} 开机自启失败，可稍后手动执行 systemctl enable ${BOT_SERVICE}。"
+  systemctl enable "$BOT_SERVICE" >/dev/null 2>&1 || warn "Unable to enable ${BOT_SERVICE} at boot; run systemctl enable ${BOT_SERVICE} manually."
   if ! systemctl restart "$BOT_SERVICE"; then
-    warn "freedom-bot 启动命令执行失败，请选择查看运行日志排查。"
+    warn "freedom-bot failed to start; inspect service logs."
     return 1
   fi
   sleep 1.5
 
   if systemctl is-active --quiet "$BOT_SERVICE"; then
-    ok "freedom-bot 服务已成功启动并在后台守护运行！"
-    info "现在您可以在 Telegram 中向您的机器人发送 /start 或 /menu 体验完整控制中心！"
+    ok "freedom-bot started and is running under systemd."
+    info "Use /start or /menu in your administrator's Telegram private chat to open the dashboard."
   else
-    warn "freedom-bot 启动未就绪，请选择查看运行日志排查。"
+    warn "freedom-bot is not ready; inspect service logs."
     return 1
   fi
   return 0
@@ -3256,20 +3585,20 @@ EOF
 
 uninstall_freedom_bot_interactive() {
   echo
-  warn "警告：此操作将停止并卸载 Freedom Bot 机器人服务及程序！"
+  warn "Warning: this stops and uninstalls the Freedom Bot service and binary!"
   local ans=""
-  read -r -p "确定卸载 Freedom Bot？[y/N]: " ans || ans="N"
+  read -r -p "Uninstall Freedom Bot? [y/N]: " ans || ans="N"
   case "${ans:-N}" in
     y|Y|yes|YES)
       systemctl stop "$BOT_SERVICE" 2>/dev/null || true
       systemctl disable "$BOT_SERVICE" 2>/dev/null || true
       rm -f "$BOT_SERVICE_FILE" "$BOT_BIN_PATH" "$BOT_CONFIG_PATH"
       systemctl daemon-reload 2>/dev/null || true
-      ok "Freedom Bot 已彻底卸载清理。"
+      ok "Freedom Bot has been uninstalled."
       return 0
       ;;
     *)
-      info "已取消卸载。"
+      info "Uninstall cancelled."
       return 1
       ;;
   esac
@@ -3278,91 +3607,91 @@ uninstall_freedom_bot_interactive() {
 telegram_bot_management_menu() {
   while true; do
     echo
-    echo -e "  ${BOLD}Telegram 机器人${NC}"
+    echo -e "  ${BOLD}Telegram Bot${NC}"
     local cur_st="$(get_bot_status_str)"
-    echo -e "  状态: ${cur_st}"
+    echo -e "  Status: ${cur_st}"
     if [[ -x "$BOT_BIN_PATH" ]]; then
       local b_ver="$("$BOT_BIN_PATH" -v 2>/dev/null || echo "unknown")"
-      echo -e "  版本: ${b_ver}"
+      echo -e "  Version: ${b_ver}"
     fi
     echo "————————————————————————————————————————————————"
-    echo -e "  ${GREEN}1.${NC} 配置机器人（Token / 管理员 / 代理 / 定时报告）"
-    echo -e "  ${GREEN}2.${NC} 安装 / 升级 freedom-bot"
-    echo -e "  ${GREEN}3.${NC} 启动服务"
-    echo -e "  ${GREEN}4.${NC} 停止服务"
-    echo -e "  ${GREEN}5.${NC} 重启服务"
-    echo -e "  ${GREEN}6.${NC} 查看日志"
-    echo -e "  ${GREEN}7.${NC} 卸载 freedom-bot"
-    echo -e "  ${GREEN}0.${NC} 返回主菜单"
+    echo -e "  ${GREEN}1.${NC} Configure Bot (permissions / updates / admins / reports)"
+    echo -e "  ${GREEN}2.${NC} Install / Upgrade freedom-bot"
+    echo -e "  ${GREEN}3.${NC} Start service"
+    echo -e "  ${GREEN}4.${NC} Stop service"
+    echo -e "  ${GREEN}5.${NC} Restart service"
+    echo -e "  ${GREEN}6.${NC} View logs"
+    echo -e "  ${GREEN}7.${NC} Uninstall freedom-bot"
+    echo -e "  ${GREEN}0.${NC} Back to main menu"
     echo "————————————————————————————————————————————————"
 
-    read -r -p "请选择操作 [0-7]: " b_choice || b_choice="0"
+    read -r -p "Choose action [0-7]: " b_choice || b_choice="0"
     case "${b_choice:-0}" in
       1)
-        configure_freedom_bot_interactive || warn "机器人配置未完成，请根据上方提示处理后重试。"
-        echo && read -rp "按回车键继续..." _dummy
+        configure_freedom_bot_interactive || warn "Bot configuration was not completed; review the prompts and try again."
+        echo && read -rp "Press Enter to continue..." _dummy
         ;;
       2)
-        install_or_update_freedom_bot || warn "安装/升级未完成，请检查网络后重试。"
-        echo && read -rp "按回车键继续..." _dummy
+        install_or_update_freedom_bot || warn "Install/upgrade did not complete; check network connectivity."
+        echo && read -rp "Press Enter to continue..." _dummy
         ;;
       3)
         if systemctl start "$BOT_SERVICE"; then
           sleep 1
           if systemctl is-active --quiet "$BOT_SERVICE"; then
-            ok "启动成功！"
+            ok "Started successfully."
           else
-            warn "启动失败，请检查配置与日志。"
+            warn "Startup failed; inspect configuration and logs."
           fi
         else
-          warn "启动命令执行失败，请检查服务是否已安装。"
+          warn "Start command failed; verify the service is installed."
         fi
-        echo && read -rp "按回车键继续..." _dummy
+        echo && read -rp "Press Enter to continue..." _dummy
         ;;
       4)
         if systemctl stop "$BOT_SERVICE"; then
-          ok "服务已停止。"
+          ok "Service stopped."
         else
-          warn "停止服务失败，请检查服务状态。"
+          warn "Failed to stop service; check status."
         fi
-        echo && read -rp "按回车键继续..." _dummy
+        echo && read -rp "Press Enter to continue..." _dummy
         ;;
       5)
         if systemctl restart "$BOT_SERVICE"; then
           sleep 1
           if systemctl is-active --quiet "$BOT_SERVICE"; then
-            ok "重启成功！"
+            ok "Restarted successfully."
           else
-            warn "重启失败，请检查配置与日志。"
+            warn "Restart failed; inspect config and logs."
           fi
         else
-          warn "重启命令执行失败，请检查服务是否已安装。"
+          warn "Restart command failed; verify the service is installed."
         fi
-        echo && read -rp "按回车键继续..." _dummy
+        echo && read -rp "Press Enter to continue..." _dummy
         ;;
       6)
         echo
         journalctl -u "$BOT_SERVICE" -n 50 --no-pager || true
-        echo && read -rp "按回车键继续..." _dummy
+        echo && read -rp "Press Enter to continue..." _dummy
         ;;
       7)
         if uninstall_freedom_bot_interactive; then
-          echo && read -rp "按回车键返回主菜单..." _dummy
+          echo && read -rp "Press Enter to return to the main menu..." _dummy
           break
         fi
-        echo && read -rp "按回车键继续..." _dummy
+        echo && read -rp "Press Enter to continue..." _dummy
         ;;
       0) break ;;
-      *) warn "无效选择，请重新输入。" ;;
+      *) warn "Invalid choice. Try again." ;;
     esac
   done
 }
 
-# 7. 完全卸载
+# 7. Complete uninstall.
 uninstall_xray_completely() {
   echo
-  warn "警告：此操作将彻底停止并卸载 Xray-core 及所有配置文件！"
-  read -r -p "确定完全卸载？[y/N]: " u_ans || u_ans="N"
+  warn "Warning: this stops and removes Xray-core and all configuration files!"
+  read -r -p "Permanently uninstall Xray and its configuration? [y/N]: " u_ans || u_ans="N"
   case "${u_ans:-N}" in
     y|Y|yes|YES)
       systemctl stop "$BOT_SERVICE" 2>/dev/null || true
@@ -3376,18 +3705,18 @@ uninstall_xray_completely() {
       fi
       rm -rf "$CONFIG_DIR" "/etc/systemd/system/xray.service.d"
       systemctl daemon-reload 2>/dev/null || true
-      ok "Xray 及 Freedom Bot 服务已彻底卸载清理完成。"
+      ok "Xray and Freedom Bot have been completely uninstalled."
       exit 0
       ;;
-    *) info "已取消卸载。" ;;
+    *) info "Uninstall cancelled." ;;
   esac
 }
 
-# 状态概览（3X-UI 风格：纯文本一行）
+# One-line service status summary.
 show_status() {
   local node_count=0
   local user_count=0
-  local svc_text="${RED}未运行${NC}"
+  local svc_text="${RED}Not running${NC}"
   local core_ver
   core_ver="$(get_xray_core_version)"
 
@@ -3398,60 +3727,152 @@ show_status() {
     [[ "$user_count" =~ ^[0-9]+$ ]] || user_count=0
   fi
   if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
-    svc_text="${GREEN}运行中${NC}"
+    svc_text="${GREEN}Running${NC}"
   fi
 
   local xui_tip=""
   if [[ -d "/usr/local/x-ui" ]] || service_unit_exists "x-ui"; then
-    local xui_st="${YELLOW}已停止${NC}"
-    systemctl is-active --quiet "x-ui" 2>/dev/null && xui_st="${GREEN}运行中${NC}"
+    local xui_st="${YELLOW}Stopped${NC}"
+    systemctl is-active --quiet "x-ui" 2>/dev/null && xui_st="${GREEN}Running${NC}"
     xui_tip=" | 3X-UI: ${xui_st}"
   fi
 
   local bot_st
   bot_st="$(get_bot_status_str)"
 
-  echo -e "  Xray: ${svc_text} (${core_ver}) | 节点: ${node_count} | 用户: ${user_count} | Bot: ${bot_st}${xui_tip}"
+  echo -e "  Xray: ${svc_text} (${core_ver}) | $(cli_message status.nodes): ${node_count} | $(cli_message status.users): ${user_count} | Bot: ${bot_st}${xui_tip}"
 }
 
-# 主控制台交互菜单（3X-UI 简洁风格）
+# User-selectable CLI locale. English is the default for every new install.
+# Set FREEDOM_LANG=en or FREEDOM_LANG=zh-CN to override the saved preference.
+FREEDOM_CLI_LANG_FILE="/usr/local/etc/xray/freedom-cli-language"
+if [[ -z "${FREEDOM_LANG:-}" ]]; then
+  if [[ -r "$FREEDOM_CLI_LANG_FILE" ]]; then
+    IFS= read -r FREEDOM_LANG < "$FREEDOM_CLI_LANG_FILE" || true
+  fi
+fi
+case "${FREEDOM_LANG:-en}" in
+  zh|zh-CN|zh-Hans) FREEDOM_LANG="zh-CN" ;;
+  *) FREEDOM_LANG="en" ;;
+esac
+
+CLI_ZH_LOCALE="/usr/local/etc/xray/locales/zh-CN.json"
+
+cli_message() {
+  local id="$1"
+  if [[ "$FREEDOM_LANG" == "zh-CN" && -r "$CLI_ZH_LOCALE" ]]; then
+    local localized=""
+    localized="$(jq -r --arg id "$id" '.[$id] // empty' "$CLI_ZH_LOCALE" 2>/dev/null)" || localized=""
+    if [[ -n "$localized" ]]; then
+      printf '%s\n' "$localized"
+      return 0
+    fi
+  fi
+    case "$id" in
+      title) echo "freedom.sh Manager" ;;
+      status.nodes) echo "Inbounds" ;;
+      status.users) echo "Users" ;;
+      exit) echo "Exit" ;;
+      nodes) echo "List nodes and export links" ;;
+      add) echo "Add inbound" ;;
+      delete) echo "Delete inbound" ;;
+      modify) echo "Edit inbound" ;;
+      users) echo "Manage users and traffic" ;;
+      tuning) echo "Network tuning" ;;
+      service) echo "Service operations" ;;
+      update) echo "Software updates" ;;
+      bot) echo "Telegram Bot" ;;
+      uninstall) echo "Uninstall Xray" ;;
+      language) echo "Language" ;;
+      prompt) echo "Choose [0-11]: " ;;
+      bye) echo "Exited freedom.sh." ;;
+      invalid) echo "Invalid choice. Try again." ;;
+      language.prompt) echo "Language: 1) English  2) Simplified Chinese [1/2]: " ;;
+      language.saved) echo "Language preference saved." ;;
+      *) echo "$id" ;;
+    esac
+
+}
+
+install_chinese_cli_locale() {
+  local source="" tmp=""
+  tmp="$(mktemp)" || return 1
+  if [[ -r "./locales/zh-CN.json" ]]; then
+    cp -- "./locales/zh-CN.json" "$tmp" || { rm -f "$tmp"; return 1; }
+  else
+    source="https://raw.githubusercontent.com/u-fw/freedom-xray/main/locales/zh-CN.json"
+    if ! curl --proto "=https" -fsSL --connect-timeout 8 --max-time 30 "$source" -o "$tmp"; then
+      rm -f "$tmp"
+      warn "Unable to download the optional Chinese locale from the official repository."
+      return 1
+    fi
+  fi
+  if ! jq -e 'type == "object" and .title and .["language.prompt"] and .["menu.home"] == null' "$tmp" >/dev/null 2>&1; then
+    rm -f "$tmp"
+    warn "Invalid CLI locale data; keeping the current language."
+    return 1
+  fi
+  install -d -m 700 "$(dirname "$CLI_ZH_LOCALE")" || { rm -f "$tmp"; return 1; }
+  install -m 600 "$tmp" "$CLI_ZH_LOCALE" || { rm -f "$tmp"; return 1; }
+  rm -f "$tmp"
+}
+
+configure_cli_language() {
+  local choice=""
+  read -r -p "$(cli_message language.prompt)" choice || return 0
+  case "$choice" in
+    1) FREEDOM_LANG="en" ;;
+    2)
+      install_chinese_cli_locale || return 1
+      FREEDOM_LANG="zh-CN"
+      ;;
+    *) warn "$(cli_message invalid)"; return 0 ;;
+  esac
+  install -d -m 700 "$(dirname "$FREEDOM_CLI_LANG_FILE")"
+  local temp_file="${FREEDOM_CLI_LANG_FILE}.tmp.$$"
+  (umask 077; printf '%s\n' "$FREEDOM_LANG" > "$temp_file" && mv -f "$temp_file" "$FREEDOM_CLI_LANG_FILE") || return 1
+  ok "$(cli_message language.saved)"
+}
+
 main_menu() {
   while true; do
     echo
-    echo -e "  ${BOLD}freedom.sh 管理脚本 (${SCRIPT_VERSION})${NC}"
-    echo "————————————————————————————————————————————————"
+    echo -e "  ${BOLD}$(cli_message title) (${SCRIPT_VERSION})${NC}"
+    echo "------------------------------------------------"
     show_status
-    echo "————————————————————————————————————————————————"
-    echo -e "  ${GREEN}0.${NC} 退出脚本"
-    echo "————————————————————————————————————————————————"
-    echo -e "  ${GREEN}1.${NC} 节点列表与分享链接"
-    echo -e "  ${GREEN}2.${NC} 添加节点"
-    echo -e "  ${GREEN}3.${NC} 删除节点"
-    echo -e "  ${GREEN}4.${NC} 修改节点"
-    echo "————————————————————————————————————————————————"
-    echo -e "  ${GREEN}5.${NC} 用户管理与流量统计"
-    echo -e "  ${GREEN}6.${NC} 系统网络调优"
-    echo -e "  ${GREEN}7.${NC} 服务运维"
-    echo -e "  ${GREEN}8.${NC} 在线更新"
-    echo -e "  ${GREEN}9.${NC} Telegram 机器人"
-    echo "————————————————————————————————————————————————"
-    echo -e " ${GREEN}10.${NC} 卸载 Xray"
-    echo "————————————————————————————————————————————————"
+    echo "------------------------------------------------"
+    echo -e "  ${GREEN}0.${NC} $(cli_message exit)"
+    echo "------------------------------------------------"
+    echo -e "  ${GREEN}1.${NC} $(cli_message nodes)"
+    echo -e "  ${GREEN}2.${NC} $(cli_message add)"
+    echo -e "  ${GREEN}3.${NC} $(cli_message delete)"
+    echo -e "  ${GREEN}4.${NC} $(cli_message modify)"
+    echo "------------------------------------------------"
+    echo -e "  ${GREEN}5.${NC} $(cli_message users)"
+    echo -e "  ${GREEN}6.${NC} $(cli_message tuning)"
+    echo -e "  ${GREEN}7.${NC} $(cli_message service)"
+    echo -e "  ${GREEN}8.${NC} $(cli_message update)"
+    echo -e "  ${GREEN}9.${NC} $(cli_message bot)"
+    echo "------------------------------------------------"
+    echo -e " ${GREEN}10.${NC} $(cli_message uninstall)"
+    echo -e " ${GREEN}11.${NC} $(cli_message language)"
+    echo "------------------------------------------------"
 
-    read -r -p "请选择 [0-10]: " menu_choice || menu_choice="0"
+    read -r -p "$(cli_message prompt)" menu_choice || menu_choice="0"
     case "${menu_choice:-0}" in
       1) list_and_show_nodes || true ;;
-      2) add_new_node_interactive || true ;;
-      3) delete_node_interactive || true ;;
-      4) modify_node_interactive || true ;;
+      2) locked_config_operation add_new_node_interactive || true ;;
+      3) locked_config_operation delete_node_interactive || true ;;
+      4) locked_config_operation modify_node_interactive || true ;;
       5) user_management_menu || true ;;
       6) benchmark_and_diagnose_system_tuning || true ;;
       7) service_operations_menu || true ;;
       8) system_update_center_menu || true ;;
       9) telegram_bot_management_menu || true ;;
       10) uninstall_xray_completely || true ;;
-      0) ok "退出脚本。再见！"; exit 0 ;;
-      *) warn "无效选项，请重新选择。" ;;
+      11) configure_cli_language || true ;;
+      0) ok "$(cli_message bye)"; exit 0 ;;
+      *) warn "$(cli_message invalid)" ;;
     esac
   done
 }
@@ -3462,18 +3883,23 @@ main() {
   install_base_deps
   sync_time_best_effort
   ensure_xray_installed
-  ensure_config_scaffold
+  locked_config_operation ensure_config_scaffold || fatal "Unable to acquire exclusive lock for configuration initialization."
 
-  # 自动注册或更新系统全局快捷指令 freedom
-  if [[ -f "$0" && "$0" != "/dev/fd/"* ]]; then
-    if [[ ! -f "/usr/local/bin/freedom" ]] || ! cmp -s "$0" "/usr/local/bin/freedom" 2>/dev/null; then
-      install -m 755 "$0" /usr/local/bin/freedom 2>/dev/null || true
+  # Install the CLI shortcut only on first setup; subsequent updates are explicit.
+  # Never allow an old downloaded script copy to silently downgrade /usr/local/bin/freedom.
+  if [[ ! -f "/usr/local/bin/freedom" ]]; then
+    if [[ -f "$0" && "$0" != "/dev/fd/"* ]]; then
+      install -m 755 "$0" /usr/local/bin/freedom || warn "Failed to install the freedom CLI shortcut."
+    else
+      warn "The script is running from a non-file input. Install it at /usr/local/bin/freedom manually."
     fi
-  elif [[ ! -f "/usr/local/bin/freedom" ]]; then
-    (curl -fsSL --connect-timeout 4 -m 12 "$RAW_SCRIPT_URL" -o /usr/local/bin/freedom && chmod +x /usr/local/bin/freedom) 2>/dev/null || true
   fi
 
-  # 若未配置或业务节点数为 0，则引导添加首个节点
+  # Offer Bot synchronization once when a revised manager script starts.
+  # Declining the prompt must not trigger any network request or automatic update.
+  maybe_offer_bot_refresh || warn "Bot synchronization check failed; retry via main menu 8 -> 5."
+
+  # If there are no managed inbounds, offer the first inbound setup wizard.
   local initial_nodes=0
   if [[ -f "$CONFIG_PATH" ]]; then
     initial_nodes="$(jq '[.inbounds[]? | select(.tag != "api-internal")] | length' "$CONFIG_PATH" 2>/dev/null)" || initial_nodes=0
@@ -3481,12 +3907,12 @@ main() {
   fi
   if ((initial_nodes == 0)); then
     clear || true
-    echo -e "  ${BOLD}检测到当前尚未配置任何 Xray 业务节点，将引导您初始化创建第 1 个节点${NC}"
-    tune_linux_kernel_network
-    add_new_node_interactive || true
+    echo -e "  ${BOLD}No Xray inbounds configured; the first-inbound setup wizard will start${NC}"
+    locked_config_operation tune_linux_kernel_network
+    locked_config_operation add_new_node_interactive || true
   fi
 
-  # 之后进入全功能控制台主菜单
+  # Start the full-featured interactive manager menu.
   main_menu
 }
 
