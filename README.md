@@ -167,8 +167,8 @@ Flow 必须与用户在对应入站的配置一致。CLI 与 Bot 导出器均不
 
 - 客户端 encryption 和服务端 decryption 必须成对；只有用户实际启用 Vision 才导出 flow。
 - XHTTP Host 默认留空，不强制复制 TLS SNI；必要时可以针对反代自定义。
-- XHTTP Padding 通常使用 100–1000 默认值；新版分享链接可携带 extra JSON，但客户端支持情况仍应实测。
-- 不默认附加 ECH。仅在 DNS/CDN/客户端支持时使用。
+- XHTTP 分享链接同时携带 `mode=auto`（或相应模式）与 `extra={"mode":"auto","xPaddingBytes":"100-1000"}`，与 3x-ui 导出兼容；Padding 以服务端入站实际 `xPaddingBytes` 配置为准，缺省时使用 `100-1000`。
+- XHTTP + TLS/CDN 链接默认包含 `ech=cloudflare-ech.com%2Bhttps%3A%2F%2Fdns.alidns.com%2Fdns-query`，供 v2rayN/v2rayNG 导入。此参数是**客户端设置**，不改动服务器的 TLS、Cloudflare 或 DNS 配置。仅在目标 CDN 提供可用 ECH、DNS 查询正常且客户端内核支持时生效；如果导入后无法连接，应先从客户端清除 `EchConfigList` 后重测。不要把 ECH 视为全部流量特征消失或域名零泄露的保证。
 - CDN 方案推荐有效源站证书 + Cloudflare Full (strict)，不要把 Full + 自签名证书误认为同等级验证。
 - 不保证 XHTTP 比 RAW 延迟更低，也不保证迁移裸核能解除被封锁 IP。
 
