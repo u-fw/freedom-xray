@@ -1890,7 +1890,6 @@ show_user_node_links() {
       fi
 
       if [[ "$net" == "tcp" ]]; then
-        [[ -z "$node_flow" ]] && node_flow="xtls-rprx-vision"
         link="vless://${node_user_id}@${host_for_link}:${port}?type=tcp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F&flow=${node_flow}&encryption=$(url_encode "$enc_param")#$(url_encode "${tag}-${sel_email%%@*}")"
       elif [[ "$net" == "xhttp" ]]; then
         path="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.path // "/"')"
@@ -2509,7 +2508,12 @@ list_and_show_nodes() {
     echo
     echo -e "${BOLD}${CYAN}[节点序号 $((i+1))] Tag: ${tag}${NC}"
     echo "  - 端口: ${port} | 传输层: ${net} | 安全层: ${sec} | 客户端数: ${client_count} 个"
-    echo "  - 默认用户: ${email} (${uuid})"
+    if [[ -z "$uuid" ]]; then
+      info "节点暂未绑定任何用户。请在用户管理 → 用户详情中授权后再导出链接。"
+      i=$((i+1))
+      continue
+    fi
+    echo "  - 当前显示用户: ${email} (${uuid})"
 
     local enc_param
     enc_param="$(node_client_encryption "$tag")"
@@ -2590,6 +2594,11 @@ list_and_show_nodes() {
     net="$(echo "$ib_json" | jq -r '.streamSettings.network // "tcp"')"
     sec="$(echo "$ib_json" | jq -r '.streamSettings.security // "none"')"
     uuid="$(echo "$ib_json" | jq -r '.settings.clients[0].id // empty')"
+    if [[ -z "$uuid" ]]; then
+      warn "所选节点尚无任何用户绑定，无法生成可用二维码。请先为该节点授权用户。"
+      echo && read -rp "按回车键返回主菜单..." _dummy
+      return 0
+    fi
 
     local enc_param
     enc_param="$(node_client_encryption "$tag")"
