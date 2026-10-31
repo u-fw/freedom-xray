@@ -163,6 +163,7 @@ func (s *BotService) handleUpdate(update tgbotapi.Update) {
 }
 
 func (s *BotService) handleMessage(msg *tgbotapi.Message) {
+	s.maybeAutoDetectLanguage(msg)
 	if s.handleNodePathInput(msg) { return }
 	if s.handleWizardMessage(msg) { return }
 	text := strings.TrimSpace(msg.Text)
@@ -264,8 +265,10 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 		s.showUpdatesMenu(chatID,msgID)
 	case data == "menu_version":
 		s.sendVersionCard(chatID,msgID)
-	case data == "menu_help":
-		s.sendHelpCard(chatID,msgID)
+			case data == "menu_help":
+				s.sendHelpCard(chatID,msgID)
+			case strings.HasPrefix(data,"lang_set:"):
+				s.setLanguage(chatID,msgID,strings.TrimPrefix(data,"lang_set:"))
 	case strings.HasPrefix(data,"update_ask:"):
 		s.askUpdate(cb,strings.TrimPrefix(data,"update_ask:"))
 	case strings.HasPrefix(data,"update_confirm:"):
@@ -399,6 +402,7 @@ func (s *BotService) sendMainMenu(chatID int64,msgID int) {
   tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.update"),"menu_update"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.version"),"menu_version")),
   tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.restart"),"menu_restart_ask"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.backup"),"menu_backup")),
   tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.help"),"menu_help"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.refresh"),"menu_main")),
+  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(languageButtonLabel("en",s.cfg.Language),"lang_set:en"),tgbotapi.NewInlineKeyboardButtonData(languageButtonLabel("zh-CN",s.cfg.Language),"lang_set:zh-CN")),
  )
  s.sendOrEdit(chatID,msgID,content,keyboard)
 }

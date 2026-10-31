@@ -44,4 +44,39 @@ func TestLanguageUpdatePreservesUnknownFields(t *testing.T) {
  if err:=persistLanguage(path,"zh-CN");err!=nil{t.Fatal(err)}
  data,err:=os.ReadFile(path);if err!=nil{t.Fatal(err)}
  if !strings.Contains(string(data),`"feature": true`) || !strings.Contains(string(data),`"language": "zh-CN"`){t.Fatalf("language update discarded fields: %s",data)}
+ if !strings.Contains(string(data),`"language_explicit": true`){t.Fatalf("explicit language not recorded: %s",data)}
+}
+
+func TestTelegramLanguageDetection(t *testing.T) {
+ cases:=map[string]string{
+  "en":"en","en-US":"en","zh":"zh-CN","zh-Hans":"zh-CN","zh-CN":"zh-CN",
+  "zh-Hant":"zh-CN","fr":"","": "",
+ }
+ for input,want:=range cases {
+  if got:=telegramLanguage(input);got!=want{t.Errorf("telegramLanguage(%q)=%q, want %q",input,got,want)}
+ }
+}
+
+func TestLanguageButtonLabel(t *testing.T) {
+ if got:=languageButtonLabel("en","en");got!="● English"{t.Fatalf("active English label: %q",got)}
+ if got:=languageButtonLabel("zh-CN","en");got!="\u4e2d\u6587"{t.Fatalf("inactive Chinese label: %q",got)}
+ if got:=languageButtonLabel("zh-CN","zh-CN");got!="● \u4e2d\u6587"{t.Fatalf("active Chinese label: %q",got)}
+}
+
+func TestProvisionalLanguagePersistence(t *testing.T) {
+ path:=filepath.Join(t.TempDir(),"bot.json")
+ if err:=os.WriteFile(path,[]byte(`{"language":"en"}`),0600);err!=nil{t.Fatal(err)}
+ if err:=persistLanguageWithExplicit(path,"zh-CN",false);err!=nil{t.Fatal(err)}
+ data,err:=os.ReadFile(path);if err!=nil{t.Fatal(err)}
+ if !strings.Contains(string(data),`"language_explicit": false`){t.Fatalf("provisional marker missing: %s",data)}
+}
+
+func TestLegacyNonEnglishLanguageIsExplicit(t *testing.T) {
+ path:=filepath.Join(t.TempDir(),"bot.json")
+ if err:=os.WriteFile(path,[]byte(`{"language":"zh-CN"}`),0600);err!=nil{t.Fatal(err)}
+ cfg,err:=LoadConfig(path);if err!=nil{t.Fatal(err)}
+ if !cfg.LanguageExplicit{t.Fatal("legacy non-English preference would be auto-overridden")}
+ if err:=os.WriteFile(path,[]byte(`{"language":"en"}`),0600);err!=nil{t.Fatal(err)}
+ cfg,err=LoadConfig(path);if err!=nil{t.Fatal(err)}
+ if cfg.LanguageExplicit{t.Fatal("plain English default must remain auto-detectable")}
 }

@@ -10,7 +10,8 @@ import (
 // BotConfig represents freedom-bot configuration options
 type BotConfig struct {
 	Token            string  `json:"token"`
- Language string `json:"language,omitempty"`
+  Language string `json:"language,omitempty"`
+  LanguageExplicit bool `json:"language_explicit,omitempty"`
  ConfigFile string `json:"-"`
 	AdminIDs         []int64 `json:"admin_ids"`
 	Socks5Proxy      string  `json:"socks5_proxy,omitempty"` // e.g. "127.0.0.1:10808"
@@ -60,6 +61,14 @@ func LoadConfig(path string) (*BotConfig, error) {
 
 	// The English locale is the default for all installs and upgrades.
  cfg.Language=normalizeLanguage(cfg.Language)
+ // Older bot.json files have no language_explicit marker. A non-English
+ // language there was an explicit choice, so do not auto-override it.
+ var rawConfig map[string]json.RawMessage
+ if json.Unmarshal(data,&rawConfig)==nil {
+  if _,ok:=rawConfig["language_explicit"];!ok && cfg.Language!="en" {
+   cfg.LanguageExplicit=true
+  }
+ }
  // Fallback empty paths to defaults
 	if cfg.XrayConfigPath == "" {
 		cfg.XrayConfigPath = "/usr/local/etc/xray/config.json"
