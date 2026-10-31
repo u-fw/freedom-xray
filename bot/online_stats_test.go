@@ -82,6 +82,44 @@ exit 3
  }
 }
 
+// Some core builds accept "-all" but return an empty list while the per-email
+// query has data. The Bot probes once, then prefers per-email for a bounded
+// period and backs off probing after an empty probe.
+func TestOnlineEmptyAggregateFallsBackToPerEmail(t *testing.T){
+ bin:=filepath.Join(t.TempDir(),"xray")
+ mock:=`#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in
+    -all) printf '%s\n' '{"users":[]}'; exit 0 ;;
+    -email=*)
+      email="${arg#-email=}"
+      printf '{"name":"%s","ips":{"203.0.113.9":1800000000}}\n' "$email"
+      exit 0 ;;
+  esac
+done
+exit 3
+`
+ if err:=os.WriteFile(bin,[]byte(mock),0700);err!=nil{t.Fatal(err)}
+ ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second);defer cancel()
+ users,err:=queryOnlineClientsForEmails(ctx,bin,"127.0.0.1:10085",[]string{"phone"})
+ if err!=nil{t.Fatal(err)}
+ if len(users)!=1||len(users[0].IPs)!=1||users[0].IPs[0].IP!="203.0.113.9"{
+  t.Fatalf("empty aggregate did not fall back: %+v",users)
+ }
+ usePerEmail,allowProbe:=onlineFallbackPlan(bin,1,time.Now())
+ if !usePerEmail||allowProbe{t.Fatalf("fallback not cached: use=%v probe=%v",usePerEmail,allowProbe)}
+ users,err=queryOnlineClientsForEmails(ctx,bin,"127.0.0.1:10085",[]string{"phone"})
+ if err!=nil||len(users)!=1{t.Fatalf("cached per-email path failed: %+v %v",users,err)}
+ usePerEmail,allowProbe=onlineFallbackPlan(bin,1,time.Now().Add(11*time.Minute))
+ if usePerEmail||!allowProbe{t.Fatalf("fallback did not expire: use=%v probe=%v",usePerEmail,allowProbe)}
+ recordOnlineFallback(bin,false,time.Now())
+ usePerEmail,allowProbe=onlineFallbackPlan(bin,1,time.Now().Add(time.Minute))
+ if usePerEmail||allowProbe{t.Fatalf("empty probe did not back off: use=%v probe=%v",usePerEmail,allowProbe)}
+ if usePerEmail,allowProbe=onlineFallbackPlan(bin,40,time.Now());usePerEmail||allowProbe{
+  t.Fatalf("oversized email list must not trigger a probe: use=%v probe=%v",usePerEmail,allowProbe)
+ }
+}
+
 func TestOnlineEmailResponseShapes(t *testing.T){
  mapForm:=[]byte(`{"name":"phone","ips":{"203.0.113.7":1800000000}}`)
  user,err:=parseOnlineEmailResponse(mapForm,"")

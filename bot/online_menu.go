@@ -68,8 +68,8 @@ func (s *BotService) sendOnlineCard(chatID int64,msgID int) {
   return
  }
  markup:=tgbotapi.NewInlineKeyboardMarkup(
-  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"online.refresh"),"menu_online"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"online.details"),"menu_users")),
-  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.home"),"menu_main")),
+  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"online.refresh"),"menu_online"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"online.doctor"),"menu_online_doctor")),
+  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"online.details"),"menu_users"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.home"),"menu_main")),
  )
  s.sendOrEdit(chatID,msgID,onlineCardTextWithError(state,time.Now(),s.cfg.Language,err),markup)
 }

@@ -175,6 +175,10 @@ func (s *BotService) handleMessage(msg *tgbotapi.Message) {
   s.changeLanguage(msg)
  case "online":
   s.sendOnlineCard(msg.Chat.ID,0)
+ case "onlinedoctor","onlinediag":
+  s.sendOnlineDiagnostics(msg.Chat.ID,0)
+ case "routing":
+  s.sendRoutingCard(msg.Chat.ID,0)
  case "traffic", "usage":
 		s.sendTrafficCard(msg.Chat.ID, 0)
 	case "inboundtraffic":
@@ -224,13 +228,23 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 		s.sendStatusCard(chatID, msgID)
 	case data == "menu_online":
   s.sendOnlineCard(chatID,msgID)
+ case data == "menu_online_doctor":
+  s.sendOnlineDiagnostics(chatID,msgID)
+ case data == "online_repair_ask":
+  s.askOnlineRepair(chatID,msgID)
+ case data == "online_repair_confirm":
+  s.doOnlineRepair(chatID,msgID)
+ case data == "online_repair_cancel":
+  s.sendOnlineDiagnostics(chatID,msgID)
+ case data == "menu_routing":
+  s.sendRoutingCard(chatID,msgID)
  case data == "menu_traffic":
 		s.sendTrafficCard(chatID, msgID)
 	case data == "menu_inbound_traffic":
 		s.sendInboundTrafficCard(chatID,msgID)
 	case data == "menu_nodes":
 		s.sendNodesCard(chatID, msgID)
-	case strings.HasPrefix(data,"node_detail:") || strings.HasPrefix(data,"node_mode:") || strings.HasPrefix(data,"node_path:") || strings.HasPrefix(data,"node_public_port:") || strings.HasPrefix(data,"node_sni:"):
+	case strings.HasPrefix(data,"node_detail:") || strings.HasPrefix(data,"node_mode:") || strings.HasPrefix(data,"node_path:") || strings.HasPrefix(data,"node_public_port:") || strings.HasPrefix(data,"node_sni:") || strings.HasPrefix(data,"node_short_id:") || strings.HasPrefix(data,"node_xhttp_host:") || strings.HasPrefix(data,"node_xhttp_padding:") || strings.HasPrefix(data,"node_listen_port:"):
 		s.handleNodeCallback(cb)
 	case strings.HasPrefix(data,"node_confirm:"):
 		s.confirmNodeChange(cb,true)
@@ -394,7 +408,7 @@ func (s *BotService) sendMainMenu(chatID int64,msgID int) {
  updateState:=tr(s.cfg.Language,"menu.updates.disabled");if s.cfg.AllowUpdates{updateState=tr(s.cfg.Language,"menu.updates.enabled")}
  content:=fmt.Sprintf(tr(s.cfg.Language,"menu.dashboard"),mdCode(hostname),state,mdCode(status),len(nodes),userCount,mdCode(Version),updateState)
  keyboard:=tgbotapi.NewInlineKeyboardMarkup(
-  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.users"),"menu_users"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.nodes"),"menu_nodes")),
+  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.users"),"menu_users"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.nodes"),"menu_nodes"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.routing"),"menu_routing")),
   tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.traffic"),"menu_traffic"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.online"),"menu_online"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.status"),"menu_status")),
   tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.update"),"menu_update"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.version"),"menu_version")),
   tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.restart"),"menu_restart_ask"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.backup"),"menu_backup")),

@@ -181,12 +181,76 @@ func queryOnlineClientsByEmail(ctx context.Context, xrayBin,statsServer string, 
  return normalizeOnlineUsers(results,time.Now().Unix()),nil
 }
 
+// Some core builds accept "-all" but return an empty user list even though the
+// per-email path has data. Probe that compatibility path occasionally, then
+// prefer it for a bounded period. The cache is scoped to the binary path so a
+// core upgrade is detected immediately.
+var onlineFallbackCache=struct{
+ sync.Mutex
+ bin string
+ active bool
+ until time.Time
+ probeAfter time.Time
+}{}
+
+func onlineFallbackPlan(bin string,emailCount int,now time.Time)(usePerEmail,allowProbe bool){
+ onlineFallbackCache.Lock()
+ defer onlineFallbackCache.Unlock()
+ if onlineFallbackCache.bin!=bin {
+  onlineFallbackCache.bin=bin
+  onlineFallbackCache.active=false
+  onlineFallbackCache.until=time.Time{}
+  onlineFallbackCache.probeAfter=time.Time{}
+ }
+ if emailCount<1||emailCount>32{return false,false}
+ usePerEmail=onlineFallbackCache.active&&now.Before(onlineFallbackCache.until)
+ allowProbe=!usePerEmail&&!now.Before(onlineFallbackCache.probeAfter)
+ return usePerEmail,allowProbe
+}
+
+func recordOnlineFallback(bin string,found bool,now time.Time){
+ onlineFallbackCache.Lock()
+ defer onlineFallbackCache.Unlock()
+ if onlineFallbackCache.bin!=bin {
+  onlineFallbackCache.bin=bin
+  onlineFallbackCache.active=false
+  onlineFallbackCache.until=time.Time{}
+  onlineFallbackCache.probeAfter=time.Time{}
+ }
+ if found {
+  onlineFallbackCache.active=true
+  onlineFallbackCache.until=now.Add(10*time.Minute)
+  onlineFallbackCache.probeAfter=time.Time{}
+  return
+ }
+ onlineFallbackCache.active=false
+ onlineFallbackCache.probeAfter=now.Add(2*time.Minute)
+}
+
 // queryOnlineClientsForEmails prefers the single aggregate core query. When an
-// older core rejects "-all", it falls back to per-email queries so online-IP
-// collection keeps working after a Bot update without forcing a core upgrade.
+// older core rejects "-all", or accepts it but never reports users, it falls
+// back to bounded per-email queries so online-IP collection keeps working
+// without forcing a core upgrade.
 func queryOnlineClientsForEmails(ctx context.Context, xrayBin,statsServer string, emails []string) ([]onlineUser,error) {
+ now:=time.Now()
+ usePerEmail,allowProbe:=onlineFallbackPlan(xrayBin,len(emails),now)
+ if usePerEmail {
+  users,err:=queryOnlineClientsByEmail(ctx,xrayBin,statsServer,emails)
+  if err==nil{return users,nil}
+  recordOnlineFallback(xrayBin,false,time.Now())
+ }
  users,err:=queryOnlineClients(ctx,xrayBin,statsServer)
- if err==nil{return users,nil}
+ if err==nil {
+  if len(users)==0&&allowProbe {
+   fallback,fallbackErr:=queryOnlineClientsByEmail(ctx,xrayBin,statsServer,emails)
+   if fallbackErr==nil&&len(fallback)>0 {
+    recordOnlineFallback(xrayBin,true,time.Now())
+    return fallback,nil
+   }
+   recordOnlineFallback(xrayBin,false,time.Now())
+  }
+  return users,nil
+ }
  if !onlineAllFlagUnsupported(err) {return nil,err}
  return queryOnlineClientsByEmail(ctx,xrayBin,statsServer,emails)
 }

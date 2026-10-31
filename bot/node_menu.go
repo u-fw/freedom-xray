@@ -34,6 +34,27 @@ func maskRealityShortID(shortID,lang string) string {
  return shortID[:4]+"…"
 }
 
+func nodeChangeFieldLabel(lang,kind string) string {
+ switch kind {
+ case "reality_sni": return tr(lang,"node.field.sni")
+ case "reality_short_id": return tr(lang,"node.field.shortid")
+ case "path": return tr(lang,"node.field.path")
+ case "mode": return tr(lang,"node.field.mode")
+ case "public_port": return tr(lang,"node.field.publicport")
+ case "port": return tr(lang,"node.field.listenport")
+ case "xhttp_host": return tr(lang,"node.field.host")
+ case "xhttp_padding": return tr(lang,"node.field.padding")
+ }
+ return kind
+}
+
+func (s *BotService) startNodeWizard(chatID,adminID int64,msgID int,tag,kind,prompt string){
+ nodePathWizards.Lock()
+ nodePathWizards.items[chatID]=nodePathWizard{Tag:tag,AdminID:adminID,Expires:time.Now().Add(5*time.Minute),Kind:kind}
+ nodePathWizards.Unlock()
+ s.sendOrEdit(chatID,msgID,prompt,s.backToMainMarkup())
+}
+
 func (s *BotService) sendNodeDetail(chatID int64,msgID int,key string) {
  nodes,err:=LoadXrayInbounds(s.cfg.XrayConfigPath)
  if err!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.readfailure",err.Error()),s.backToMainMarkup());return}
@@ -48,12 +69,19 @@ func (s *BotService) sendNodeDetail(chatID int64,msgID int,key string) {
  if node.Security=="reality" {
   msg+=tr(s.cfg.Language,"node.realitydetail",node.SNI,maskRealityShortID(node.ShortID,s.cfg.Language))
   rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.edit.sni"),"node_sni:"+key)))
+  rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.edit.shortid"),"node_short_id:"+key)))
  }
  if node.Network=="xhttp" {
   mode:=node.XHTTPMode
   if mode=="" {mode="auto"}
-  msg+=tr(s.cfg.Language,"node.xhttpdetail",node.XHTTPPath,mode)
+  host:=node.XHTTPHost
+  if host=="" {host=tr(s.cfg.Language,"node.notconfigured")}
+  padding:=node.XHTTPPaddingBytes
+  if padding=="" {padding=tr(s.cfg.Language,"node.default")}
+  msg+=tr(s.cfg.Language,"node.xhttpdetail",node.XHTTPPath,mode,host,padding)
   rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.edit.path"),"node_path:"+key)))
+  rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.edit.host"),"node_xhttp_host:"+key)))
+  rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.edit.padding"),"node_xhttp_padding:"+key)))
   if node.Security=="tls" {
    msg+=tr(s.cfg.Language,"node.publicnote")
    rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.edit.publicport"),"node_public_port:"+key)))
@@ -69,6 +97,7 @@ func (s *BotService) sendNodeDetail(chatID int64,msgID int,key string) {
    rows=append(rows,tgbotapi.NewInlineKeyboardRow(buttons...))
   }
  }
+ rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.edit.listenport"),"node_listen_port:"+key)))
  rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.backlist"),"menu_nodes")))
  s.sendOrEdit(chatID,msgID,msg,tgbotapi.NewInlineKeyboardMarkup(rows...))
 }
@@ -83,9 +112,17 @@ func (s *BotService) offerNodeChange(chatID,adminID int64,msgID int,change NodeC
  pendingNodes.items[key]=pendingNodeChange{Change:change,ChatID:chatID,AdminID:adminID,Expires:time.Now().Add(3*time.Minute)}
  pendingNodes.Unlock()
  note:=tr(s.cfg.Language,"node.changenote.generic")
- if change.Kind=="public_port"{note=tr(s.cfg.Language,"node.changenote.publicport")}
- if change.Kind=="reality_sni"{note=tr(s.cfg.Language,"node.changenote.sni")}
- body:=tr(s.cfg.Language,"node.changebody",change.Tag,change.Kind,change.Value,note)
+ switch change.Kind {
+ case "public_port": note=tr(s.cfg.Language,"node.changenote.publicport")
+ case "reality_sni": note=tr(s.cfg.Language,"node.changenote.sni")
+ case "port": note=tr(s.cfg.Language,"node.changenote.port")
+ case "xhttp_host": note=tr(s.cfg.Language,"node.changenote.host")
+ case "xhttp_padding": note=tr(s.cfg.Language,"node.changenote.padding")
+ case "reality_short_id": note=tr(s.cfg.Language,"node.changenote.shortid")
+ }
+ value:=change.Value
+ if value==""{value=tr(s.cfg.Language,"node.clear")}
+ body:=tr(s.cfg.Language,"node.changebody",mdCode(change.Tag),mdEsc(nodeChangeFieldLabel(s.cfg.Language,change.Kind)),mdCode(value),note)
  keyboard:=tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.confirm"),"node_confirm:"+key),
   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.cancel"),"node_cancel:"+key)))
@@ -130,24 +167,34 @@ func (s *BotService) handleNodeCallback(cb *tgbotapi.CallbackQuery){
  case "node_sni":
   if node.Security!="reality"{s.sendAlert(chatID,tr(s.cfg.Language,"node.notreality"));return}
   if !s.cfg.AllowMutations{s.sendAlert(chatID,tr(s.cfg.Language,"node.enablemutations"));return}
-  nodePathWizards.Lock()
-  nodePathWizards.items[chatID]=nodePathWizard{Tag:node.Tag,AdminID:cb.From.ID,Expires:time.Now().Add(5*time.Minute),Kind:"reality_sni"}
-  nodePathWizards.Unlock()
-  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.sniprompt"),s.backToMainMarkup())
+  s.startNodeWizard(chatID,cb.From.ID,msgID,node.Tag,"reality_sni",tr(s.cfg.Language,"node.sniprompt"))
+ case "node_short_id":
+  if node.Security!="reality"{s.sendAlert(chatID,tr(s.cfg.Language,"node.notreality"));return}
+  if !s.cfg.AllowMutations{s.sendAlert(chatID,tr(s.cfg.Language,"node.enablemutations"));return}
+  s.startNodeWizard(chatID,cb.From.ID,msgID,node.Tag,"reality_short_id",tr(s.cfg.Language,"node.shortidprompt",mdCode(maskRealityShortID(node.ShortID,s.cfg.Language))))
  case "node_path":
   if node.Network!="xhttp"{s.sendAlert(chatID,tr(s.cfg.Language,"node.notxhttp"));return}
   if !s.cfg.AllowMutations{s.sendAlert(chatID,tr(s.cfg.Language,"node.enablemutations"));return}
-  nodePathWizards.Lock()
-  nodePathWizards.items[chatID]=nodePathWizard{Tag:node.Tag,AdminID:cb.From.ID,Expires:time.Now().Add(5*time.Minute),Kind:"path"}
-  nodePathWizards.Unlock()
-  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.pathprompt"),s.backToMainMarkup())
+  s.startNodeWizard(chatID,cb.From.ID,msgID,node.Tag,"path",tr(s.cfg.Language,"node.pathprompt"))
+ case "node_xhttp_host":
+  if node.Network!="xhttp"{s.sendAlert(chatID,tr(s.cfg.Language,"node.notxhttp"));return}
+  if !s.cfg.AllowMutations{s.sendAlert(chatID,tr(s.cfg.Language,"node.enablemutations"));return}
+  current:=node.XHTTPHost
+  if current==""{current=tr(s.cfg.Language,"node.notconfigured")}
+  s.startNodeWizard(chatID,cb.From.ID,msgID,node.Tag,"xhttp_host",tr(s.cfg.Language,"node.hostprompt",mdCode(current)))
+ case "node_xhttp_padding":
+  if node.Network!="xhttp"{s.sendAlert(chatID,tr(s.cfg.Language,"node.notxhttp"));return}
+  if !s.cfg.AllowMutations{s.sendAlert(chatID,tr(s.cfg.Language,"node.enablemutations"));return}
+  current:=node.XHTTPPaddingBytes
+  if current==""{current=tr(s.cfg.Language,"node.default")}
+  s.startNodeWizard(chatID,cb.From.ID,msgID,node.Tag,"xhttp_padding",tr(s.cfg.Language,"node.paddingprompt",mdCode(current)))
  case "node_public_port":
   if node.Network!="xhttp"||node.Security!="tls"{s.sendAlert(chatID,tr(s.cfg.Language,"node.portonly"));return}
   if !s.cfg.AllowMutations{s.sendAlert(chatID,tr(s.cfg.Language,"node.mutationsdisabled"));return}
-  nodePathWizards.Lock()
-  nodePathWizards.items[chatID]=nodePathWizard{Tag:node.Tag,AdminID:cb.From.ID,Expires:time.Now().Add(5*time.Minute),Kind:"public_port"}
-  nodePathWizards.Unlock()
-  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.portprompt",node.Port),s.backToMainMarkup())
+  s.startNodeWizard(chatID,cb.From.ID,msgID,node.Tag,"public_port",tr(s.cfg.Language,"node.portprompt",node.Port))
+ case "node_listen_port":
+  if !s.cfg.AllowMutations{s.sendAlert(chatID,tr(s.cfg.Language,"node.enablemutations"));return}
+  s.startNodeWizard(chatID,cb.From.ID,msgID,node.Tag,"port",tr(s.cfg.Language,"node.listenportprompt",node.Port))
  case "node_mode":
   if node.Network!="xhttp"||len(parts)!=3{return}
   s.offerNodeChange(chatID,cb.From.ID,msgID,NodeChange{Kind:"mode",Tag:node.Tag,Value:parts[2]})
@@ -174,10 +221,20 @@ func (s *BotService) handleNodePathInput(msg *tgbotapi.Message) bool {
  case "public_port":
   port,err:=strconv.Atoi(value)
   if err!=nil||port<0||port>65535{s.sendAlert(chatID,tr(s.cfg.Language,"node.portinvalid"));return true}
+ case "port":
+  if _,err:=validateListenPort(value);err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.listenportinvalid"));return true}
  case "path":
   if !safeXHTTPPath.MatchString(value){s.sendAlert(chatID,tr(s.cfg.Language,"node.pathinvalid"));return true}
  case "reality_sni":
   if err:=validateRealitySNI(value);err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.sniinvalid",err.Error()));return true}
+ case "reality_short_id":
+  if value=="-"{value=""}
+  if err:=validateRealityShortID(value);err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.shortidinvalid",err.Error()));return true}
+ case "xhttp_host":
+  if value=="-"{value=""}
+  if err:=validateXHTTPHost(value);err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.hostinvalid",err.Error()));return true}
+ case "xhttp_padding":
+  if err:=validateXHTTPPadding(value);err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.paddinginvalid",err.Error()));return true}
  default:
   s.sendAlert(chatID,tr(s.cfg.Language,"node.unknownop"));return true
  }
