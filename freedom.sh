@@ -1806,7 +1806,16 @@ xhttp_extra_query() {
 public_share_port_for_inbound() {
   local tag="$1" listen="$2" net="$3" sec="$4" mapped=""
   if [[ "$net" == "xhttp" && "$sec" == "tls" && -f "$PUBLIC_PORTS_PATH" ]]; then
-    mapped="$(jq -er --arg tag "$tag" --argjson listen "$listen" '.nodes[$tag] | select(.listen_port == $listen) | .public_port | select(type=="number" and .>=1 and .<=65535)' "$PUBLIC_PORTS_PATH" 2>/dev/null || true)"
+    local configured
+    if ! jq -e '.nodes | type=="object"' "$PUBLIC_PORTS_PATH" >/dev/null 2>&1; then
+      warn "对外端口配置文件损坏，节点 $tag 暂时使用监听端口 $listen。"
+    else
+      configured="$(jq -c --arg tag "$tag" '.nodes[$tag] // empty' "$PUBLIC_PORTS_PATH" 2>/dev/null || true)"
+      if [[ -n "$configured" ]]; then
+        mapped="$(jq -er --arg tag "$tag" --argjson listen "$listen" '.nodes[$tag] | select(.listen_port == $listen) | .public_port | select(type=="number" and .>=1 and .<=65535)' "$PUBLIC_PORTS_PATH" 2>/dev/null || true)"
+        [[ -n "$mapped" ]] || warn "节点 $tag 的对外端口映射无效或监听端口已变更，已忽略旧映射。" 
+      fi
+    fi
   fi
   if [[ "$mapped" =~ ^[0-9]+$ ]]; then printf "%s" "$mapped"; else printf "%s" "$listen"; fi
 }
