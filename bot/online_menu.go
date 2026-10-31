@@ -34,6 +34,7 @@ func onlineCardTextWithError(state trafficStore,now time.Time,lang string,queryE
   if iAt!=jAt{return iAt>jAt}
   return names[i]<names[j]
  })
+ showedIPs:=false
  if len(names)==0{
   out.WriteString(tr(lang,"online.noObservation"))
  }else{
@@ -56,6 +57,7 @@ func onlineCardTextWithError(state trafficStore,now time.Time,lang string,queryE
     out.WriteString(tr(lang,"online.lastNever"))
    }
    limit:=len(ips);if limit>3{limit=3}
+   if limit>0 {showedIPs=true}
    for _,ip:=range ips[:limit]{
     out.WriteString(tr(lang,"online.ip",mdCode(ip.IP),time.Unix(ip.LastSeen,0).Format("2006-01-02 15:04:05")))
    }
@@ -67,7 +69,8 @@ func onlineCardTextWithError(state trafficStore,now time.Time,lang string,queryE
  }
  if fresh{out.WriteString(tr(lang,"online.polled",time.Unix(state.OnlinePollAt,0).Format("2006-01-02 15:04:05")))}
  out.WriteString(tr(lang,"online.totalScope"))
- out.WriteString(tr(lang,"online.warning"))
+ // The spoofing caveat only concerns addresses that are actually displayed.
+ if showedIPs {out.WriteString(tr(lang,"online.warning"))}
  return out.String()
 }
 

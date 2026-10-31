@@ -33,7 +33,7 @@ func TestOnlineCardShowsSourceAndCumulativeUserTraffic(t *testing.T){
   OnlinePollAt:now.Unix(),
  }
  body:=onlineCardText(state,now,"en")
- for _,wanted:=range []string{"phone","203.0.113.7","Online","Total:","per user","Last online","IP history"}{
+ for _,wanted:=range []string{"phone","203.0.113.7","Online","Total:","cumulative total","Last online","IP history"}{
   if !strings.Contains(body,wanted){t.Fatalf("missing %q in online view: %s",wanted,body)}
  }
  state.LiveIPs=map[string][]onlineClientIP{}
@@ -46,6 +46,19 @@ func TestOnlineCardKeepsUserWithoutObservedIP(t *testing.T){
  message:=onlineCardText(state,time.Now(),"en")
  if !strings.Contains(message,"reality-user")||!strings.Contains(message,"Source IP not observed")||!strings.Contains(message,"Total:"){
   t.Fatalf("user with traffic must remain visible without a captured IP: %s",message)
+ }
+}
+
+// The XFF spoofing caveat only matters when addresses are actually shown.
+func TestOnlineCardShowsXFFWarningOnlyWithDisplayedIPs(t *testing.T){
+ now:=time.Now()
+ state:=trafficStore{Users:map[string]trafficCounter{"u":{TotalUp:1}},OnlinePollAt:now.Unix()}
+ if strings.Contains(onlineCardText(state,now,"en"),"XFF"){
+  t.Fatal("spoofing warning shown without any displayed IP")
+ }
+ state.OnlineIPs=map[string][]onlineClientIP{"u":{{IP:"203.0.113.7",LastSeen:now.Unix()}}}
+ if !strings.Contains(onlineCardText(state,now,"en"),"XFF"){
+  t.Fatal("spoofing warning missing while an IP is displayed")
  }
 }
 
