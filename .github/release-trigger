@@ -1,8 +1,8 @@
-v1.3.8
-The first start after an in-menu update now provisions online source-IP
-collection: the Bot enables statsUserOnline for level 0 and every client level,
-validates the core configuration, and restarts Xray once with rollback on
-failure. This closes the upgrade gap where self-update restarted only the Bot
-service and left the online API empty. The online card now names any level that
-has clients but keeps online statistics off, the footer is shorter, and the XFF
-spoofing caveat is shown only when an address is actually displayed.
+v1.3.9
+A new Stats switches panel in the Bot menu shows every Xray statistics switch,
+the feature that depends on it and any client level that is still missing,
+with a one-tap validated repair. Empty online, user-traffic and node-traffic
+cards now link directly to that panel. Provisioning also enables the
+policy.system inbound counters, so node traffic works after an in-menu upgrade.
+The first start of this version runs the one-time check and restarts Xray only
+if a required switch was off.
