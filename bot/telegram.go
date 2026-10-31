@@ -31,6 +31,28 @@ type BotService struct {
  startupNotice string
 }
 
+func telegramHTTPClient(socksAddress string) (*http.Client,error) {
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	if socksAddress != "" {
+		dialer, err := proxy.SOCKS5("tcp", socksAddress, nil, proxy.Direct)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create socks5 dialer: %w", err)
+		}
+		contextDialer,ok:=dialer.(proxy.ContextDialer)
+		if !ok{return nil,fmt.Errorf("socks5 dialer does not support cancellation")}
+		httpClient.Transport = &http.Transport{
+			DialContext: func(ctx context.Context,network,addr string)(net.Conn,error) {
+				// net/http can detach a dial from the original request; bound it
+				// even when the proxy accepts TCP but never finishes SOCKS negotiation.
+				ctx,cancel:=context.WithTimeout(ctx,30*time.Second)
+				defer cancel()
+				return contextDialer.DialContext(ctx,network,addr)
+			},
+		}
+	}
+	return httpClient,nil
+}
+
 // NewBotService initializes Telegram Bot with optional SOCKS5 proxy
 func NewBotService(cfg *BotConfig) (*BotService, error) {
 	if cfg.Token == "" {
@@ -38,19 +60,8 @@ func NewBotService(cfg *BotConfig) (*BotService, error) {
 	}
 
 	SetXrayBinPath(cfg.XrayBinPath)
-
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-	if cfg.Socks5Proxy != "" {
-		dialer, err := proxy.SOCKS5("tcp", cfg.Socks5Proxy, nil, proxy.Direct)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create socks5 dialer: %w", err)
-		}
-		httpClient.Transport = &http.Transport{
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return dialer.Dial(network, addr)
-			},
-		}
-	}
+	httpClient,err:=telegramHTTPClient(cfg.Socks5Proxy)
+	if err!=nil{return nil,err}
 
 	bot, err := tgbotapi.NewBotAPIWithClient(cfg.Token, tgbotapi.APIEndpoint, httpClient)
 	if err != nil {
@@ -688,11 +699,14 @@ func (s *BotService) sendTrafficCard(chatID int64, msgID int) {
    sb.WriteString(tr(s.cfg.Language,"stats.traffic.off",mdCode(strings.Join(trafficMissing,", "))))
   }
  }
+ trafficActions:=[]tgbotapi.InlineKeyboardButton{
+  tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.refresh"), "menu_traffic"),
+ }
+ if s.cfg.AllowMutations {
+  trafficActions=append(trafficActions,tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"traffic.reset"), "traffic_reset_ask"))
+ }
  rows:=[][]tgbotapi.InlineKeyboardButton{
-  tgbotapi.NewInlineKeyboardRow(
-   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.refresh"), "menu_traffic"),
-   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"traffic.reset"), "traffic_reset_ask"),
-  ),
+  tgbotapi.NewInlineKeyboardRow(trafficActions...),
   tgbotapi.NewInlineKeyboardRow(
    tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"traffic.inbounds"), "menu_inbound_traffic"),
    tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.back"), "menu_main"),
@@ -707,6 +721,10 @@ func (s *BotService) sendTrafficCard(chatID int64, msgID int) {
 }
 
 func (s *BotService) askTrafficReset(chatID int64, msgID int) {
+	if !s.cfg.AllowMutations {
+		s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"manage.writesdisabled"),s.backToMainMarkup())
+		return
+	}
 	text := tr(s.cfg.Language,"traffic.resetconfirm")
 	markup := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
@@ -718,6 +736,10 @@ func (s *BotService) askTrafficReset(chatID int64, msgID int) {
 }
 
 func (s *BotService) doTrafficReset(chatID int64, msgID int) {
+ if !s.cfg.AllowMutations {
+  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"manage.writesdisabled"),s.backToMainMarkup())
+  return
+ }
  lock,lockErr:=acquireConfigLock(s.cfg.XrayConfigPath,10*time.Second)
  if lockErr!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"traffic.lock",mdEsc(lockErr.Error())),s.backToMainMarkup());return}
  defer releaseConfigLock(lock)

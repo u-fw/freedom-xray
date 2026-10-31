@@ -50,6 +50,16 @@ func ensureTrafficMaps(state *trafficStore) {
 func openTrafficDB(configPath string) (*sql.DB,error) {
  path:=trafficDBPath(configPath)
  if err:=os.MkdirAll(filepath.Dir(path),0755);err!=nil{return nil,err}
+ // SQLite creates WAL/SHM files using the database's permissions. Secure the
+ // database before the driver opens it, including on first creation, so a
+ // permissive process umask cannot expose user names and source IP history.
+ file,err:=os.OpenFile(path,os.O_RDWR|os.O_CREATE,0600)
+ if err!=nil{return nil,err}
+ if err=file.Chmod(0600);err!=nil{file.Close();return nil,err}
+ if err=file.Close();err!=nil{return nil,err}
+ for _,suffix:=range []string{"-wal","-shm"} {
+  if err=os.Chmod(path+suffix,0600);err!=nil&&!errors.Is(err,os.ErrNotExist){return nil,err}
+ }
  db,err:=sql.Open("sqlite",path)
  if err!=nil{return nil,err}
  db.SetMaxOpenConns(1)
@@ -82,7 +92,6 @@ func openTrafficDB(configPath string) (*sql.DB,error) {
   if e!=nil {tx.Rollback();db.Close();return nil,e}
   if e=tx.Commit();e!=nil{db.Close();return nil,e}
  }
- if err=os.Chmod(path,0600);err!=nil{db.Close();return nil,err}
  return db,nil
 }
 func writeTrafficTx(tx *sql.Tx, state trafficStore, migrate bool) error {
@@ -121,10 +130,19 @@ func writeTrafficTx(tx *sql.Tx, state trafficStore, migrate bool) error {
  return nil
 }
 func loadTrafficStore(configPath string) (trafficStore,error) {
+ db,err:=openTrafficDB(configPath);if err!=nil{return trafficStore{},err}
+ defer db.Close()
+ return readTrafficStore(db)
+}
+
+type trafficQueryer interface {
+ Query(string,...any)(*sql.Rows,error)
+ QueryRow(string,...any)*sql.Row
+}
+
+func readTrafficStore(db trafficQueryer) (trafficStore,error) {
  state:=trafficStore{}
  ensureTrafficMaps(&state)
- db,err:=openTrafficDB(configPath);if err!=nil{return state,err}
- defer db.Close()
  rows,err:=db.Query("SELECT kind,name,total_up,total_down,last_up,last_down,epoch FROM counters")
  if err!=nil{return state,err}
  for rows.Next() {
@@ -157,18 +175,91 @@ func loadTrafficStore(configPath string) (trafficStore,error) {
  for current.Next(){var name,ip string;var at int64;if err=current.Scan(&name,&ip,&at);err!=nil{break};state.LiveIPs[name]=append(state.LiveIPs[name],onlineClientIP{IP:ip,LastSeen:at})}
  if e:=current.Err();err==nil{err=e}
  current.Close();if err!=nil{return state,err}
- _=db.QueryRow("SELECT value FROM meta WHERE key='online_poll_at'").Scan(&state.OnlinePollAt)
+ err=db.QueryRow("SELECT value FROM meta WHERE key='online_poll_at'").Scan(&state.OnlinePollAt)
+ if err!=nil&&!errors.Is(err,sql.ErrNoRows){return state,fmt.Errorf("invalid online poll timestamp: %w",err)}
  return state,nil
 }
+
+// Update only rows that actually changed. The collector runs every five
+// seconds, so deleting and reinserting the entire history on every poll
+// amplified WAL writes and held the write lock unnecessarily long.
+func writeTrafficChangesTx(tx *sql.Tx,previous,state trafficStore) error {
+ for _,group:=range []struct{kind string;old,current map[string]trafficCounter}{
+  {"user",previous.Users,state.Users},
+  {"binding",previous.Bindings,state.Bindings},
+  {"inbound",previous.Inbounds,state.Inbounds},
+ } {
+  kind,old,current:=group.kind,group.old,group.current
+  for name:=range old {
+   if _,ok:=current[name];!ok {
+    if _,err:=tx.Exec("DELETE FROM counters WHERE kind=? AND name=?",kind,name);err!=nil{return err}
+   }
+  }
+  for name,c:=range current {
+   if before,ok:=old[name];ok&&before==c{continue}
+   _,err:=tx.Exec(`INSERT INTO counters(kind,name,total_up,total_down,last_up,last_down,epoch) VALUES(?,?,?,?,?,?,?)
+    ON CONFLICT(kind,name) DO UPDATE SET total_up=excluded.total_up,total_down=excluded.total_down,last_up=excluded.last_up,last_down=excluded.last_down,epoch=excluded.epoch`,
+    kind,name,int64(c.TotalUp),int64(c.TotalDown),int64(c.LastUp),int64(c.LastDown),c.Epoch)
+   if err!=nil{return err}
+  }
+ }
+ for _,group:=range []struct{table string;old,current map[string]int64}{
+  {"last_online",previous.LastOnline,state.LastOnline},
+  {"last_active",previous.LastActive,state.LastActive},
+ } {
+  for name:=range group.old {
+   if _,ok:=group.current[name];!ok {
+    if _,err:=tx.Exec("DELETE FROM "+group.table+" WHERE email=?",name);err!=nil{return err}
+   }
+  }
+  for name,at:=range group.current {
+   if before,ok:=group.old[name];ok&&before==at{continue}
+   if _,err:=tx.Exec("INSERT INTO "+group.table+"(email,at) VALUES(?,?) ON CONFLICT(email) DO UPDATE SET at=excluded.at",name,at);err!=nil{return err}
+  }
+ }
+ for _,group:=range []struct{table string;old,current map[string][]onlineClientIP}{
+  {"online_ips",previous.OnlineIPs,state.OnlineIPs},
+  {"live_online",previous.LiveIPs,state.LiveIPs},
+ } {
+  old,err:=flattenTrafficIPs(group.old);if err!=nil{return err}
+  current,err:=flattenTrafficIPs(group.current);if err!=nil{return err}
+  for key:=range old {
+   if _,ok:=current[key];!ok {
+    if _,err:=tx.Exec("DELETE FROM "+group.table+" WHERE email=? AND ip=?",key.email,key.ip);err!=nil{return err}
+   }
+  }
+  for key,at:=range current {
+   if before,ok:=old[key];ok&&before==at{continue}
+   if _,err:=tx.Exec("INSERT INTO "+group.table+"(email,ip,last_seen) VALUES(?,?,?) ON CONFLICT(email,ip) DO UPDATE SET last_seen=excluded.last_seen",key.email,key.ip,at);err!=nil{return err}
+  }
+ }
+ if state.OnlinePollAt!=previous.OnlinePollAt {
+  if _,err:=tx.Exec("INSERT OR REPLACE INTO meta(key,value) VALUES('online_poll_at',?)",state.OnlinePollAt);err!=nil{return err}
+ }
+ return nil
+}
+
+type trafficIPKey struct{email,ip string}
+
+func flattenTrafficIPs(groups map[string][]onlineClientIP)(map[trafficIPKey]int64,error) {
+ result:=make(map[trafficIPKey]int64)
+ for email,ips:=range groups {
+  for _,ip:=range ips {
+   key:=trafficIPKey{email,ip.IP}
+   if _,exists:=result[key];exists{return nil,fmt.Errorf("duplicate traffic IP for %s: %s",email,ip.IP)}
+   result[key]=ip.LastSeen
+  }
+ }
+ return result,nil
+}
+
 func saveTrafficStore(configPath string,state trafficStore) error {
  ensureTrafficMaps(&state)
  db,err:=openTrafficDB(configPath);if err!=nil{return err}
  defer db.Close()
  tx,err:=db.Begin();if err!=nil{return err}
- for _,query:=range []string{"DELETE FROM counters","DELETE FROM last_online","DELETE FROM last_active","DELETE FROM online_ips","DELETE FROM live_online"} {
-  if _,err=tx.Exec(query);err!=nil{tx.Rollback();return err}
- }
- if err=writeTrafficTx(tx,state,false);err!=nil{tx.Rollback();return err}
+ previous,err:=readTrafficStore(tx);if err!=nil{tx.Rollback();return err}
+ if err=writeTrafficChangesTx(tx,previous,state);err!=nil{tx.Rollback();return err}
  if err=tx.Commit();err!=nil{return err}
  // Mirror is not the source of truth. If writing it fails, the committed DB
  // remains intact and the next successful snapshot regenerates the mirror.

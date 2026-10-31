@@ -23,6 +23,41 @@ printf '%s\n' '{"users":[{"email":"phone","ips":[{"ip":"203.0.113.7","lastSeen":
  if len(users[1].IPs)!=1||users[1].IPs[0].IP!="2001:db8::5"{t.Fatalf("IPv6 source missing: %+v",users)}
 }
 
+func TestPartialOnlineFallbackDoesNotMarkOthersOffline(t *testing.T){
+ bin:=filepath.Join(t.TempDir(),"xray")
+ mock:=`#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in
+    -all) printf '%s\n' '{"users":[]}'; exit 0 ;;
+    -email=alice) printf '%s\n' '{"name":"alice","ips":{"203.0.113.7":1800000000}}'; exit 0 ;;
+    -email=bob) echo 'temporary failure' >&2; exit 1 ;;
+  esac
+done
+exit 1
+`
+ if err:=os.WriteFile(bin,[]byte(mock),0700);err!=nil{t.Fatal(err)}
+ ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second);defer cancel()
+ partial,err:=queryOnlineClientsByEmail(ctx,bin,"127.0.0.1:10085",[]string{"alice","bob"})
+ if err==nil||len(partial)!=1{t.Fatalf("expected partial results and an error: %+v %v",partial,err)}
+ for i:=0;i<2;i++ {
+  if _,err=queryOnlineClientsForEmails(ctx,bin,"127.0.0.1:10085",[]string{"alice","bob"});err==nil{
+   t.Fatal("incomplete fallback was accepted as a complete offline snapshot")
+  }
+ }
+}
+
+func TestMalformedAggregateOnlineEntryRejectsWholeSnapshot(t *testing.T){
+ bin:=filepath.Join(t.TempDir(),"xray")
+ mock:=`#!/bin/sh
+printf '%s\n' '{"users":[{"email":"alice","ips":[{"ip":"203.0.113.7","lastSeen":1800000000}]},{"email":"bob","ips":42}]}'
+`
+ if err:=os.WriteFile(bin,[]byte(mock),0700);err!=nil{t.Fatal(err)}
+ ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second);defer cancel()
+ if _,err:=queryOnlineClients(ctx,bin,"127.0.0.1:10085");err==nil{
+  t.Fatal("partial aggregate snapshot was accepted")
+ }
+}
+
 func TestOnlineCardShowsSourceAndCumulativeUserTraffic(t *testing.T){
  now:=time.Now()
  state:=trafficStore{

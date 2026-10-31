@@ -204,3 +204,22 @@ func TestBindingMigrationValidationFailureLeavesFilesUntouched(t *testing.T){
  marker,err:=trafficMetaValue(h.config,bindingEmailsMarker);if err!=nil{t.Fatal(err)}
  if marker!=""{t.Fatalf("marker written after failure: %q",marker)}
 }
+
+func TestUserOperationsHonorRevertedBindingMode(t *testing.T){
+ h:=newBindingMigrationHarness(t,bindingMigrationConfig(),false)
+ if _,err:=revertBindingEmails(h.config,h.xray,"127.0.0.1:10085");err!=nil{t.Fatal(err)}
+ for _,change:=range []UserChange{
+  {Kind:"add",User:"phone",Node:"raw"},
+  {Kind:"assign",User:"phone",Node:"cdn"},
+  {Kind:"rename",User:"phone",NewName:"mobile"},
+  {Kind:"disable",User:"mobile"},
+  {Kind:"enable",User:"mobile"},
+ } {
+  if _,err:=changeManagedUser(h.config,h.xray,"127.0.0.1:10085",change);err!=nil{t.Fatalf("%s: %v",change.Kind,err)}
+ }
+ emails:=h.configEmails(t)
+ if emails["raw"]!="mobile"||emails["cdn"]!="mobile"{t.Fatalf("reverted mode created per-node identities: %+v",emails)}
+ if stats,err:=migrateBindingEmails(h.config,h.xray,"127.0.0.1:10085");err!=nil||stats.changed(){
+  t.Fatalf("reverted mode was not preserved: %+v %v",stats,err)
+ }
+}

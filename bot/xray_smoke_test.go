@@ -2,9 +2,22 @@ package main
 
 import (
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestXrayHelperErrorDoesNotExposeSecretArguments(t *testing.T) {
+	bin:=filepath.Join(t.TempDir(),"xray")
+	if err:=os.WriteFile(bin,[]byte("#!/bin/sh\nexit 1\n"),0700);err!=nil{t.Fatal(err)}
+	previous:=xrayBinPath
+	xrayBinPath=bin
+	defer func(){xrayBinPath=previous}()
+	_,err:=runXrayHelper("x25519","-i","test-private-key")
+	if err==nil{t.Fatal("failing helper reported success")}
+	if strings.Contains(err.Error(),"test-private-key"){t.Fatalf("helper error exposed a secret: %s",err)}
+}
 
 func TestGenerateVlessURIReality(t *testing.T) {
 	derivationMu.Lock()

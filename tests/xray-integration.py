@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+"""Exercise user/binding accounting and reset against an isolated local Xray.
+
+Run as root on Linux with XRAY_BIN and FREEDOM_BOT_BIN pointing to binaries.
+The test expects Xray 26.10.31 or newer for Freedom's finalRules setting.
+All listeners bind to loopback and all configuration is created in a temp dir.
+"""
+
+import fcntl
+import http.server
+import json
+import os
+from pathlib import Path
+import socket
+import subprocess
+import tempfile
+import threading
+import time
+
+
+XRAY = os.environ["XRAY_BIN"]
+BOT = os.environ["FREEDOM_BOT_BIN"]
+ALICE_ID = "11111111-1111-4111-8111-111111111111"
+BOB_ID = "22222222-2222-4222-8222-222222222222"
+
+
+def unused_port():
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def wait_for_port(port, process):
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(f"Xray exited early: {process.stderr.read()}")
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                return
+        except OSError:
+            time.sleep(0.05)
+    raise RuntimeError(f"listener {port} did not start")
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        data = b"x" * 65536
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, *_args):
+        pass
+
+
+def start_xray(config, directory, name):
+    path = directory / f"{name}.json"
+    path.write_text(json.dumps(config), encoding="utf-8")
+    return subprocess.Popen(
+        [XRAY, "run", "-config", str(path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def main():
+    if os.geteuid() != 0:
+        raise SystemExit("local Bot maintenance commands require root")
+    with tempfile.TemporaryDirectory(prefix="freedom-xray-integration-") as temp:
+        directory = Path(temp)
+        httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        ports = []
+        while len(ports) < 6:
+            port = unused_port()
+            if port not in ports:
+                ports.append(port)
+        api_port, raw_port, cdn_port, alice_raw, alice_cdn, bob_raw = ports
+        inbound = lambda tag, port, clients: {
+            "tag": tag,
+            "listen": "127.0.0.1",
+            "port": port,
+            "protocol": "vless",
+            "settings": {"decryption": "none", "clients": clients},
+        }
+        server_config = {
+            "log": {"loglevel": "info"},
+            "stats": {},
+            "api": {"tag": "api", "services": ["StatsService"]},
+            "policy": {
+                "levels": {"0": {"statsUserUplink": True, "statsUserDownlink": True}},
+                "system": {"statsInboundUplink": True, "statsInboundDownlink": True},
+            },
+            "inbounds": [
+                {"tag": "api-internal", "listen": "127.0.0.1", "port": api_port,
+                 "protocol": "dokodemo-door", "settings": {"address": "127.0.0.1"}},
+                inbound("raw", raw_port, [{"id": ALICE_ID, "email": "alice+cmF3"},
+                                          {"id": BOB_ID, "email": "bob+cmF3"}]),
+                inbound("cdn", cdn_port, [{"id": ALICE_ID, "email": "alice+Y2Ru"}]),
+            ],
+            "outbounds": [{"protocol": "freedom", "tag": "direct", "settings": {
+                "finalRules": [{"action": "allow", "network": "tcp", "ip": ["127.0.0.1/32"]}],
+            }}],
+            "routing": {"rules": [{"type": "field", "inboundTag": ["api-internal"],
+                                   "outboundTag": "api"}]},
+        }
+        processes = []
+        try:
+            server = start_xray(server_config, directory, "config")
+            processes.append(server)
+            wait_for_port(api_port, server)
+            for index, (socks_port, target_port, user_id) in enumerate([
+                (alice_raw, raw_port, ALICE_ID),
+                (alice_cdn, cdn_port, ALICE_ID),
+                (bob_raw, raw_port, BOB_ID),
+            ]):
+                client = {
+                    "log": {"loglevel": "info"},
+                    "inbounds": [{"listen": "127.0.0.1", "port": socks_port,
+                                  "protocol": "socks", "settings": {"udp": False}}],
+                    "outbounds": [{"protocol": "vless", "settings": {"vnext": [{
+                        "address": "127.0.0.1", "port": target_port,
+                        "users": [{"id": user_id, "encryption": "none"}],
+                    }]}}],
+                }
+                process = start_xray(client, directory, f"client-{index}")
+                processes.append(process)
+                wait_for_port(socks_port, process)
+                subprocess.run([
+                    "curl", "-fsS", "--max-time", "10", "--noproxy", "",
+                    "--socks5-hostname", f"127.0.0.1:{socks_port}",
+                    f"http://127.0.0.1:{httpd.server_port}/", "-o", os.devnull,
+                ], check=True)
+
+            bot_config = directory / "bot.json"
+            bot_config.write_text(json.dumps({
+                "xray_config_path": str(directory / "config.json"),
+                "xray_bin_path": XRAY,
+                "stats_api_server": f"127.0.0.1:{api_port}",
+            }), encoding="utf-8")
+
+            def bot(*args):
+                return subprocess.run([BOT, "-c", str(bot_config), *args], check=True,
+                                      capture_output=True, text=True, timeout=40).stdout
+
+            bot("-local-traffic-snapshot")
+            before = json.loads(bot("-local-traffic-read"))
+            assert before["users"]["alice"]["total_down"] >= 2 * 65536, before
+            assert before["users"]["bob"]["total_down"] >= 65536, before
+            for binding in ("alice+cmF3", "alice+Y2Ru"):
+                assert before["bindings"][binding]["total_down"] >= 65536, before
+
+            with (directory / ".freedom-config.lock").open("w") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                bot("-local-user-traffic-reset-locked", "-local-user", "alice")
+            bot("-local-traffic-snapshot")
+            after = json.loads(bot("-local-traffic-read"))
+            assert after["users"]["alice"]["total_down"] == 0, after
+            assert after["users"]["bob"]["total_down"] == before["users"]["bob"]["total_down"], after
+            for binding in ("alice+cmF3", "alice+Y2Ru"):
+                assert after["bindings"][binding]["total_down"] == 0, after
+            print("Real Xray per-binding traffic and isolated user reset passed")
+        except Exception:
+            for index, process in enumerate(processes):
+                process.terminate()
+                stdout, stderr = process.communicate(timeout=5)
+                print(f"Xray process {index}:\n{stdout}\n{stderr}")
+            raise
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            for process in reversed(processes):
+                if process.poll() is not None:
+                    continue
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+
+
+if __name__ == "__main__":
+    main()

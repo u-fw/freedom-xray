@@ -493,6 +493,7 @@ func fileSidecar(path string,mode os.FileMode,data []byte) configSidecar {
   Path:path,
   Mode:mode,
   BeforeValidation:true,
+  CreateOnly:true,
   Transform:func(original []byte,exists bool)([]byte,error){
    if data==nil{return nil,nil}
    return append([]byte(nil),data...),nil

@@ -6,7 +6,6 @@ import (
  "encoding/json"
  "errors"
  "fmt"
- "log"
  "net"
  "os/exec"
  "reflect"
@@ -138,7 +137,7 @@ func queryOnlineClients(ctx context.Context, xrayBin,statsServer string) ([]onli
   if parseErr!=nil{malformed++;continue}
   users=append(users,onlineUser{Email:user.Email,IPs:ips})
  }
- if malformed>0&&len(users)==0 {
+ if malformed>0 {
   return nil,fmt.Errorf("online stats malformed: %d user entries had an unsupported ips field",malformed)
  }
  return normalizeOnlineUsers(users,now),nil
@@ -189,9 +188,13 @@ func queryOnlineClientsByEmail(ctx context.Context, xrayBin,statsServer string, 
  results:=make([]onlineUser,0,len(emails))
  failures:=make([]string,0)
  for _,email:=range emails {
-  if ctx.Err()!=nil{break}
+  select {
+  case <-ctx.Done():
+   break
+  case semaphore<-struct{}{}:
+  }
+  if ctx.Err()!=nil {break}
   wait.Add(1)
-  semaphore<-struct{}{}
   go func(email string){
    defer wait.Done()
    defer func(){<-semaphore}()
@@ -209,13 +212,12 @@ func queryOnlineClientsByEmail(ctx context.Context, xrayBin,statsServer string, 
   }(email)
  }
  wait.Wait()
- if len(results)==0&&len(failures)>0 {
-  return nil,errors.New("per-email online statistics failed: "+strings.Join(failures,"; "))
- }
+ results=normalizeOnlineUsers(results,time.Now().Unix())
+ if ctx.Err()!=nil{return results,fmt.Errorf("per-email online statistics incomplete: %w",ctx.Err())}
  if len(failures)>0 {
-  log.Printf("[Online] %d per-email online queries failed (first: %s)",len(failures),failures[0])
+  return results,fmt.Errorf("%d per-email online queries failed (first: %s)",len(failures),failures[0])
  }
- return normalizeOnlineUsers(results,time.Now().Unix()),nil
+ return results,nil
 }
 
 // queryOnlineSessionCount reads the "user>>>email>>>online" counter. It
@@ -270,6 +272,7 @@ var onlineFallbackCache=struct{
  active bool
  until time.Time
  probeAfter time.Time
+ failure string
 }{}
 
 func onlineFallbackPlan(bin string,emailCount int,now time.Time)(usePerEmail,allowProbe bool){
@@ -280,6 +283,7 @@ func onlineFallbackPlan(bin string,emailCount int,now time.Time)(usePerEmail,all
   onlineFallbackCache.active=false
   onlineFallbackCache.until=time.Time{}
   onlineFallbackCache.probeAfter=time.Time{}
+  onlineFallbackCache.failure=""
  }
  if emailCount<1||emailCount>maxOnlineProbeEmails{return false,false}
  usePerEmail=onlineFallbackCache.active&&now.Before(onlineFallbackCache.until)
@@ -295,7 +299,9 @@ func recordOnlineFallback(bin string,found bool,now time.Time){
   onlineFallbackCache.active=false
   onlineFallbackCache.until=time.Time{}
   onlineFallbackCache.probeAfter=time.Time{}
+  onlineFallbackCache.failure=""
  }
+ onlineFallbackCache.failure=""
  if found {
   onlineFallbackCache.active=true
   onlineFallbackCache.until=now.Add(10*time.Minute)
@@ -304,6 +310,23 @@ func recordOnlineFallback(bin string,found bool,now time.Time){
  }
  onlineFallbackCache.active=false
  onlineFallbackCache.probeAfter=now.Add(2*time.Minute)
+}
+
+func recordOnlineFallbackFailure(bin string,err error,now time.Time) {
+ onlineFallbackCache.Lock()
+ defer onlineFallbackCache.Unlock()
+ onlineFallbackCache.bin=bin
+ onlineFallbackCache.active=false
+ onlineFallbackCache.until=time.Time{}
+ onlineFallbackCache.probeAfter=now.Add(2*time.Minute)
+ onlineFallbackCache.failure=err.Error()
+}
+
+func cachedOnlineFallbackFailure(bin string,now time.Time) error {
+ onlineFallbackCache.Lock()
+ defer onlineFallbackCache.Unlock()
+ if onlineFallbackCache.bin!=bin||onlineFallbackCache.failure==""||!now.Before(onlineFallbackCache.probeAfter){return nil}
+ return errors.New(onlineFallbackCache.failure)
 }
 
 // queryOnlineClientsForEmails prefers the single aggregate core query. When an
@@ -315,6 +338,7 @@ func queryOnlineClientsForEmails(ctx context.Context, xrayBin,statsServer string
  now:=time.Now()
  usePerEmail,allowProbe:=onlineFallbackPlan(xrayBin,len(emails),now)
  triedPerEmail:=false
+ var perEmailErr error
  if usePerEmail {
   triedPerEmail=true
   users,err:=queryOnlineClientsByEmail(ctx,xrayBin,statsServer,emails)
@@ -327,15 +351,24 @@ func queryOnlineClientsForEmails(ctx context.Context, xrayBin,statsServer string
    }
    return users,nil
   }
-  recordOnlineFallback(xrayBin,false,time.Now())
+  perEmailErr=err
+  recordOnlineFallbackFailure(xrayBin,err,time.Now())
  }
  users,err:=queryOnlineClients(ctx,xrayBin,statsServer)
  if err==nil {
+  if len(users)==0&&perEmailErr!=nil{return nil,fmt.Errorf("online fallback incomplete: %w",perEmailErr)}
+  if len(users)==0&&!allowProbe {
+   if failure:=cachedOnlineFallbackFailure(xrayBin,time.Now());failure!=nil{return nil,fmt.Errorf("online fallback incomplete: %w",failure)}
+  }
   if len(users)==0&&allowProbe {
    fallback,fallbackErr:=queryOnlineClientsByEmail(ctx,xrayBin,statsServer,emails)
    if fallbackErr==nil&&len(fallback)>0 {
     recordOnlineFallback(xrayBin,true,time.Now())
     return fallback,nil
+   }
+   if fallbackErr!=nil {
+    recordOnlineFallbackFailure(xrayBin,fallbackErr,time.Now())
+    return nil,fmt.Errorf("online fallback incomplete: %w",fallbackErr)
    }
    recordOnlineFallback(xrayBin,false,time.Now())
   }
@@ -350,7 +383,7 @@ func queryOnlineClientsForEmails(ctx context.Context, xrayBin,statsServer string
    recordOnlineFallback(xrayBin,true,time.Now())
    return fallback,nil
   }
-  recordOnlineFallback(xrayBin,false,time.Now())
+  if fallbackErr!=nil {recordOnlineFallbackFailure(xrayBin,fallbackErr,time.Now())}else{recordOnlineFallback(xrayBin,false,time.Now())}
  }
  return nil,err
 }

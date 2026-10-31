@@ -6,6 +6,7 @@ import (
  "path/filepath"
  "strings"
  "testing"
+ "time"
 )
 
 func TestTrafficSnapshotDoubleWritesBindingsAndOwnerTotals(t *testing.T){
@@ -77,7 +78,10 @@ func TestResetUserTrafficClearsEveryBindingAlias(t *testing.T){
   },
  }
  if err=saveTrafficStore(config,state);err!=nil{t.Fatal(err)}
- if err=resetUserTraffic(config,bin,"127.0.0.1:10085","phone");err!=nil{t.Fatal(err)}
+ lock,err:=acquireConfigLock(config,time.Second);if err!=nil{t.Fatal(err)}
+ err=resetUserTrafficLocked(config,bin,"127.0.0.1:10085","phone")
+ releaseConfigLock(lock)
+ if err!=nil{t.Fatal(err)}
  logged,err:=os.ReadFile(logPath);if err!=nil{t.Fatal(err)}
  text:=string(logged)
  for _,alias:=range []string{"phone",bindingEmail("phone","raw"),bindingEmail("phone","cdn")}{
@@ -88,4 +92,30 @@ func TestResetUserTrafficClearsEveryBindingAlias(t *testing.T){
  for email:=range after.Bindings {
   if bindingOwner(email)=="phone"&&after.Bindings[email].TotalUp!=0{t.Fatalf("binding %s not reset",email)}
  }
+}
+
+func TestPartialUserResetPreservesTotalsAndRebasesCompletedAliases(t *testing.T){
+ dir:=t.TempDir()
+ config:=filepath.Join(dir,"config.json")
+ bin:=filepath.Join(dir,"xray")
+ mock:=`#!/bin/sh
+case "$*" in
+  *"user>>>phone+Y2Ru>>>"*) echo 'failed' >&2; exit 1 ;;
+esac
+exit 0
+`
+ if err:=os.WriteFile(bin,[]byte(mock),0700);err!=nil{t.Fatal(err)}
+ root:=testConfig(t)
+ if _,err:=applyManagedUserChange(root,UserChange{Kind:"add",User:"phone",Node:"all"});err!=nil{t.Fatal(err)}
+ raw,err:=json.Marshal(root);if err!=nil{t.Fatal(err)}
+ if err=os.WriteFile(config,raw,0600);err!=nil{t.Fatal(err)}
+ state:=trafficStore{
+  Users:map[string]trafficCounter{"phone":{TotalUp:200,LastUp:100,Epoch:"old"}},
+  Bindings:map[string]trafficCounter{bindingEmail("phone","cdn"):{TotalUp:20,LastUp:20,Epoch:"old"}},
+ }
+ if err=saveTrafficStore(config,state);err!=nil{t.Fatal(err)}
+ if err=resetUserTraffic(config,bin,"127.0.0.1:10085","phone");err==nil{t.Fatal("partial failure was not reported")}
+ after,err:=loadTrafficStore(config);if err!=nil{t.Fatal(err)}
+ if after.Users["phone"].TotalUp!=200||after.Users["phone"].LastUp!=0{t.Fatalf("completed alias not rebased: %+v",after.Users["phone"])}
+ if after.Bindings[bindingEmail("phone","cdn")].LastUp!=20{t.Fatal("failed alias watermark changed")}
 }

@@ -45,6 +45,7 @@ func applyVersionProvisioning(cfg *BotConfig) {
  if trafficCollectorActive() {
   if err:=runChecked("systemctl","restart","freedom-stats.service");err!=nil {
    log.Printf("[Init] freedom-stats restart after Bot upgrade failed: %v",err)
+   return
   }
  }
  if err:=writeAtomically(marker,[]byte(Version+"\n"),0600);err!=nil {

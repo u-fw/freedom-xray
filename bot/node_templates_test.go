@@ -156,6 +156,19 @@ func TestMetaClientEncryptionSidecar(t *testing.T) {
  if missing!=nil{t.Fatalf("absent meta file must stay absent, got %q",missing)}
 }
 
+func TestGeneratedCertificateNeverOverwritesAFileCreatedAfterStaging(t *testing.T){
+ path:=filepath.Join(t.TempDir(),"certificate.pem")
+ staged,err:=stageConfigSidecars([]configSidecar{fileSidecar(path,0600,[]byte("new"))})
+ if err!=nil{t.Fatal(err)}
+ if err=os.WriteFile(path,[]byte("existing"),0600);err!=nil{t.Fatal(err)}
+ if err=writeSidecar(staged[0]);err==nil{t.Fatal("created file was overwritten after staging")}
+ data,err:=os.ReadFile(path);if err!=nil{t.Fatal(err)}
+ if string(data)!="existing"{t.Fatalf("existing file changed: %q",data)}
+ if _,err=stageConfigSidecars([]configSidecar{fileSidecar(path,0600,[]byte("new"))});err==nil{
+  t.Fatal("existing certificate was accepted during staging")
+ }
+}
+
 func TestPublicPortsDeleteSidecar(t *testing.T) {
  dir:=t.TempDir()
  configPath:=filepath.Join(dir,"config.json")

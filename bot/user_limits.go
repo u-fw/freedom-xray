@@ -59,6 +59,13 @@ func writeUserLimitStore(path string,store userLimitStore)error{
 var userLimitMu sync.Mutex
 
 func updateUserLimits(configPath string,apply func(map[string]userLimit)error)error{
+ lock,err:=acquireConfigLock(configPath,20*time.Second)
+ if err!=nil{return err}
+ defer releaseConfigLock(lock)
+ return updateUserLimitsLocked(configPath,apply)
+}
+
+func updateUserLimitsLocked(configPath string,apply func(map[string]userLimit)error)error{
  userLimitMu.Lock()
  defer userLimitMu.Unlock()
  path:=userLimitStorePath(configPath)
@@ -218,6 +225,32 @@ func (s *BotService) runLimitEnforcer(){
  }
 }
 
+// Recheck both the limits and ledger while holding the same lock used by
+// resets, limit edits and suspension. A decision made from an older sample
+// must not suspend a user whose quota was raised or traffic was reset.
+func recheckAndSuspendLimitedUser(configPath,xrayBinary,statsServer,email string,now time.Time)(userLimitAction,uint64,bool,error){
+ lock,err:=acquireConfigLock(configPath,20*time.Second)
+ if err!=nil{return userLimitAction{},0,false,err}
+ defer releaseConfigLock(lock)
+ limits,err:=snapshotUserLimits(configPath)
+ if err!=nil{return userLimitAction{},0,false,err}
+ limit,exists:=limits[email]
+ if !exists||limit.empty(){return userLimitAction{},0,false,nil}
+ state,trafficErr:=loadTrafficStore(configPath)
+ used:=uint64(0)
+ if trafficErr!=nil {
+  limit.QuotaBytes=0
+ }else if counter,ok:=state.Users[email];ok {
+  used=counter.TotalUp+counter.TotalDown
+ }
+ action:=evaluateUserLimit(limit,used,now)
+ if !action.Disable{return action,used,false,nil}
+ if _,err=changeUserSuspensionLocked(configPath,xrayBinary,statsServer,UserChange{Kind:"disable",User:email});err!=nil{
+  return action,used,false,err
+ }
+ return action,used,true,nil
+}
+
 func (s *BotService) enforceUserLimitsOnce(){
  if !s.cfg.AllowMutations{return}
  limits,err:=snapshotUserLimits(s.cfg.XrayConfigPath)
@@ -227,9 +260,9 @@ func (s *BotService) enforceUserLimitsOnce(){
  }
  if len(limits)==0{return}
  state,err:=loadTrafficStore(s.cfg.XrayConfigPath)
+ trafficAvailable:=err==nil
  if err!=nil {
   log.Printf("[Limits] traffic store unavailable: %v",err)
-  return
  }
  nodes,err:=LoadXrayInbounds(s.cfg.XrayConfigPath)
  if err!=nil {
@@ -248,20 +281,26 @@ func (s *BotService) enforceUserLimitsOnce(){
   if limit.empty()||!active[email]{continue}
   used:=uint64(0)
   if counter,ok:=state.Users[email];ok{used=counter.TotalUp+counter.TotalDown}
-  action:=evaluateUserLimit(limit,used,now)
+  evaluatedLimit:=limit
+  if !trafficAvailable {evaluatedLimit.QuotaBytes=0}
+  action:=evaluateUserLimit(evaluatedLimit,used,now)
   // Usage below the warning threshold clears stale flags after a reset or a
   // raised quota, so the next threshold crossing notifies again.
-  if limit.QuotaBytes>0&&used<uint64(limit.QuotaBytes)-uint64(limit.QuotaBytes)/5&&(limit.Notified80||limit.NotifiedQuota) {
+  if trafficAvailable&&limit.QuotaBytes>0&&used<uint64(limit.QuotaBytes)-uint64(limit.QuotaBytes)/5&&(limit.Notified80||limit.NotifiedQuota) {
    markUserLimit(s.cfg.XrayConfigPath,email,func(l *userLimit){l.Notified80=false;l.NotifiedQuota=false})
   }
   if action.Disable {
    if !limitCooldownReady(email,now){continue}
-   if _,err:=changeManagedUser(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,UserChange{Kind:"disable",User:email});err!=nil {
+   confirmed,confirmedUsed,suspended,err:=recheckAndSuspendLimitedUser(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer,email,time.Now())
+   if err!=nil {
     log.Printf("[Limits] auto-suspend %s failed: %v",email,err)
     setLimitCooldown(email,now)
     s.notifyAdmins(tr(lang,"limit.enforce.failed",mdCode(email),mdEsc(err.Error())))
     continue
    }
+   if !suspended{continue}
+   action=confirmed
+   used=confirmedUsed
    switch action.Reason {
    case "expired":
     markUserLimit(s.cfg.XrayConfigPath,email,func(l *userLimit){l.NotifiedExpired=true;l.NotifiedExpiry=true})
@@ -390,15 +429,15 @@ func (s *BotService) clearUserLimits(chatID int64,msgID int,key,email string){
  s.sendUserManageCard(chatID,msgID,key)
 }
 
-// dropUserLimit removes metadata for a deleted user and moves it on rename so
-// a reused name does not inherit someone else's quota or expiry.
-func (s *BotService) dropUserLimit(email,newName string){
- limits,err:=snapshotUserLimits(s.cfg.XrayConfigPath)
- if err!=nil{log.Printf("[Limits] cleanup for %s failed: %v",email,err);return}
- if _,ok:=limits[email];!ok{return}
- err=updateUserLimits(s.cfg.XrayConfigPath,func(users map[string]userLimit)error{
+// moveUserLimit removes metadata for a deleted user or moves it on rename.
+// It is called by the shared local and Telegram management path.
+func moveUserLimit(configPath,email,newName string)error{
+ return updateUserLimitsLocked(configPath,func(users map[string]userLimit)error{
   limit,ok:=users[email]
-  if !ok{return nil}
+  if !ok {
+   if newName!=""{delete(users,newName)}
+   return nil
+  }
   delete(users,email)
   if newName!="" {
    limit.Notified80=false
@@ -409,5 +448,4 @@ func (s *BotService) dropUserLimit(email,newName string){
   }
   return nil
  })
- if err!=nil{log.Printf("[Limits] cleanup for %s failed: %v",email,err)}
 }

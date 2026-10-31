@@ -21,13 +21,14 @@ Run `sudo freedom` to open the terminal menu. The Telegram submenu can install t
 
 | Capability | Terminal | Telegram |
 | --- | --- | --- |
-| VLESS RAW/REALITY/Vision, XHTTP/REALITY and XHTTP/TLS/CDN | Create and manage | Inspect and export |
+| VLESS RAW/REALITY/Vision, XHTTP/REALITY and XHTTP/TLS/CDN | Create and manage | Create, manage and export |
 | Independent user identities and node assignments | Yes | Yes |
 | Add, rename, remove, suspend and restore users | Yes (Go manager required) | Yes |
 | Rotate user UUIDs | Yes | Yes |
 | Per-node VLESS URI, text export and QR codes | Yes | Yes |
 | Change XHTTP path/mode, host, padding, listener port and REALITY SNI/short ID | Yes | Yes (confirmation required) |
 | User and inbound traffic totals | Yes | Yes |
+| Per-user/per-node traffic since binding migration | Aggregate user totals | Yes |
 | Per-user traffic quota and expiry with automatic suspension and admin notices | Local metadata | Yes |
 | Online users, source IPs and last-online information | Via collector | `/online`, `/onlinedoctor` and user details |
 | Routing rules, outbounds and balancers | Config file | Read-only `/routing` |
@@ -38,7 +39,7 @@ User identities are kept separately from Xray inbounds in a local, permission-re
 
 Suspended users retain their UUID and previous bindings in the local `freedom-disabled-users.json` file (mode 0600). This file is not encrypted. If an inbound is deleted, restoring its former binding can fail.
 
-Traffic quotas and expiry dates are stored in `freedom-user-limits.json` (mode 0600) because Xray has no native quota fields. The Bot checks them once a minute while it is running and suspends a client through the same reversible suspension flow when its total traffic reaches the quota or its expiry date passes. Administrators receive an 80% warning, expiry warnings three days ahead, and final suspension notices. Enforcement requires `allow_mutations`, never suspends the last remaining client of an inbound, and restarts Xray once per enforced suspension. Raising the quota or resetting traffic does not re-enable an automatically suspended user; restore it explicitly after reviewing the limits.
+Traffic quotas and expiry dates are stored in `freedom-user-limits.json` (mode 0600) because Xray has no native quota fields. The Bot checks them once a minute while it is running and suspends a client through the same reversible suspension flow when its total traffic reaches the quota or its expiry date passes. Administrators receive an 80% warning, expiry warnings three days ahead, and final suspension notices. Enforcement requires `allow_mutations`, never suspends the last remaining client of an inbound, and restarts Xray once per enforced suspension. An unreadable traffic ledger prevents quota decisions, but does not prevent expiry enforcement. Raising the quota or resetting traffic does not re-enable an automatically suspended user; restore it explicitly after reviewing the limits.
 
 ### Bot commands
 
@@ -162,7 +163,9 @@ References: [Cloudflare request header transformations](https://developers.cloud
 
 Previously, the bot sampled Xray StatsService about every 15 seconds and saved totals to `/usr/local/etc/xray/freedom-stats.json`. v1.3.0 introduces a standalone `freedom-stats.service` and a transactional SQLite ledger at `/usr/local/etc/xray/freedom-stats.db` with a migration path from the JSON ledger. The JSON remains available as a compatibility mirror; it is not the canonical ledger after migration.
 
-The sampler maintains separate totals by **user** and by **inbound**. These independent counters **cannot** be used to calculate an exact per-user/per-inbound traffic matrix. Runtime resets and service restarts are handled by counter baselines and systemd invocation identifiers.
+The sampler maintains totals by **user**, **inbound**, and (for migrated bindings) **user and inbound**. Historical user totals from before the binding migration cannot be split accurately across inbounds. Runtime resets and service restarts are handled by counter baselines and systemd invocation identifiers.
+
+By default, Bot startup migrates eligible plain client emails to per-inbound identities for per-node accounting. If changes are needed, the migration validates and backs up the configuration and accounting database, then restarts Xray; it can therefore interrupt connections even when `allow_mutations` is disabled, since that setting controls remote changes. The local `-local-revert-bindings` and `-local-migrate-bindings` commands revert or reapply the identity migration; reverting keeps subsequent user changes in the plain-email mode. Keep the manager script and Bot binary in sync: the terminal's per-user traffic reset requires a Bot binary that supports `-local-user-traffic-reset-locked`.
 
 Committed historical totals survive ordinary service reboots. Abrupt crashes or power loss may still omit traffic generated after the last successful sample. This is **not** exact billing-grade accounting, and Xray-level payload statistics are not interchangeable with hosting-provider transfer quotas.
 
@@ -214,6 +217,10 @@ Core updates may break compatibility with older Shadowrocket/v2rayN/v2rayNG REAL
 ## CI/CD
 
 GitHub Actions workflows are **manually dispatched** to avoid redundant builds and notification spam during development. Use **Source validation** to check Bash syntax and run Go tests; after validation, manually run **Build Freedom Bot** to publish the versioned Bot binary and its SHA-256 checksums. The separate `1stream.dat` builder is already manual. The build workflow never commits generated module files. Releases may also be triggered by explicitly changing `.github/release-trigger`; ordinary source commits do not publish a Bot binary.
+
+The module retains Go 1.24 as its minimum language version, but release builds use the supported Go 1.26 toolchain. Use a current security-patched Go release for your own builds.
+
+For an optional end-to-end check on Linux, build the Bot locally and run `sudo env XRAY_BIN=/path/to/xray FREEDOM_BOT_BIN=/path/to/freedom-bot python3 tests/xray-integration.py`. It requires Xray 26.10.31 or newer and tests temporary loopback-only listeners, per-binding traffic and a single-user reset without modifying system services.
 
 ## 1stream geosite data
 

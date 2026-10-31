@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+work_dir="$(mktemp -d)"
+trap 'rm -rf -- "$work_dir"' EXIT
+
+# Load the manager without invoking its interactive main function.
+source <(sed '$d' "$repo_dir/freedom.sh")
+CONFIG_DIR="$work_dir"
+CONFIG_PATH="$work_dir/config.json"
+META_PATH="$work_dir/freedom-meta.json"
+PUBLIC_PORTS_PATH="$work_dir/freedom-public-ports.json"
+STATS_STORE_PATH="$work_dir/freedom-stats.json"
+BOT_BIN_PATH="$work_dir/freedom-bot"
+BOT_CONFIG_PATH="$work_dir/bot.json"
+
+cat > "$CONFIG_PATH" <<'JSON'
+{"inbounds":[
+ {"tag":"raw","port":443,"protocol":"vless","settings":{"clients":[{"id":"test-uuid","email":"alice+cmF3","flow":"xtls-rprx-vision"},{"id":"legacy-id","email":"bob"}]},"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"serverNames":["example.com"],"shortIds":["abcd"],"privateKey":"key"}}},
+ {"tag":"cdn","port":8443,"protocol":"vless","settings":{"clients":[{"id":"test-uuid","email":"alice+Y2Ru"}]},"streamSettings":{"network":"xhttp","security":"tls","tlsSettings":{"certificates":[{"certificateFile":"/tmp/example.com.crt"}]},"xhttpSettings":{"path":"/test"}}}
+]}
+JSON
+cat > "$BOT_BIN_PATH" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$CONFIG_DIR/bot-args"
+SH
+chmod 700 "$BOT_BIN_PATH"
+export CONFIG_DIR
+
+[[ "$(get_all_system_users)" == $'alice|test-uuid\nbob|legacy-id' ]]
+[[ "$(binding_email_for_node alice raw)" == 'alice+cmF3' ]]
+
+get_public_ip() { printf '%s' '203.0.113.1'; }
+derive_reality_public_key() { printf '%s' 'public-key'; }
+links="$(show_user_node_links alice test-uuid <<< $'\n')"
+[[ "$links" == *'vless://test-uuid@203.0.113.1:443?'* ]]
+[[ "$links" == *'vless://test-uuid@example.com:8443?'* ]]
+[[ "$links" != *'not assigned to the inbound'* ]]
+
+manage_user_node_binding_interactive alice <<< $'1\ny\n' >/dev/null
+grep -q -- '-local-user-action unassign -local-user alice -local-node raw' "$CONFIG_DIR/bot-args"
+
+ensure_stats_api_scaffold() { :; }
+service_unit_exists() { :; }
+systemctl() { :; }
+reset_traffic_stats_interactive <<< $'2\n1\n\n' >/dev/null
+grep -q -- '-local-user-traffic-reset-locked -local-user alice' "$CONFIG_DIR/bot-args"
+
+locked_config_operation() { :; }
+get_xray_stats_json() {
+  printf '%s\n' '{"stat":[{"name":"user>>>alice+cmF3>>>traffic>>>uplink","value":"100"},{"name":"user>>>alice+Y2Ru>>>traffic>>>uplink","value":"200"},{"name":"user>>>alice+cmF3>>>traffic>>>downlink","value":"10"},{"name":"user>>>alice+Y2Ru>>>traffic>>>downlink","value":"20"}]}'
+}
+get_or_update_persistent_user_traffic() { printf '%s|%s' "$2" "$3"; }
+BOT_BIN_PATH="$work_dir/missing-bot"
+dashboard="$(user_management_menu <<< '0')"
+[[ "$dashboard" == *'300 B'* && "$dashboard" == *'30 B'* && "$dashboard" == *'330 B'* ]]
+
+online='{"users":[{"email":"alice+cmF3","ips":[{"ip":"203.0.113.7"}]},{"email":"alice+Y2Ru","ips":{"203.0.113.8":1800000000}},{"email":"bob","ips":[]}]}'
+rows="$(online_user_rows "$online")"
+[[ "$rows" == *$'alice\t203.0.113.7, 203.0.113.8'* ]]
+[[ "$rows" != *'alice+cmF3'* && "$rows" != *'alice+Y2Ru'* ]]
+
+echo 'CLI binding compatibility checks passed'

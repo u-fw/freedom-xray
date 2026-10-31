@@ -8,6 +8,7 @@ import (
  "os"
  "sort"
  "strings"
+ "time"
 )
 
 // bindingEmailsMarker records the one-time transition to per-inbound client
@@ -221,6 +222,7 @@ func backupTrafficDBBeforeBindings(configPath string)(string,error){
  if _,err:=os.Stat(dbPath);errors.Is(err,os.ErrNotExist){return "",nil}else if err!=nil{return "",err}
  backup:=dbPath+".pre-bindings.bak"
  if _,err:=os.Stat(backup);err==nil {
+  if err=os.Chmod(backup,0600);err!=nil{return "",err}
   return backup,nil
  }else if !errors.Is(err,os.ErrNotExist) {
   return "",err
@@ -231,10 +233,18 @@ func backupTrafficDBBeforeBindings(configPath string)(string,error){
  if _,err=db.Exec("PRAGMA wal_checkpoint(FULL)");err!=nil {
   return "",fmt.Errorf("checkpoint traffic database: %w",err)
  }
+ // VACUUM INTO accepts an empty target. Create it privately before SQLite can
+ // write accounting history, even when the caller has a permissive umask.
+ file,err:=os.OpenFile(backup,os.O_WRONLY|os.O_CREATE|os.O_EXCL,0600)
+ if err!=nil{return "",err}
+ if err=file.Close();err!=nil{os.Remove(backup);return "",err}
+ completed:=false
+ defer func(){if !completed{os.Remove(backup)}}()
  if _,err=db.Exec("VACUUM INTO ?",backup);err!=nil {
   return "",fmt.Errorf("backup traffic database: %w",err)
  }
  if err=os.Chmod(backup,0600);err!=nil{return "",err}
+ completed=true
  return backup,nil
 }
 
@@ -255,6 +265,9 @@ func migrateBindingEmailsForced(configPath,xrayBinary,statsServer string)(bindin
 }
 
 func migrateBindingEmailsWithForce(configPath,xrayBinary,statsServer string,force bool)(bindingMigrationStats,error){
+ lock,err:=acquireConfigLock(configPath,20*time.Second)
+ if err!=nil{return bindingMigrationStats{},err}
+ defer releaseConfigLock(lock)
  marker,err:=trafficMetaValue(configPath,bindingEmailsMarker)
  if err!=nil{return bindingMigrationStats{},err}
  if marker=="0"&&!force{return bindingMigrationStats{},nil}
@@ -273,7 +286,7 @@ func migrateBindingEmailsWithForce(configPath,xrayBinary,statsServer string,forc
  var suspensionNext []byte
  suspensionChanged:=false
  var reported bindingMigrationStats
- _,err=commitManagedConfigTx(configPath,xrayBinary,statsServer,[]configSidecar{{
+ _,err=commitManagedConfigTxLocked(configPath,xrayBinary,statsServer,[]configSidecar{{
   Path:suspendedStorePath(configPath),
   Transform:func(original []byte,exists bool)([]byte,error){
    if suspensionChanged{return suspensionNext,nil}
@@ -311,6 +324,9 @@ func migrateBindingEmailsWithForce(configPath,xrayBinary,statsServer string,forc
 }
 
 func revertBindingEmails(configPath,xrayBinary,statsServer string)(bindingMigrationStats,error){
+ lock,err:=acquireConfigLock(configPath,20*time.Second)
+ if err!=nil{return bindingMigrationStats{},err}
+ defer releaseConfigLock(lock)
  stats,err:=preflightBindingMigration(configPath,bindingRevert)
  if err!=nil{return stats,err}
  if !stats.changed(){
@@ -323,7 +339,7 @@ func revertBindingEmails(configPath,xrayBinary,statsServer string)(bindingMigrat
  var suspensionNext []byte
  suspensionChanged:=false
  var reported bindingMigrationStats
- _,err=commitManagedConfigTx(configPath,xrayBinary,statsServer,[]configSidecar{{
+ _,err=commitManagedConfigTxLocked(configPath,xrayBinary,statsServer,[]configSidecar{{
   Path:suspendedStorePath(configPath),
   Transform:func(original []byte,exists bool)([]byte,error){
    if suspensionChanged{return suspensionNext,nil}

@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	Version   = "v1.3.9"
+	Version   = "v1.3.10"
 	Commit    = "dev"
 	BuildTime = "unknown"
 )
@@ -30,6 +30,7 @@ func main() {
  localTrafficDaemon:=flag.Bool("local-traffic-daemon",false,"standalone persistent Xray traffic sampler")
  localTrafficInstall:=flag.Bool("local-traffic-install",false,"install or refresh standalone collector service (root only)")
  localTrafficResetLocked:=flag.Bool("local-traffic-reset-locked",false,"reset persisted traffic under caller-held config lock")
+ localUserTrafficResetLocked:=flag.Bool("local-user-traffic-reset-locked",false,"reset a user's Xray and persisted counters under caller-held config lock")
  localMigrateBindings:=flag.Bool("local-migrate-bindings",false,"rewrite managed client emails to per-inbound binding identities (root only)")
  localRevertBindings:=flag.Bool("local-revert-bindings",false,"rewrite binding client emails back to plain usernames (root only)")
 	flag.Parse()
@@ -68,9 +69,15 @@ func main() {
   fmt.Println("freedom-stats.service enabled and running")
   return
  }
- if *localTrafficSnapshot||*localTrafficSnapshotLocked||*localTrafficRead||*localTrafficResetLocked {
+ if *localTrafficSnapshot||*localTrafficSnapshotLocked||*localTrafficRead||*localTrafficResetLocked||*localUserTrafficResetLocked {
   if os.Geteuid()!=0 {log.Fatal("traffic maintenance requires root")}
   cfg,err:=LoadConfig(*configPath);if err!=nil{log.Fatalf("load config: %v",err)}
+  if *localUserTrafficResetLocked {
+   if *localUser==""{log.Fatal("-local-user required")}
+   if err=resetUserTrafficLocked(cfg.XrayConfigPath,cfg.XrayBinPath,cfg.StatsAPIServer,*localUser);err!=nil{log.Fatalf("reset user traffic: %v",err)}
+   fmt.Println("user traffic reset completed")
+   return
+  }
   if *localTrafficResetLocked {
    if *localUser==""{err=resetTrafficAllUsersLocked(cfg.XrayConfigPath)}else{err=resetTrafficUserLocked(cfg.XrayConfigPath,*localUser)}
    if err!=nil{log.Fatalf("reset stored traffic: %v",err)}
@@ -108,7 +115,7 @@ func main() {
   if !valid[*localAction]{log.Fatal("unsupported local action")}
   if *localUser==""{log.Fatal("-local-user required")}
   change:=UserChange{Kind:*localAction,User:*localUser,Node:*localNode,NewName:*localNewName}
-  result,err:=changeManagedUser(cfg.XrayConfigPath,cfg.XrayBinPath,change)
+  result,err:=changeManagedUser(cfg.XrayConfigPath,cfg.XrayBinPath,cfg.StatsAPIServer,change)
   if err!=nil{log.Fatalf("local user operation failed: %v",err)}
   fmt.Println(result)
   return

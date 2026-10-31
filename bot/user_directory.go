@@ -92,7 +92,7 @@ func userFlowForInbound(in map[string]any) string {
  return "xtls-rprx-vision"
 }
 
-func applyDirectoryUserChange(root map[string]any,dir *userDirectory,change UserChange)(string,error){
+func applyDirectoryUserChange(root map[string]any,dir *userDirectory,change UserChange,perNodeEmails bool)(string,error){
  if !managedUserName.MatchString(change.User){return "",errors.New("Usernames must be 1–48 ASCII letters, digits, _, ., @, or -")}
  if dir.Users==nil{dir.Users=map[string]directoryUser{}}
  inbounds,err:=usableInbounds(root);if err!=nil{return "",err}
@@ -119,7 +119,7 @@ func applyDirectoryUserChange(root map[string]any,dir *userDirectory,change User
    tag,_:=in["tag"].(string)
    if err:=validateNodeTag(tag);err!=nil{return "",fmt.Errorf("Inbound tag %q cannot be used for a binding email: %w",tag,err)}
    settings,_:=getMap(in["settings"]);list,_:=clientList(in)
-   client:=map[string]any{"id":uuid,"email":bindingEmail(change.User,tag)}
+   client:=map[string]any{"id":uuid,"email":userEmailForNode(change.User,tag,perNodeEmails)}
    if flow:=userFlowForInbound(in);flow!=""{client["flow"]=flow}
    settings["clients"]=append(list,client);affected++
   }
@@ -139,7 +139,7 @@ func applyDirectoryUserChange(root map[string]any,dir *userDirectory,change User
    for _,value:=range list{
     c,_:=getMap(value)
     email,_:=c["email"].(string)
-    if bindingOwner(email)==change.User&&c["id"]==existing.ID{c["email"]=bindingEmail(change.NewName,tag)}
+    if bindingOwner(email)==change.User&&c["id"]==existing.ID{c["email"]=userEmailForNode(change.NewName,tag,perNodeEmails)}
    }
   }
   dir.Users[change.NewName]=existing;delete(dir.Users,change.User)
@@ -177,7 +177,7 @@ func applyDirectoryUserChange(root map[string]any,dir *userDirectory,change User
     c,_:=getMap(value);email,_:=c["email"].(string)
     if bindingOwner(email)==change.User{return "",errors.New("User is already assigned to this inbound")}
    }
-   client:=map[string]any{"id":existing.ID,"email":bindingEmail(change.User,tag)}
+   client:=map[string]any{"id":existing.ID,"email":userEmailForNode(change.User,tag,perNodeEmails)}
    if flow:=userFlowForInbound(in);flow!=""{client["flow"]=flow}
    settings["clients"]=append(list,client)
    return "Assigned "+change.User+" to inbound "+change.Node,nil
@@ -202,7 +202,12 @@ func applyDirectoryUserChange(root map[string]any,dir *userDirectory,change User
  return "",errors.New("Unsupported user operation")
 }
 
-func changeDirectoryUser(configPath,xrayBinary string,change UserChange)(string,error){
+func userEmailForNode(user,tag string,perNodeEmails bool)string {
+ if perNodeEmails{return bindingEmail(user,tag)}
+ return user
+}
+
+func changeDirectoryUser(configPath,xrayBinary,statsServer string,change UserChange)(string,error){
  lock,err:=acquireConfigLock(configPath,20*time.Second);if err!=nil{return "",err}
  defer releaseConfigLock(lock)
  original,err:=os.ReadFile(configPath);if err!=nil{return "",err}
@@ -210,11 +215,19 @@ func changeDirectoryUser(configPath,xrayBinary string,change UserChange)(string,
  var root map[string]any
  if err=json.Unmarshal(original,&root);err!=nil{return "",err}
  directory,oldDirectory,err:=loadUserDirectory(configPath,root);if err!=nil{return "",err}
- if change.Kind=="add" {
+ if change.Kind=="add"||change.Kind=="rename" {
   disabled,_,err:=readSuspendedStore(configPath);if err!=nil{return "",err}
-  if _,exists:=disabled.Users[change.User];exists{return "",errors.New("A suspended user has this name; restore it or choose another name")}
+  target:=change.User
+  if change.Kind=="rename"{target=change.NewName}
+  if _,exists:=disabled.Users[target];exists{return "",errors.New("A suspended user has this name; restore it or choose another name")}
  }
- message,err:=applyDirectoryUserChange(root,&directory,change);if err!=nil{return "",err}
+ perNodeEmails:=true
+ if (change.Kind=="add"&&change.Node!="")||change.Kind=="assign"||change.Kind=="rename" {
+  marker,markerErr:=trafficMetaValue(configPath,bindingEmailsMarker)
+  if markerErr!=nil{return "",fmt.Errorf("read binding migration mode: %w",markerErr)}
+  perNodeEmails=marker!="0"
+ }
+ message,err:=applyDirectoryUserChange(root,&directory,change,perNodeEmails);if err!=nil{return "",err}
  nextConfig,err:=json.MarshalIndent(root,"","  ");if err!=nil{return "",err}
  nextConfig=append(nextConfig,10)
  nextDir,err:=json.MarshalIndent(directory,"","  ");if err!=nil{return "",err}
@@ -249,7 +262,7 @@ func changeDirectoryUser(configPath,xrayBinary string,change UserChange)(string,
    if recovery:=restore();recovery!=nil{return "",fmt.Errorf("%v; restore failed:%v",err,recovery)}
    return "",err
   }
-  snapshotTrafficBestEffortLocked(configPath,xrayBinary,"127.0.0.1:10085")
+  snapshotTrafficBestEffortLocked(configPath,xrayBinary,statsServer)
   if err=runChecked("systemctl","restart","xray");err==nil{
    err=runChecked("systemctl","is-active","--quiet","xray")
   }
@@ -261,15 +274,24 @@ func changeDirectoryUser(configPath,xrayBinary string,change UserChange)(string,
    return "",fmt.Errorf("Xray failed startup verification; rolled back:%w",failure)
   }
  }
+ var cleanupErrors []error
  if change.Kind=="delete"{
   if err=purgeTrafficUserLocked(configPath,change.User);err!=nil{
-   return message,fmt.Errorf("User removed, but deleting its historical statistics failed: %w",err)
+   cleanupErrors=append(cleanupErrors,fmt.Errorf("deleting historical statistics: %w",err))
   }
  }
  if change.Kind=="rename"{
   if err=renameTrafficStoreLocked(configPath,change.User,change.NewName);err!=nil{
-   return message,fmt.Errorf("The account was renamed, but migrating historical traffic failed:%w",err)
+   cleanupErrors=append(cleanupErrors,fmt.Errorf("migrating historical statistics: %w",err))
   }
  }
+ if change.Kind=="delete"||change.Kind=="rename" {
+  newName:=""
+  if change.Kind=="rename"{newName=change.NewName}
+  if err=moveUserLimit(configPath,change.User,newName);err!=nil {
+   cleanupErrors=append(cleanupErrors,fmt.Errorf("updating user limits: %w",err))
+  }
+ }
+ if len(cleanupErrors)>0{return message,fmt.Errorf("Account change succeeded, but cleanup failed: %w",errors.Join(cleanupErrors...))}
  return message,nil
 }

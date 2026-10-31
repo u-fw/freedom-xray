@@ -1,10 +1,34 @@
 package main
 
 import (
+ "encoding/json"
  "os"
  "path/filepath"
  "testing"
 )
+
+func TestVersionProvisioningRetriesCollectorRestartFailure(t *testing.T){
+ dir:=t.TempDir()
+ config:=filepath.Join(dir,"config.json")
+ root:=testConfig(t)
+ enableStatsPolicy(root)
+ raw,err:=json.Marshal(root);if err!=nil{t.Fatal(err)}
+ if err=os.WriteFile(config,raw,0600);err!=nil{t.Fatal(err)}
+ failureFlag:=filepath.Join(dir,"fail-restart")
+ if err=os.WriteFile(failureFlag,[]byte("1"),0600);err!=nil{t.Fatal(err)}
+ script:="#!/bin/sh\nif [ \"$1\" = restart ] && [ -f '"+failureFlag+"' ]; then exit 1; fi\nexit 0\n"
+ if err=os.WriteFile(filepath.Join(dir,"systemctl"),[]byte(script),0700);err!=nil{t.Fatal(err)}
+ t.Setenv("PATH",dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+ cfg:=DefaultConfig()
+ cfg.XrayConfigPath=config
+ marker:=filepath.Join(dir,".freedom-bot-version")
+ applyVersionProvisioning(cfg)
+ if _,err=os.Stat(marker);!os.IsNotExist(err){t.Fatal("failed restart was marked complete")}
+ if err=os.Remove(failureFlag);err!=nil{t.Fatal(err)}
+ applyVersionProvisioning(cfg)
+ data,err:=os.ReadFile(marker);if err!=nil{t.Fatal(err)}
+ if string(data)!=Version+"\n"{t.Fatalf("wrong provisioned version: %q",data)}
+}
 
 func writeDiagnosticsConfig(t *testing.T,body string) string {
  t.Helper()

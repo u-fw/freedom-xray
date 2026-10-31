@@ -89,7 +89,11 @@ func runXrayHelper(args ...string) (string, error) {
 
 	out, err := exec.CommandContext(ctx, xrayBinPath, args...).CombinedOutput()
 	if err != nil {
-		return string(out), fmt.Errorf("xray %s: %w", strings.Join(args, " "), err)
+		// Helper arguments may contain REALITY private keys or ML-DSA seeds.
+		// Report only the subcommand; callers log this error and may show it in Telegram.
+		command := "helper"
+		if len(args)>0 {command=args[0]}
+		return string(out), fmt.Errorf("xray %s: %w", command, err)
 	}
 	return string(out), nil
 }

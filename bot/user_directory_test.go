@@ -9,16 +9,16 @@ func TestIndependentUserDirectoryAndBinding(t *testing.T){
  root:=testConfig(t)
  dir,err:=directoryFromConfig(root);if err!=nil{t.Fatal(err)}
  if _,ok:=dir.Users["admin"];!ok{t.Fatal("legacy admin migration missing")}
- msg,err:=applyDirectoryUserChange(root,&dir,UserChange{Kind:"add",User:"phone"})
+ msg,err:=applyDirectoryUserChange(root,&dir,UserChange{Kind:"add",User:"phone"},true)
  if err!=nil{t.Fatal(err)}
  if msg==""||dir.Users["phone"].ID==""{t.Fatal("independent user not stored")}
  if len(clientsIn(t,root,"raw"))!=1||len(clientsIn(t,root,"cdn"))!=1{t.Fatal("unbound account unexpectedly copied")}
- if _,err=applyDirectoryUserChange(root,&dir,UserChange{Kind:"assign",User:"phone",Node:"raw"});err!=nil{t.Fatal(err)}
+ if _,err=applyDirectoryUserChange(root,&dir,UserChange{Kind:"assign",User:"phone",Node:"raw"},true);err!=nil{t.Fatal(err)}
  if len(clientsIn(t,root,"raw"))!=2||len(clientsIn(t,root,"cdn"))!=1{t.Fatal("binding leaked across inbounds")}
- if _,err=applyDirectoryUserChange(root,&dir,UserChange{Kind:"unassign",User:"phone",Node:"raw"});err!=nil{t.Fatal(err)}
+ if _,err=applyDirectoryUserChange(root,&dir,UserChange{Kind:"unassign",User:"phone",Node:"raw"},true);err!=nil{t.Fatal(err)}
  if _,ok:=dir.Users["phone"];!ok{t.Fatal("unassign deleted user identity")}
  if len(clientsIn(t,root,"raw"))!=1{t.Fatal("unassign ineffective")}
- if _,err=applyDirectoryUserChange(root,&dir,UserChange{Kind:"delete",User:"admin"});err!=nil{t.Fatal(err)}
+ if _,err=applyDirectoryUserChange(root,&dir,UserChange{Kind:"delete",User:"admin"},true);err!=nil{t.Fatal(err)}
  if len(clientsIn(t,root,"raw"))!=0||len(clientsIn(t,root,"cdn"))!=0{t.Fatal("last inbound client cannot be removed")}
 }
 
@@ -45,7 +45,7 @@ func TestDirectoryPersistsWithoutActiveInbound(t *testing.T){
   if m["protocol"]=="vless"{m["settings"].(map[string]any)["clients"]=[]any{}}
  }
  directory:=userDirectory{Users:map[string]directoryUser{"phone":{ID:"11111111-1111-1111-1111-111111111111"}}}
- if _,err:=applyDirectoryUserChange(root,&directory,UserChange{Kind:"assign",User:"phone",Node:"cdn"});err!=nil{t.Fatal(err)}
+ if _,err:=applyDirectoryUserChange(root,&directory,UserChange{Kind:"assign",User:"phone",Node:"cdn"},true);err!=nil{t.Fatal(err)}
  if len(clientsIn(t,root,"cdn"))!=1||len(clientsIn(t,root,"raw"))!=0{t.Fatal("incorrect mapping")}
  data,err:=json.Marshal(directory);if err!=nil{t.Fatal(err)}
  var recovered userDirectory;if err:=json.Unmarshal(data,&recovered);err!=nil{t.Fatal(err)}

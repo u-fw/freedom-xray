@@ -106,7 +106,6 @@ func applyUserSuspension(root map[string]any,store *suspendedStore,change UserCh
    }
    restoredClient:=make(map[string]any,len(client))
    for key,value:=range client{restoredClient[key]=value}
-   restoredClient["email"]=bindingEmail(change.User,tag)
    restored[tag]=restoredClient
   }
   for tag,client:=range restored{
@@ -121,9 +120,13 @@ func applyUserSuspension(root map[string]any,store *suspendedStore,change UserCh
 
 // Both files are backed up and restored together if a write or restart fails.
 // The shared file lock prevents simultaneous Telegram changes.
-func changeUserSuspension(configPath,xrayBinary string,change UserChange) (string,error) {
+func changeUserSuspension(configPath,xrayBinary,statsServer string,change UserChange) (string,error) {
  lock,err:=acquireConfigLock(configPath,20*time.Second);if err!=nil{return "",err}
  defer releaseConfigLock(lock)
+ return changeUserSuspensionLocked(configPath,xrayBinary,statsServer,change)
+}
+
+func changeUserSuspensionLocked(configPath,xrayBinary,statsServer string,change UserChange) (string,error) {
  original,err:=os.ReadFile(configPath);if err!=nil{return "",err}
  st,err:=os.Stat(configPath);if err!=nil{return "",err}
  store,oldState,err:=readSuspendedStore(configPath);if err!=nil{return "",err}
@@ -162,7 +165,7 @@ func changeUserSuspension(configPath,xrayBinary string,change UserChange) (strin
   if restoreErr:=restore();restoreErr!=nil{return "",fmt.Errorf("Failed to write config: %w; rollback failed: %v",err,restoreErr)}
   return "",err
  }
- snapshotTrafficBestEffortLocked(configPath,xrayBinary,"127.0.0.1:10085")
+ snapshotTrafficBestEffortLocked(configPath,xrayBinary,statsServer)
  if err=runChecked("systemctl","restart","xray");err==nil{err=runChecked("systemctl","is-active","--quiet","xray")}
  if err!=nil {
   failure:=err
@@ -179,9 +182,9 @@ func changeUserSuspension(configPath,xrayBinary string,change UserChange) (strin
 // freedom-users.json and rejects names held by suspended accounts. Routing
 // add through commitManagedConfig instead skipped the sidecar and failed with
 // "No configuration changes" whenever no inbound was selected.
-func changeManagedUser(configPath,xrayBinary string,change UserChange)(string,error){
- if change.Kind=="disable"||change.Kind=="enable"{return changeUserSuspension(configPath,xrayBinary,change)}
- return ChangeUserConfig(configPath,xrayBinary,change)
+func changeManagedUser(configPath,xrayBinary,statsServer string,change UserChange)(string,error){
+ if change.Kind=="disable"||change.Kind=="enable"{return changeUserSuspension(configPath,xrayBinary,statsServer,change)}
+ return ChangeUserConfig(configPath,xrayBinary,statsServer,change)
 }
 
 // Prevent stale disabled accounts from being mistaken for active accounts

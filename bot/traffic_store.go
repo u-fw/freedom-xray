@@ -358,14 +358,40 @@ func resetUserTraffic(configPath,xrayBinary,statsServer,email string)error{
  lock,err:=acquireConfigLock(configPath,10*time.Second)
  if err!=nil{return err}
  defer releaseConfigLock(lock)
+ return resetUserTrafficLocked(configPath,xrayBinary,statsServer,email)
+}
+
+// The terminal menu already holds the same configuration lock.
+func resetUserTrafficLocked(configPath,xrayBinary,statsServer,email string)error{
+ if !managedUserName.MatchString(email){return errors.New("Invalid user identifier")}
  state,err:=loadTrafficStore(configPath);if err!=nil{return err}
  aliases,err:=bindingEmailAliases(configPath,state,email)
  if err!=nil{return err}
+ resetAliases:=make([]string,0,len(aliases))
  for _,alias:=range aliases {
   ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second)
   out,runErr:=exec.CommandContext(ctx,xrayBinary,"api","statsquery","--server="+statsServer,"-pattern=user>>>"+alias+">>>","-reset=true").CombinedOutput()
   cancel()
-  if runErr!=nil{return fmt.Errorf("Xray counter reset failed for %s: %w: %s",alias,runErr,strings.TrimSpace(string(out)))}
+  if runErr!=nil {
+   // Earlier aliases have already been reset inside Xray. Retain their
+   // historical totals but clear their watermarks, so later samples do not
+   // subtract the old runtime counters from new traffic after a partial reset.
+   for _,reset:=range resetAliases {
+    if reset==email {
+     if counter,ok:=state.Users[email];ok {
+      counter.LastUp=0;counter.LastDown=0;counter.Epoch="";state.Users[email]=counter
+     }
+    }else if counter,ok:=state.Bindings[reset];ok {
+     counter.LastUp=0;counter.LastDown=0;counter.Epoch="";state.Bindings[reset]=counter
+    }
+   }
+   resetErr:=fmt.Errorf("Xray counter reset failed for %s after %d alias(es) were reset: %w: %s",alias,len(resetAliases),runErr,strings.TrimSpace(string(out)))
+   if len(resetAliases)>0 {
+    if saveErr:=saveTrafficStore(configPath,state);saveErr!=nil{return errors.Join(resetErr,fmt.Errorf("persist partial reset watermarks: %w",saveErr))}
+   }
+   return resetErr
+  }
+  resetAliases=append(resetAliases,alias)
  }
  return resetTrafficUserLocked(configPath,email)
 }

@@ -2,6 +2,8 @@ package main
 
 import (
  "encoding/json"
+ "os"
+ "path/filepath"
  "strings"
  "testing"
 )
@@ -12,6 +14,18 @@ func testConfig(t *testing.T) map[string]any {
  var root map[string]any
  if err:=json.Unmarshal([]byte(input),&root);err!=nil {t.Fatal(err)}
  return root
+}
+
+func TestUserChangeSamplesConfiguredStatsServer(t *testing.T){
+ h:=newBindingMigrationHarness(t,bindingMigrationConfig(),false)
+ logPath:=filepath.Join(filepath.Dir(h.config),"xray-args")
+ script:="#!/bin/sh\nprintf '%s\\n' \"$*\" >> '"+logPath+"'\ncase \"$*\" in\n *statsonlineiplist*) printf '%s\\n' '{\"users\":[]}' ;;\n *statsquery*) printf '%s\\n' '{\"stat\":[]}' ;;\nesac\nexit 0\n"
+ if err:=os.WriteFile(h.xray,[]byte(script),0700);err!=nil{t.Fatal(err)}
+ if _,err:=changeManagedUser(h.config,h.xray,"127.0.0.1:14000",UserChange{Kind:"add",User:"phone",Node:"raw"});err!=nil{t.Fatal(err)}
+ args,err:=os.ReadFile(logPath);if err!=nil{t.Fatal(err)}
+ if !strings.Contains(string(args),"statsquery --server=127.0.0.1:14000"){
+  t.Fatalf("restart snapshot did not use configured Stats API: %s",args)
+ }
 }
 func clientsIn(t *testing.T,root map[string]any,tag string) []any {
  t.Helper()

@@ -80,7 +80,7 @@ func managedUserIDs(inbounds []map[string]any,name string) (map[string]bool,erro
 
 func applyManagedUserChange(root map[string]any,change UserChange) (string,error) {
  dir,err:=directoryFromConfig(root);if err!=nil{return "",err}
- return applyDirectoryUserChange(root,&dir,change)
+ return applyDirectoryUserChange(root,&dir,change,true)
 }
 
 func runChecked(command string,args ...string) error {
@@ -108,8 +108,8 @@ func writeAtomically(path string,data []byte,perm os.FileMode) error {
 
 // ChangeUserConfig serializes local Bot changes, validates before restart,
 // writes an owner-readable backup and rolls back if restart or health check fails.
-func ChangeUserConfig(configPath,xrayBinary string,change UserChange) (string,error) {
- return changeDirectoryUser(configPath,xrayBinary,change)
+func ChangeUserConfig(configPath,xrayBinary,statsServer string,change UserChange) (string,error) {
+ return changeDirectoryUser(configPath,xrayBinary,statsServer,change)
 }
 
 // configSidecar is an auxiliary file committed together with config.json.
@@ -121,6 +121,7 @@ type configSidecar struct {
  Path string
  Mode os.FileMode
  BeforeValidation bool
+ CreateOnly bool
  Transform func(original []byte,exists bool) ([]byte,error)
 }
 
@@ -132,6 +133,7 @@ type stagedSidecar struct {
  next []byte
  changed bool
  beforeValidation bool
+ createOnly bool
  written bool
 }
 
@@ -146,6 +148,7 @@ func stageConfigSidecars(sidecars []configSidecar) ([]*stagedSidecar,error) {
   original,err:=os.ReadFile(path)
   hadOriginal:=true
   if os.IsNotExist(err){original=nil;hadOriginal=false}else if err!=nil{return nil,err}
+  if sidecar.CreateOnly&&hadOriginal{return nil,fmt.Errorf("refusing to overwrite existing file %s",path)}
   mode:=sidecar.Mode
   if mode==0 {
    mode=0600
@@ -159,7 +162,7 @@ func stageConfigSidecars(sidecars []configSidecar) ([]*stagedSidecar,error) {
   if next==nil&&hadOriginal{changed=true}
   staged=append(staged,&stagedSidecar{
    path:path,mode:mode,original:original,hadOriginal:hadOriginal,
-   next:next,changed:changed,beforeValidation:sidecar.BeforeValidation,
+   next:next,changed:changed,beforeValidation:sidecar.BeforeValidation,createOnly:sidecar.CreateOnly,
   })
  }
  return staged,nil
@@ -172,6 +175,14 @@ func writeSidecar(s *stagedSidecar) error {
   return nil
  }
  if err:=os.MkdirAll(filepath.Dir(s.path),0755);err!=nil{return err}
+ if s.createOnly {
+  f,err:=os.OpenFile(s.path,os.O_WRONLY|os.O_CREATE|os.O_EXCL,s.mode)
+  if err!=nil{return err}
+  s.written=true
+  if _,err=f.Write(s.next);err!=nil{f.Close();return err}
+  if err=f.Sync();err!=nil{f.Close();return err}
+  return f.Close()
+ }
  if err:=writeAtomically(s.path,s.next,s.mode);err!=nil{return err}
  s.written=true
  return nil
@@ -190,6 +201,11 @@ func commitManagedConfigTx(configPath,xrayBinary,statsServer string,sidecars []c
  if strings.TrimSpace(statsServer)==""{statsServer="127.0.0.1:10085"}
  lock,err:=acquireConfigLock(configPath,20*time.Second);if err!=nil{return "",err}
  defer releaseConfigLock(lock)
+ return commitManagedConfigTxLocked(configPath,xrayBinary,statsServer,sidecars,apply)
+}
+
+func commitManagedConfigTxLocked(configPath,xrayBinary,statsServer string,sidecars []configSidecar,apply func(map[string]any)(string,error)) (string,error) {
+ if strings.TrimSpace(statsServer)==""{statsServer="127.0.0.1:10085"}
  original,err:=os.ReadFile(configPath);if err!=nil{return "",err}
  stat,err:=os.Stat(configPath);if err!=nil{return "",err}
  var root map[string]any

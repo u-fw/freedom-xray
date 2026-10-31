@@ -76,16 +76,11 @@ func (s *BotService) resolveUserChange(cb *tgbotapi.CallbackQuery,confirm bool) 
  }
  if !confirm {s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"manage.cancelled"),s.backToMainMarkup());return}
  if !s.cfg.AllowMutations {s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"manage.writesdisabled"),s.backToMainMarkup());return}
- msg,err:=changeManagedUser(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,request.Change)
+ msg,err:=changeManagedUser(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer,request.Change)
  if err!=nil {
   log.Printf("[Bot] management %s failed: %v",request.Change.Kind,err)
   s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"manage.changefailed",err.Error()),s.backToMainMarkup())
   return
- }
- // Traffic rename is performed by changeDirectoryUser under the same config lock.
- switch request.Change.Kind {
- case "delete": s.dropUserLimit(request.Change.User,"")
- case "rename": s.dropUserLimit(request.Change.User,request.Change.NewName)
  }
  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"manage.completed",msg),s.backToMainMarkup())
 }

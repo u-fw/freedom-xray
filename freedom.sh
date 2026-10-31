@@ -28,7 +28,7 @@ NC='\033[0m'
 
 export PATH="$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
 
-SCRIPT_VERSION="v13.5.1"
+SCRIPT_VERSION="v13.5.2"
 # Optional client-side ECH configuration for XHTTP/TLS links; does not modify origin TLS.
 XHTTP_CDN_ECH_CONFIG="cloudflare-ech.com+https://dns.alidns.com/dns-query"
 DEFAULT_SNI="www.nvidia.com"
@@ -1703,7 +1703,22 @@ build_inbound_xhttp_tls() {
 
 get_all_system_users() {
   [[ -f "$CONFIG_PATH" ]] || return 0
-  jq -r '.inbounds[]? | select(.tag != "api-internal" and .settings.clients != null) | .settings.clients[]? | "\(.email // "admin")|\(.id)"' "$CONFIG_PATH" 2>/dev/null | sort -u || true
+  jq -r '
+    def suffix: @base64 | gsub("\\+";"-") | gsub("/";"_") | sub("=+$";"");
+    .inbounds[]? | select(.tag != "api-internal" and .settings.clients != null) |
+    .tag as $tag | .settings.clients[]? | (.email // "admin") as $email |
+    (if ($email|type)=="string" and ($tag|type)=="string" and ($tag|test("^[A-Za-z0-9_.@-]{1,48}$")) then
+      ("+" + ($tag|suffix)) as $ending |
+      if ($email|endswith($ending)) then
+        ($email|rtrimstr($ending)) as $owner |
+        if ($owner|test("^[A-Za-z0-9_.@-]{1,48}$")) then $owner else $email end
+      else $email end
+    else $email end) as $owner | "\($owner)|\(.id)"
+  ' "$CONFIG_PATH" 2>/dev/null | sort -u || true
+}
+
+binding_email_for_node() {
+  jq -nr --arg owner "$1" --arg tag "$2" '$owner + "+" + ($tag | @base64 | gsub("\\+";"-") | gsub("/";"_") | sub("=+$";""))'
 }
 
 # Inbound-specific auxiliary metadata for VLESS client encryption.
@@ -1936,9 +1951,10 @@ show_user_node_links() {
     share_port="$(public_share_port_for_inbound "$tag" "$port" "$net" "$sec")"
 
     # Select the user's actual credentials for each inbound assignment.
-    local node_user_id node_flow
-    node_user_id="$(echo "$ib_json" | jq -r --arg em "$sel_email" '[.settings.clients[]? | select(.email == $em) | .id] | first // empty' 2>/dev/null || true)"
-    node_flow="$(echo "$ib_json" | jq -r --arg em "$sel_email" '[.settings.clients[]? | select(.email == $em) | .flow] | first // empty' 2>/dev/null || true)"
+    local node_user_id node_flow binding_em
+    binding_em="$(binding_email_for_node "$sel_email" "$tag")"
+    node_user_id="$(echo "$ib_json" | jq -r --arg em "$sel_email" --arg binding "$binding_em" --arg id "$sel_uuid" '[.settings.clients[]? | select(.id == $id and (.email == $em or .email == $binding)) | .id] | first // empty' 2>/dev/null || true)"
+    node_flow="$(echo "$ib_json" | jq -r --arg em "$sel_email" --arg binding "$binding_em" --arg id "$sel_uuid" '[.settings.clients[]? | select(.id == $id and (.email == $em or .email == $binding)) | .flow] | first // empty' 2>/dev/null || true)"
     local link=""
     if [[ -z "$node_user_id" ]]; then
       node_links+=("")
@@ -2081,6 +2097,10 @@ reset_traffic_stats_interactive() {
       read -r -p "Reset traffic for all users? [y/N]: " conf || conf="N"
       case "${conf:-N}" in
         y|Y|yes|YES)
+          if [[ ! -x "$BOT_BIN_PATH" && ( -f "$STATS_STORE_PATH" || -f "$CONFIG_DIR/freedom-stats.db" ) ]]; then
+            warn "The updated Bot management binary is missing; cannot reset the SQLite ledger safely."
+            return 1
+          fi
           if ! "$BIN" api statsquery --server=127.0.0.1:10085 -pattern "user>>>" -reset=true >/dev/null 2>&1; then
             warn "Unable to reset Xray counters; persisted data was not modified."
             return 1
@@ -2088,9 +2108,6 @@ reset_traffic_stats_interactive() {
           # Reset the durable local counters when Xray runtime counters are cleared.
           if [[ -x "$BOT_BIN_PATH" ]]; then
             "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-traffic-reset-locked || return 1
-          elif [[ -f "$STATS_STORE_PATH" ]]; then
-            warn "The updated Bot management binary is missing; cannot reset the SQLite ledger safely."
-            return 1
           fi
           ok "Xray counters and persisted traffic totals reset."
           echo && read -rp "Press Enter to continue..." _dummy
@@ -2118,12 +2135,10 @@ reset_traffic_stats_interactive() {
       [[ "$u_idx" == "0" || -z "$u_idx" ]] && return 0
       if [[ "$u_idx" =~ ^[0-9]+$ ]] && ((1 <= u_idx && u_idx <= i)); then
         local target_em="${u_arr[$((u_idx-1))]}"
-        if ! "$BIN" api statsquery --server=127.0.0.1:10085 -pattern "user>>>${target_em}>>>" -reset=true >/dev/null 2>&1; then
-          warn "Core user counter reset failed; persisted data was not changed."
-          return 1
-        fi
         if [[ -x "$BOT_BIN_PATH" ]]; then
-          "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-traffic-reset-locked -local-user "$target_em" || return 1
+          # Reset every per-node identity as well as the legacy username.
+          # This menu already holds the shared configuration lock.
+          "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-user-traffic-reset-locked -local-user "$target_em" || return 1
         else
           warn "Update the Bot before resetting user totals in the SQLite ledger."
           return 1
@@ -2150,7 +2165,7 @@ manage_single_user_interactive() {
       id="$(jq -r --arg name "$name" '.users[$name].id // empty' "$CONFIG_DIR/freedom-users.json" 2>/dev/null || true)"
     fi
     if [[ -z "$id" ]]; then
-      id="$(jq -r --arg name "$name" '[.inbounds[]? | .settings.clients[]? | select(.email==$name) | .id] | first // empty' "$CONFIG_PATH")"
+      id="$(get_all_system_users | awk -F'|' -v name="$name" '$1==name {print $2; exit}')"
     fi
     [[ -n "$id" ]] && users+="${name}|${id}"$'\n'
   done < <(list_independent_user_names)
@@ -2207,7 +2222,7 @@ manage_single_user_interactive() {
 
 manage_user_node_binding_interactive() {
   ensure_user_manager_binary || return 1
-  local name="$1" node selection state action confirm
+  local name="$1" node selection state action confirm binding_em
   echo "User: $name"
   jq -r '[.inbounds[]? | select(.protocol=="vless" and .tag!="api-internal")] | to_entries[] | "\(.key+1)) \(.value.tag) / port \(.value.port)"' "$CONFIG_PATH"
   read -r -p "Select inbound number to modify (0 cancels): " selection || return 0
@@ -2215,7 +2230,8 @@ manage_user_node_binding_interactive() {
   if ! [[ "$selection" =~ ^[0-9]+$ ]] || ((10#$selection < 1));then warn "Invalid inbound number.";return 1;fi
   node="$(jq -r --argjson idx "$((10#$selection-1))" '[.inbounds[]? | select(.protocol=="vless" and .tag!="api-internal") | .tag][$idx] // empty' "$CONFIG_PATH")"
   [[ -n "$node" ]] || { warn "Inbound not found.";return 1; }
-  state="$(jq -r --arg tag "$node" --arg name "$name" '[.inbounds[] | select(.tag==$tag) | .settings.clients[]? | select(.email==$name)] | length' "$CONFIG_PATH")"
+  binding_em="$(binding_email_for_node "$name" "$node")"
+  state="$(jq -r --arg tag "$node" --arg name "$name" --arg binding "$binding_em" '[.inbounds[] | select(.tag==$tag) | .settings.clients[]? | select(.email==$name or .email==$binding)] | length' "$CONFIG_PATH")"
   action="assign"
   if ((state>0));then action="unassign";fi
   read -r -p "Run $action for inbound $node? [y/N]: " confirm || confirm="N"
@@ -2321,6 +2337,29 @@ show_inbound_traffic() {
   echo && read -rp "Press Enter to continue..." _dummy
 }
 
+online_user_rows() {
+  local online_json="$1" owners
+  owners="$(jq -c '
+    def suffix: @base64 | gsub("\\+";"-") | gsub("/";"_") | sub("=+$";"");
+    [.inbounds[]? | select(.tag != "api-internal") | .tag as $tag | .settings.clients[]? |
+     (.email // "") as $email | select(($email|type)=="string" and $email!="") |
+     (if ($tag|type)=="string" and ($tag|test("^[A-Za-z0-9_.@-]{1,48}$")) then
+       ("+" + ($tag|suffix)) as $ending |
+       if ($email|endswith($ending)) then
+         ($email|rtrimstr($ending)) as $owner |
+         if ($owner|test("^[A-Za-z0-9_.@-]{1,48}$")) then $owner else $email end
+       else $email end
+     else $email end) as $owner | {key:$email,value:$owner}] | from_entries
+  ' "$CONFIG_PATH")" || return 1
+  jq -r --argjson owners "$owners" '
+    [.users[]? | (.email // "") as $email | select($email!="") |
+     {name:($owners[$email] // $email), ips:(.ips // [] |
+       if type=="array" then [.[]? | .ip? // empty]
+       elif type=="object" then keys else [] end)}] |
+    group_by(.name)[] | [.[0].name, ([.[].ips[]] | unique | join(", "))] | @tsv
+  ' <<<"$online_json"
+}
+
 show_online_users() {
   if [[ -z "${BIN:-}" || ! -x "$BIN" ]]; then
     warn "Xray binary is unavailable; cannot query online sessions."
@@ -2352,9 +2391,10 @@ show_online_users() {
   while IFS=$'\t' read -r email ips; do
     [[ -z "$email" ]] && continue
     printf "%-24s %s\n" "$email" "${ips:-unknown}"
-  done < <(jq -r '.users[]? | [.email, (((.ips // []) | map(.ip) | join(", ")) // "")] | @tsv' <<<"$out")
+  done < <(online_user_rows "$out")
   echo "—————————————————————————————————————————————————————————————————————"
   info "Live sessions only; recent-IP history and last-online data are maintained by freedom-bot's collector."
+  warn "Forwarded client IPs behind a CDN may be spoofed; do not use them for access limits."
   echo && read -rp "Press Enter to continue..." _dummy
 }
 
@@ -2396,9 +2436,14 @@ user_management_menu() {
         user_list+=("${u_email}|${u_id}")
         idx=$((idx + 1))
 
-        local live_up live_down
-        live_up="$(jq -r --arg email "$u_email" '.stat[]? | select(.name == ("user>>>" + $email + ">>>traffic>>>uplink")) | .value // "0"' <<<"$stats_data" | tail -n1)"
-        live_down="$(jq -r --arg email "$u_email" '.stat[]? | select(.name == ("user>>>" + $email + ">>>traffic>>>downlink")) | .value // "0"' <<<"$stats_data" | tail -n1)"
+        local live_up live_down runtime_emails
+        runtime_emails="$(jq -c --arg owner "$u_email" '
+          def suffix: @base64 | gsub("\\+";"-") | gsub("/";"_") | sub("=+$";"");
+          [.inbounds[]? | (.tag // "") as $tag | .settings.clients[]? |
+           select(.email==$owner or .email==($owner+"+"+($tag|suffix))) | .email] | unique
+        ' "$CONFIG_PATH" 2>/dev/null || echo '[]')"
+        live_up="$(jq -r --argjson emails "$runtime_emails" '[.stat[]? | (.name|split(">>>")) as $p | select($p[0]=="user" and $p[2]=="traffic" and $p[3]=="uplink" and ($emails|index($p[1])!=null)) | (.value|tonumber? // 0)] | add // 0' <<<"$stats_data")"
+        live_down="$(jq -r --argjson emails "$runtime_emails" '[.stat[]? | (.name|split(">>>")) as $p | select($p[0]=="user" and $p[2]=="traffic" and $p[3]=="downlink" and ($emails|index($p[1])!=null)) | (.value|tonumber? // 0)] | add // 0' <<<"$stats_data")"
         [[ -z "$live_up" ]] && live_up=0
         [[ -z "$live_down" ]] && live_down=0
 

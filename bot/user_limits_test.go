@@ -1,6 +1,7 @@
 package main
 
 import (
+ "encoding/json"
  "os"
  "path/filepath"
  "testing"
@@ -26,6 +27,76 @@ func TestParseQuotaGB(t *testing.T) {
   if _,_,err:=parseQuotaGB(input);err==nil{t.Fatalf("accepted invalid quota %q",input)}
  }
  if bytes,_,err:=parseQuotaGB("1");err!=nil||bytes!=gibBytes{t.Fatalf("1 GB must be one GiB: %d %v",bytes,err)}
+}
+
+func TestExpiryEnforcedWhenTrafficLedgerUnavailable(t *testing.T){
+ root:=testConfig(t)
+ for _,name:=range []string{"expired-user","quota-user"} {
+  if _,err:=applyManagedUserChange(root,UserChange{Kind:"add",User:name,Node:"raw"});err!=nil{t.Fatal(err)}
+ }
+ raw,err:=json.Marshal(root);if err!=nil{t.Fatal(err)}
+ h:=newBindingMigrationHarness(t,string(raw),false)
+ if err=os.WriteFile(trafficStorePath(h.config),[]byte("invalid ledger"),0600);err!=nil{t.Fatal(err)}
+ if err=updateUserLimits(h.config,func(users map[string]userLimit)error{
+  users["expired-user"]=userLimit{ExpiryUnix:time.Now().Add(-time.Hour).Unix()}
+  users["quota-user"]=userLimit{QuotaBytes:1,Notified80:true}
+  return nil
+ });err!=nil{t.Fatal(err)}
+ cfg:=DefaultConfig()
+ cfg.XrayConfigPath=h.config
+ cfg.XrayBinPath=h.xray
+ cfg.AllowMutations=true
+ (&BotService{cfg:cfg}).enforceUserLimitsOnce()
+ suspended,_,err:=readSuspendedStore(h.config);if err!=nil{t.Fatal(err)}
+ if _,ok:=suspended.Users["expired-user"];!ok{t.Fatal("expired user remained active when the ledger failed")}
+ if _,ok:=suspended.Users["quota-user"];ok{t.Fatal("quota was enforced without traffic data")}
+ limits,err:=snapshotUserLimits(h.config);if err!=nil{t.Fatal(err)}
+ if !limits["quota-user"].Notified80{t.Fatal("unavailable traffic cleared quota notification state")}
+}
+
+func TestLocalUserChangesMoveAndRemoveLimits(t *testing.T){
+ h:=newBindingMigrationHarness(t,bindingMigrationConfig(),false)
+ if err:=updateUserLimits(h.config,func(users map[string]userLimit)error{
+  users["alice"]=userLimit{QuotaBytes:123,ExpiryUnix:1800000000}
+  return nil
+ });err!=nil{t.Fatal(err)}
+ if _,err:=changeManagedUser(h.config,h.xray,"127.0.0.1:10085",UserChange{Kind:"rename",User:"alice",NewName:"bob"});err!=nil{t.Fatal(err)}
+ limits,err:=snapshotUserLimits(h.config);if err!=nil{t.Fatal(err)}
+ if _,ok:=limits["alice"];ok{t.Fatal("old user retained limits")}
+ if limits["bob"].QuotaBytes!=123||limits["bob"].ExpiryUnix!=1800000000{t.Fatalf("limits did not follow local rename: %+v",limits)}
+ if _,err=changeManagedUser(h.config,h.xray,"127.0.0.1:10085",UserChange{Kind:"delete",User:"bob"});err!=nil{t.Fatal(err)}
+ limits,err=snapshotUserLimits(h.config);if err!=nil{t.Fatal(err)}
+ if _,ok:=limits["bob"];ok{t.Fatal("deleted user retained limits")}
+}
+
+func TestRenameRejectsSuspendedUserName(t *testing.T){
+ h:=newBindingMigrationHarness(t,bindingMigrationConfig(),false)
+ parked:=`{"users":{"bob":{"uuid":"parked","nodes":{"raw":{"id":"parked","email":"bob"}}}}}`
+ if err:=os.WriteFile(suspendedStorePath(h.config),[]byte(parked),0600);err!=nil{t.Fatal(err)}
+ if _,err:=changeManagedUser(h.config,h.xray,"127.0.0.1:10085",UserChange{Kind:"rename",User:"alice",NewName:"bob"});err==nil{
+  t.Fatal("rename reused a suspended account's name")
+ }
+ if h.restartCount(t)!=0{t.Fatal("rejected rename restarted Xray")}
+}
+
+func TestLimitRecheckHonorsRaisedQuotaAndReset(t *testing.T){
+ root:=testConfig(t)
+ if _,err:=applyManagedUserChange(root,UserChange{Kind:"add",User:"phone",Node:"raw"});err!=nil{t.Fatal(err)}
+ raw,err:=json.Marshal(root);if err!=nil{t.Fatal(err)}
+ h:=newBindingMigrationHarness(t,string(raw),false)
+ state:=trafficStore{Users:map[string]trafficCounter{"phone":{TotalUp:200}}}
+ if err=saveTrafficStore(h.config,state);err!=nil{t.Fatal(err)}
+ if err=updateUserLimits(h.config,func(users map[string]userLimit)error{users["phone"]=userLimit{QuotaBytes:300};return nil});err!=nil{t.Fatal(err)}
+ if _,_,suspended,err:=recheckAndSuspendLimitedUser(h.config,h.xray,"127.0.0.1:10085","phone",time.Now());err!=nil||suspended{
+  t.Fatalf("raised quota ignored: suspended=%v err=%v",suspended,err)
+ }
+ if err=updateUserLimits(h.config,func(users map[string]userLimit)error{users["phone"]=userLimit{QuotaBytes:100};return nil});err!=nil{t.Fatal(err)}
+ state.Users["phone"]=trafficCounter{}
+ if err=saveTrafficStore(h.config,state);err!=nil{t.Fatal(err)}
+ if _,_,suspended,err:=recheckAndSuspendLimitedUser(h.config,h.xray,"127.0.0.1:10085","phone",time.Now());err!=nil||suspended{
+  t.Fatalf("traffic reset ignored: suspended=%v err=%v",suspended,err)
+ }
+ if h.restartCount(t)!=0{t.Fatal("stale limit decision restarted Xray")}
 }
 
 func TestParseExpiryInput(t *testing.T) {
