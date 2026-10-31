@@ -112,6 +112,19 @@ func TestGenerateVlessURICustomXHTTPPaddingAndRealityExclusion(t *testing.T) {
  if q.Get("ech")!="" {t.Errorf("ECH must not be injected into REALITY: %q",q.Get("ech"))}
 }
 
+func TestXHTTPTLSWithoutEncryptionDoesNotExportVision(t *testing.T) {
+ node:=&InboundDetails{
+  Tag:"cdn",Port:55555,PublicPort:443,Network:"xhttp",Security:"tls",
+  SNI:"cdn.example.com",XHTTPPath:"/stream",ClientEncrypt:"none",
+ }
+ uri:=node.GenerateVlessURI(XrayClient{ID:"11111111-1111-1111-1111-111111111111",Flow:"xtls-rprx-vision"},"203.0.113.3")
+ parsed,err:=url.Parse(uri);if err!=nil{t.Fatal(err)}
+ if parsed.Port()!="443"{t.Fatalf("public port not exported: %s",uri)}
+ if parsed.Query().Get("flow")!=""{t.Fatal("unexpected Vision when VLESS Encryption is disabled")}
+ if parsed.Query().Get("extra")!=`{"xPaddingBytes":"100-1000"}`{t.Fatal("extra did not follow official structure")}
+ if parsed.Query().Get("mode")!="auto"{t.Fatal("missing top-level mode")}
+}
+
 func TestGenerateVlessURIIPv6(t *testing.T) {
 	node := &InboundDetails{
 		Tag:      "v6",
