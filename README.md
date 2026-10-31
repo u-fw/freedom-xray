@@ -22,9 +22,9 @@ sudo bash ./freedom.sh
 | 功能 | 终端 | Telegram Bot |
 | --- | --- | --- |
 | VLESS RAW/REALITY/Vision、XHTTP/REALITY、XHTTP/TLS/CDN | 支持 | 节点查看/导出 |
-| 添加/删除用户、改名、UUID 轮换 | 支持 | 支持 |
+| 独立创建/删除用户、改名、UUID 轮换 | 支持（共用 Go 管理程序） | 支持 |
 | 暂停/恢复用户（保留原 UUID） | 通过已安装的 Bot 管理程序支持 | 支持，私聊确认 |
-| 指定节点分配用户 | 目前添加用户默认同步各节点 | 支持 |
+| 指定节点分配/移除用户 | 支持，默认不绑定 | 支持，默认不绑定 |
 | 节点列表、二维码、用户链接 | 支持 | 支持 |
 | 修改 XHTTP Path/Mode | 支持 | 支持，仅允许修改这两项并二次确认 |
 | 流量统计/清零 | 支持 | 支持 |
@@ -103,8 +103,8 @@ Bot 只响应管理员 User ID 在私人聊天中的操作。默认关闭远程�
 ```text
 /start                      打开按钮主菜单
 /users                      用户管理（含新增用户引导）
-/adduser phone              全部节点新增用户
-/adduser phone cdn          只添加到节点标签 cdn
+/adduser phone              创建用户但不自动绑定节点
+/adduser phone cdn          创建用户并绑定节点标签 cdn
 /renameuser old new         改名
 /rotateuser phone           轮换 UUID
 /removeuser phone           删除用户
@@ -121,7 +121,7 @@ Bot 只响应管理员 User ID 在私人聊天中的操作。默认关闭远程�
 /cancel                     取消文本输入流程
 ```
 
-也可以直接在用户列表点击「新增用户」，按提示输入名称、选择节点、二次确认。已停用的用户可在用户列表中的「停用用户」恢复。
+也可以直接在用户列表点击「新增用户」，按提示输入名称，选择「仅创建」或某个节点，再二次确认。已停用的用户可在用户列表中的「停用用户」恢复。
 
 停用时会把用户从活跃的 Xray 入站配置移除，并将原始 UUID、各入站客户端配置保存在 VPS 本地的 `freedom-disabled-users.json`（文件权限 0600，**不是加密文件**）。为防止管理员意外失联，不能停用某入站的最后一个用户。若删除原入站，恢复会拒绝不完整的操作。终端用户菜单也提供停用/恢复入口，但需要先安装和配置 `freedom-bot` 二进制程序。
 
@@ -140,6 +140,28 @@ Bot 可以分别更新：
 ### Telegram 权限风险
 
 Bot 当前需要较高本地权限来管理 systemd 与安装核心。Bot Token、Telegram 管理员会话与 GitHub 发布源都属于高价值安全边界。不要向其他 Telegram 用户开放管理权限；建议启用 Telegram 两步验证，仅在需要时开启核心远程更新。
+
+## 独立用户与节点绑定（新版）
+
+管理模型已改为用户与入站解耦：用户的名称/UUID 由 `freedom-users.json` 保存（0600），节点配置保留在 Xray `config.json`。用户与节点通过显式的 `assign`/`unassign` 绑定。新节点默认 `clients: []`，**不再自动绑定 admin，也不会将已有用户复制到新节点**。新用户默认仅创建身份；需要在用户详情绑定一个或多个节点才能获得连接权限。
+
+首次读取用户目录时，会自动从现有 Xray 入站扫描原有客户端名称/UUID，保留现有 admin 和连接关系。如果同名用户在不同入站使用了冲突 UUID，则拒绝自动合并，以免误改凭证；需先人工修复冲突。升级**不会删除或轮换任何已有 admin UUID**。
+
+终端创建/删除用户、改名、轮换 UUID、绑定/解绑节点与 Telegram 使用同一 Go 管理引擎和文件锁。独立用户功能要求先安装 `freedom-bot` 二进制；只用终端时不需要启用或配置 Telegram Token。创建的用户即使被解绑所有节点，身份仍保留。
+
+### 导出链路与二维码容量
+
+Bot 的用户导出操作逐个处理已绑定节点。先发送不含 Markdown 解释的原始 `vless://` URI，再尝试发二维码；如果文本超过 Telegram 消息限制，改为发送完整 `.txt` 文件；二维码超过容量或上传失败将明确说明并继续处理其他节点。对于未绑定节点的用户，Bot 会提示先授权，而不是导出空 UUID 或静默跳过。
+
+### Vision 支持矩阵
+
+| 传输安全/加密 | 使用 xtls-rprx-vision |
+| --- | --- |
+| RAW/TCP + TLS 或 REALITY | 可以（正常 Splice 适用条件下） |
+| XHTTP + TLS/REALITY 且 VLESS Encryption=none | 不应启用 |
+| XHTTP + TLS/REALITY 且 VLESS Encryption 已启用 | 可以，用于穿透 Encryption；不意味着支持底层 TCP Splice |
+
+Flow 必须与用户在对应入站的配置一致。CLI 与 Bot 导出器均不再自动给空 `flow` 补 Vision；新用户绑定时根据入站传输与 Encryption 配置选择合法 Flow，避免跨节点复制首个用户的 Flow。
 
 ## v2rayN/v2rayNG 导入
 
