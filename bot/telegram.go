@@ -238,10 +238,8 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 	case strings.HasPrefix(data,"manage_scope:"):
 		s.handleWizardScope(cb)
 	case strings.HasPrefix(data,"manage_rename:"):
-		nodes,err:=LoadXrayInbounds(s.cfg.XrayConfigPath)
-		if err!=nil{s.sendAlert(chatID,"读取用户失败");return}
-		email:=lookupManagedUserEmail(nodes,strings.TrimPrefix(data,"manage_rename:"))
-		if email==""{s.sendAlert(chatID,"用户不存在");return}
+		email:=lookupManagedUserByKey(s.cfg.XrayConfigPath,strings.TrimPrefix(data,"manage_rename:"))
+		if email==""{s.sendAlert(chatID,"用户不存在或已重命名，请刷新用户列表");return}
 		s.beginUserWizard(chatID,cb.From.ID,msgID,"rename",email)
 	case data == "menu_restart_ask":
 		s.askRestart(chatID, msgID)
