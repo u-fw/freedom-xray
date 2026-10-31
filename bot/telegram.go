@@ -267,6 +267,12 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 		s.doTrafficReset(chatID, msgID)
 	case strings.HasPrefix(data, "user_links:"):
 		s.handleUserLinksCallback(chatID, strings.TrimPrefix(data, "user_links:"))
+	case strings.HasPrefix(data,"user_export_one:"):
+		s.handleUserExportCallback(cb,"one")
+	case strings.HasPrefix(data,"user_export_all:"):
+		s.handleUserExportCallback(cb,"all")
+	case strings.HasPrefix(data,"user_export_qrs:"):
+		s.handleUserExportCallback(cb,"qrs")
 	case strings.HasPrefix(data, "manage_confirm:"):
 		s.resolveUserChange(cb, true)
 	case strings.HasPrefix(data, "manage_cancel:"):
@@ -594,63 +600,10 @@ func (s *BotService) sendUsersCard(chatID int64, msgID int) {
 // Export links as separate plain-text messages: REALITY parameters can exceed
 // Telegram's photo caption limit (1024 characters) and Markdown escaping can
 // invalidate long VLESS URIs. QR is an optional attachment, never the only copy.
-func (s *BotService) sendUserLinksAndQRs(chatID int64, email string) {
- nodes,err:=LoadXrayInbounds(s.cfg.XrayConfigPath)
- if err!=nil {s.sendAlert(chatID,"无法读取节点配置："+err.Error());return}
- publicIP:=GetPublicIP()
- count:=0
- for _,node:=range nodes {
-  for _,client:=range node.Clients {
-   if client.Email!=email {continue}
-   count++
-   uri:=node.GenerateVlessURI(client,publicIP)
-   label:=fmt.Sprintf("节点：%s (%d)\n用户：%s\n传输：%s / %s\n",node.Tag,node.Port,email,node.Network,node.Security)
-   if node.Security=="reality" && node.PublicKey=="" && node.PrivateKey=="" {
-    s.sendAlert(chatID,label+"REALITY 公钥缺失；链接无法保证可用，请检查服务端配置。")
-    continue
-   }
-   if node.Security=="reality" && strings.Contains(uri,"@127.0.0.1:") {
-    label+="警告：未获取到公网 IP，请检查服务器网络和连接地址。\n"
-   }
-   // Telegram messages permit 4096 characters; the URI is sent unchanged,
-   // without ParseMode and without re-encoding its query parameters.
-   payload:=label+"复制以下完整 VLESS 链接导入 v2rayN/v2rayNG：\n"+uri
-   if len(payload)>3500 {
-    // Telegram text length limit is 4096 characters. Large post-quantum
-    // parameters can exceed it; a .txt document preserves every byte.
-    doc:=tgbotapi.NewDocument(chatID,tgbotapi.FileBytes{
-     Name:fmt.Sprintf("vless-%d.txt",node.Port),
-     Bytes:[]byte(uri+"\n"),
-    })
-    doc.Caption=fmt.Sprintf("节点 %s:%d · 完整 VLESS 链接（文本过长，以文件发送）",node.Tag,node.Port)
-    if _,sendErr:=s.bot.Send(doc);sendErr!=nil {
-     log.Printf("[Bot] link document failed for %s: %v",node.Tag,sendErr)
-     s.sendAlert(chatID,fmt.Sprintf("节点 %s (%d)：完整链接文件发送失败：%v，请检查 Bot 日志。",node.Tag,node.Port,sendErr))
-    }
-   }else{
-    textMessage:=tgbotapi.NewMessage(chatID,payload)
-    textMessage.DisableWebPagePreview=true
-    if _,sendErr:=s.bot.Send(textMessage);sendErr!=nil {
-     log.Printf("[Bot] plain link send failed for %s: %v",node.Tag,sendErr)
-     s.sendAlert(chatID,fmt.Sprintf("节点 %s (%d) 的文本链接发送失败：%v",node.Tag,node.Port,sendErr))
-    }
-   }
-   qrBytes,qrErr:=GenerateQRCodePNG(uri,512)
-   if qrErr!=nil {
-    log.Printf("[Bot] qr failed for %s (URI bytes %d): %v",node.Tag,len(uri),qrErr)
-    s.sendAlert(chatID,fmt.Sprintf("节点 %s (%d)：链接已尝试作为文本发送，但二维码无法生成（URI 长度 %d 字节，可能超过二维码容量）：%v。请复制上方文本导入。",node.Tag,node.Port,len(uri),qrErr))
-    continue
-   }
-   photo:=tgbotapi.NewPhoto(chatID,tgbotapi.FileBytes{Name:fmt.Sprintf("node-%d.png",node.Port),Bytes:qrBytes})
-   photo.Caption=fmt.Sprintf("节点 %s:%d · %s（二维码，仅供扫码；完整链接见上方文本）",node.Tag,node.Port,email)
-   // Do not use Markdown on user-supplied node tags/captions.
-   if _,err=s.bot.Send(photo);err!=nil {
-    log.Printf("[Bot] QR photo send failed for %s: %v",node.Tag,err)
-    s.sendAlert(chatID,fmt.Sprintf("节点 %s (%d)：二维码上传失败：%v。完整链接已在上方作为文本发送。",node.Tag,node.Port,err))
-   }
-  }
- }
- if count==0 {s.sendAlert(chatID,fmt.Sprintf("用户 %s 当前未绑定任何节点。请从用户详情中分配节点。",email))}
+// Legacy callback entry point: open an explicit selection menu, never auto-send
+// every QR and never silently drop a long REALITY URI.
+func (s *BotService) sendUserLinksAndQRs(chatID int64,email string) {
+ s.sendUserExportMenu(chatID,0,email)
 }
 
 func (s *BotService) askRestart(chatID int64, msgID int) {
