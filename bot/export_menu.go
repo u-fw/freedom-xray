@@ -59,7 +59,7 @@ func (s *BotService) sendUserExportMenu(chatID int64,msgID int,email string) {
  rows:=make([][]tgbotapi.InlineKeyboardButton,0,len(entries)+3)
  for _,entry:=range entries{
   rows=append(rows,tgbotapi.NewInlineKeyboardRow(
-   tgbotapi.NewInlineKeyboardButtonData("🔗 "+truncateLabel(entry.Node.Tag,29)+" :"+fmt.Sprint(entry.Node.Port),
+   tgbotapi.NewInlineKeyboardButtonData("🔗 "+truncateLabel(entry.Node.Tag,29)+" :"+fmt.Sprint(entry.Node.SharePort()),
     "user_export_one:"+key+":"+userCallbackKey(entry.Node.Tag)),
   ))
  }
@@ -107,11 +107,12 @@ func (s *BotService) handleUserExportCallback(cb *tgbotapi.CallbackQuery,mode st
 }
 
 func (s *BotService) sendUserLink(chatID int64,item userExportEntry,email,uri string) bool{
- label:=fmt.Sprintf("🔗 节点 %s (%d)\n用户：%s\n类型：%s + %s\n\n",item.Node.Tag,item.Node.Port,email,item.Node.Network,item.Node.Security)
+ label:=fmt.Sprintf("🔗 节点 %s (客户端端口 %d)\n用户：%s\n类型：%s + %s\n\n",item.Node.Tag,item.Node.SharePort(),email,item.Node.Network,item.Node.Security)
+ if item.Node.SharePort()!=item.Node.Port{label+=fmt.Sprintf("Cloudflare 回源监听端口：%d\n",item.Node.Port)}
  payload:=label+uri
  if len(payload)>3500 {
-  doc:=tgbotapi.NewDocument(chatID,tgbotapi.FileBytes{Name:fmt.Sprintf("freedom-node-%d.txt",item.Node.Port),Bytes:[]byte(uri+"\n")})
-  doc.Caption=fmt.Sprintf("节点 %s (%d) 的完整 VLESS 链接，超长参数以 TXT 发送",item.Node.Tag,item.Node.Port)
+  doc:=tgbotapi.NewDocument(chatID,tgbotapi.FileBytes{Name:fmt.Sprintf("freedom-node-%s-%d.txt",userCallbackKey(item.Node.Tag)[:8],item.Node.SharePort()),Bytes:[]byte(uri+"\n")})
+  doc.Caption=fmt.Sprintf("节点 %s（客户端端口 %d）的完整 VLESS 链接",item.Node.Tag,item.Node.SharePort())
   if _,err:=s.bot.Send(doc);err!=nil{
    log.Printf("[Bot] VLESS TXT send failed for node %s: %v",item.Node.Tag,err)
    s.sendAlert(chatID,fmt.Sprintf("❌ 节点 %s (%d) 文本文件发送失败：%v",item.Node.Tag,item.Node.Port,err))
@@ -138,8 +139,8 @@ func (s *BotService) sendUserQR(chatID int64,item userExportEntry,email,uri stri
   s.sendAlert(chatID,fmt.Sprintf("⚠️ 节点 %s (%d)：二维码生成失败（链接 %d 字节）：%v。请使用已发送的文本链接或 TXT 导入。",item.Node.Tag,item.Node.Port,len(uri),err))
   return false
  }
- photo:=tgbotapi.NewPhoto(chatID,tgbotapi.FileBytes{Name:fmt.Sprintf("freedom-qr-%d.png",item.Node.Port),Bytes:png})
- photo.Caption=fmt.Sprintf("节点 %s (%d) · %s\n二维码只包含当前节点；完整链接已另行发送。",item.Node.Tag,item.Node.Port,email)
+ photo:=tgbotapi.NewPhoto(chatID,tgbotapi.FileBytes{Name:fmt.Sprintf("freedom-qr-%s-%d.png",userCallbackKey(item.Node.Tag)[:8],item.Node.SharePort()),Bytes:png})
+ photo.Caption=fmt.Sprintf("节点 %s（客户端端口 %d）· %s\n二维码只包含当前节点；完整链接已另行发送。",item.Node.Tag,item.Node.SharePort(),email)
  if _,err=s.bot.Send(photo);err!=nil{
   log.Printf("[Bot] QR send failed for node %s: %v",item.Node.Tag,err)
   s.sendAlert(chatID,fmt.Sprintf("⚠️ 节点 %s (%d)：二维码发送失败：%v。完整链接仍可使用。",item.Node.Tag,item.Node.Port,err))
