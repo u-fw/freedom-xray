@@ -1300,9 +1300,13 @@ ensure_stats_api_scaffold() {
   local need_update=0
   if ! jq -e '.stats' "$CONFIG_PATH" >/dev/null 2>&1; then need_update=1; fi
   if ! jq -e '.api' "$CONFIG_PATH" >/dev/null 2>&1; then need_update=1; fi
+  if ! jq -e '(.api.services // []) | index("StatsService")' "$CONFIG_PATH" >/dev/null 2>&1; then need_update=1; fi
   if ! jq -e '.inbounds[]? | select(.tag == "api-internal")' "$CONFIG_PATH" >/dev/null 2>&1; then need_update=1; fi
   if ! jq -e '.outbounds[]? | select(.tag == "api")' "$CONFIG_PATH" >/dev/null 2>&1; then need_update=1; fi
-  if ! jq -e '.policy.levels."0".statsUserUplink' "$CONFIG_PATH" >/dev/null 2>&1; then need_update=1; fi
+  if ! jq -e '.policy.system.statsInboundUplink == true' "$CONFIG_PATH" >/dev/null 2>&1; then need_update=1; fi
+  if ! jq -e '.policy.system.statsInboundDownlink == true' "$CONFIG_PATH" >/dev/null 2>&1; then need_update=1; fi
+  if ! jq -e '.policy.levels."0".statsUserUplink == true' "$CONFIG_PATH" >/dev/null 2>&1; then need_update=1; fi
+  if ! jq -e '.policy.levels."0".statsUserDownlink == true' "$CONFIG_PATH" >/dev/null 2>&1; then need_update=1; fi
   if ! jq -e '.policy.levels."0".statsUserOnline == true' "$CONFIG_PATH" >/dev/null 2>&1; then need_update=1; fi
 
   if (( need_update == 1 )); then
@@ -1310,7 +1314,10 @@ ensure_stats_api_scaffold() {
     local updated
     updated="$(jq '
       .stats = (.stats // {}) |
-      .api = (.api // { tag: "api", services: ["StatsService"] }) |
+      .api |= ((. // {}) + {
+        tag: (.tag // "api"),
+        services: (((.services // []) + ["StatsService"]) | unique)
+      }) |
       .policy = (.policy // {}) |
       .policy.system = (.policy.system // {}) |
       .policy.system.statsInboundUplink = true |
@@ -2256,6 +2263,46 @@ toggle_user_status_interactive() {
     *) info "Cancelled。" ;;
   esac
 }
+show_inbound_traffic() {
+  if [[ ! -x "$BOT_BIN_PATH" ]]; then
+    warn "Inbound traffic totals require the installed freedom-bot management binary and its SQLite ledger."
+    return 1
+  fi
+  local data
+  if ! data="$("$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-traffic-read 2>/dev/null)"; then
+    warn "Unable to read the persistent traffic ledger. Check freedom-bot and freedom-stats."
+    return 1
+  fi
+  if ! jq -e '(.inbounds // {}) | type == "object"' <<<"$data" >/dev/null 2>&1; then
+    warn "The persistent traffic ledger is unreadable or has no inbound counters."
+    return 1
+  fi
+  local count
+  count="$(jq '(.inbounds // {}) | length' <<<"$data")"
+  if (( count == 0 )); then
+    info "No inbound traffic has been recorded yet."
+    return 0
+  fi
+
+  echo
+  echo -e "  ${BOLD}Inbound traffic totals${NC}"
+  echo "—————————————————————————————————————————————————————————————————————"
+  printf "%-30s %-14s %-14s %-14s\n" "Inbound" "Upload" "Download" "Total"
+  echo "—————————————————————————————————————————————————————————————————————"
+  local tag up down total
+  while IFS=$'\t' read -r tag up down; do
+    [[ -z "$tag" ]] && continue
+    [[ "$up" =~ ^[0-9]+$ ]] || up=0
+    [[ "$down" =~ ^[0-9]+$ ]] || down=0
+    total=$((up + down))
+    printf "%-30s %-14s %-14s %-14s\n" \
+      "$tag" "$(format_bytes "$up")" "$(format_bytes "$down")" "$(format_bytes "$total")"
+  done < <(jq -r '(.inbounds // {}) | to_entries | sort_by(.key)[] | [.key, (.value.total_up // 0), (.value.total_down // 0)] | @tsv' <<<"$data")
+  echo "—————————————————————————————————————————————————————————————————————"
+  info "Totals are persisted SQLite counters; user-level totals are shown in the user table."
+  echo && read -rp "Press Enter to continue..." _dummy
+}
+
 user_management_menu() {
   locked_config_operation ensure_stats_api_scaffold || warn "Stats API initialization failed; the traffic dashboard may be unavailable. Original config preserved."
   while true; do
@@ -2264,7 +2311,11 @@ user_management_menu() {
     local stored_stats=""
     if [[ -x "$BOT_BIN_PATH" ]]; then
       "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-traffic-snapshot >/dev/null 2>&1 || warn "Traffic sampling failed; showing the last saved totals."
-      stored_stats="$(cat "$STATS_STORE_PATH" 2>/dev/null || true)"
+      # The SQLite ledger is canonical; the JSON mirror is only a compatibility fallback.
+      stored_stats="$("$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-traffic-read 2>/dev/null || true)"
+      if ! jq -e '.users | type=="object"' <<< "$stored_stats" >/dev/null 2>&1; then
+        stored_stats="$(cat "$STATS_STORE_PATH" 2>/dev/null || true)"
+      fi
       if ! jq -e '.users | type=="object"' <<< "$stored_stats" >/dev/null 2>&1; then
         warn "Unable to read the persistent traffic ledger; showing current Xray runtime counters."
         stored_stats=""
@@ -2335,10 +2386,11 @@ user_management_menu() {
     echo -e "  ${GREEN}5.${NC} Refresh statistics"
     echo -e "  ${GREEN}6.${NC} Manage a selected user (links / rename / UUID)"
     echo -e "  ${GREEN}7.${NC} Suspend / restore users (requires freedom-bot)"
+    echo -e "  ${GREEN}8.${NC} View inbound traffic totals (requires freedom-bot)"
     echo -e "  ${GREEN}0.${NC} Back to main menu"
     echo "—————————————————————————————————————————————————————————————————————————————————————"
 
-    read -r -p "Choose action [0-7]: " u_sel || u_sel="0"
+    read -r -p "Choose action [0-8]: " u_sel || u_sel="0"
     case "${u_sel:-0}" in
       1) show_user_node_links || true ;;
       2) add_new_user_interactive || true ;;
@@ -2347,6 +2399,7 @@ user_management_menu() {
       5) ;;
       6) manage_single_user_interactive || true ;;
       7) toggle_user_status_interactive || true ;;
+      8) show_inbound_traffic || true ;;
       0) return 0 ;;
       *) warn "Invalid option; try again." ;;
     esac
@@ -2436,6 +2489,12 @@ upgrade_xray_core_official() {
   esac
 
   info "Running official Xray-core installer..."
+  # Preserve the current binary so the terminal rollback path can restore it.
+  if [[ -n "${BIN:-}" && -x "$BIN" ]]; then
+    if ! cp -a "$BIN" "${BIN}.previous"; then
+      warn "Unable to back up the current Xray binary; rollback may be unavailable after this upgrade."
+    fi
+  fi
   local installer
   installer="$(curl -fsSL --connect-timeout 8 https://github.com/XTLS/Xray-install/raw/main/install-release.sh 2>/dev/null || true)"
   if [[ -z "$installer" ]]; then
@@ -2489,6 +2548,65 @@ update_rule_assets_interactive() {
   ok "Routing asset updates completed."
 }
 
+rollback_xray_core_interactive() {
+  local current="${BIN:-/usr/local/bin/xray}"
+  local previous="${current}.previous"
+  if [[ ! -x "$current" ]]; then
+    warn "Current Xray binary not found or not executable: ${current}"
+    return 1
+  fi
+  if [[ ! -x "$previous" ]]; then
+    warn "No previous Xray binary is available at ${previous}."
+    return 1
+  fi
+  if [[ ! -f "$CONFIG_PATH" ]]; then
+    warn "Xray configuration not found: ${CONFIG_PATH}"
+    return 1
+  fi
+
+  info "Current core: $("$current" version 2>&1 | head -n1)"
+  info "Previous core: $("$previous" version 2>&1 | head -n1)"
+  if ! "$previous" run -test -c "$CONFIG_PATH" >/tmp/freedom-xray-rollback-test.log 2>&1 &&
+     ! "$previous" -test -config "$CONFIG_PATH" >>/tmp/freedom-xray-rollback-test.log 2>&1; then
+    cat /tmp/freedom-xray-rollback-test.log >&2
+    warn "The previous core rejected the current configuration; rollback cancelled."
+    return 1
+  fi
+  read -r -p "Roll back Xray-core and restart the service? [y/N]: " confirm || confirm="N"
+  case "${confirm:-N}" in
+    y|Y|yes|YES) ;;
+    *) info "Cancelled."; return 0 ;;
+  esac
+
+  local backup="${current}.rollback.$(date +%Y%m%d%H%M%S)"
+  if ! cp -a "$current" "$backup"; then
+    warn "Unable to back up the current Xray binary; rollback cancelled."
+    return 1
+  fi
+  snapshot_traffic_before_restart
+  if ! install -m 755 "$previous" "$current"; then
+    warn "Unable to install the previous Xray binary; rollback cancelled."
+    return 1
+  fi
+  BIN="$current"
+  if systemctl restart "$SERVICE_NAME" && sleep 2 && systemctl is-active --quiet "$SERVICE_NAME"; then
+    if install -m 755 "$backup" "$previous"; then
+      ok "Xray-core rolled back to the previous binary. The replaced core is now ${previous}."
+    else
+      warn "Rollback succeeded, but updating ${previous} failed; inspect the binary manually."
+    fi
+  else
+    print_service_diagnostics "$SERVICE_NAME"
+    warn "The previous core failed to start; restoring the current binary."
+    if install -m 755 "$backup" "$current"; then
+      systemctl restart "$SERVICE_NAME" || true
+    else
+      warn "Restoring the current binary failed; recover manually from ${backup}."
+    fi
+    return 1
+  fi
+}
+
 system_update_center_menu() {
   while true; do
     local cur_core
@@ -2503,10 +2621,11 @@ system_update_center_menu() {
     echo -e "  ${GREEN}3.${NC} Update GeoIP / GeoSite / 1stream.dat"
     echo -e "  ${GREEN}4.${NC} Check component versions"
     echo -e "  ${GREEN}5.${NC} Update Telegram Bot only"
+    echo -e "  ${GREEN}6.${NC} Roll back Xray-core to the previous binary"
     echo -e "  ${GREEN}0.${NC} Back to main menu"
     echo "————————————————————————————————————————————————"
 
-    read -r -p "Choose update action [0-5]: " up_sel || up_sel="0"
+    read -r -p "Choose update action [0-6]: " up_sel || up_sel="0"
     case "${up_sel:-0}" in
       1)
         update_freedom_script || true
@@ -2518,6 +2637,10 @@ system_update_center_menu() {
         else
           warn "Bot not installed; configure it in the Telegram Bot menu first."
         fi
+        echo && read -rp "Press Enter to continue..." _dummy
+        ;;
+      6)
+        rollback_xray_core_interactive || true
         echo && read -rp "Press Enter to continue..." _dummy
         ;;
       2)
@@ -3128,13 +3251,14 @@ modify_node_interactive() {
   echo "————————————————————————————————————————————————"
   echo -e "  ${GREEN}1.${NC} Change listener port"
   echo -e "  ${GREEN}2.${NC} UUID belongs to an independent user; change it in User Management"
-  echo -e "  ${GREEN}3.${NC} Change decoy hostname / SNI"
+  echo -e "  ${GREEN}3.${NC} Change REALITY decoy hostname / SNI (REALITY only)"
   echo -e "  ${GREEN}4.${NC} Change XHTTP request path (XHTTP only)"
-  echo -e "  ${GREEN}5.${NC} Configure CDN public port (Origin Rule)"
+  echo -e "  ${GREEN}5.${NC} Change XHTTP mode (XHTTP only)"
+  echo -e "  ${GREEN}6.${NC} Configure CDN public port (Origin Rule)"
   echo -e "  ${GREEN}0.${NC} Cancel"
   echo "————————————————————————————————————————————————"
 
-  read -r -p "Choose field to change [0-5]: " item_sel || item_sel=""
+  read -r -p "Choose field to change [0-6]: " item_sel || item_sel=""
   case "$item_sel" in
     1)
       prompt_and_check_port "Enter new port" "$cur_port" "$cur_tag"
@@ -3157,31 +3281,40 @@ modify_node_interactive() {
       ;;
     3)
       local new_sni
-      read -r -p "New SNI / decoy hostname: " new_sni || new_sni=""
+      read -r -p "New REALITY SNI / decoy hostname: " new_sni || new_sni=""
       new_sni="$(sanitize_domain "$new_sni")"
       [[ -n "$new_sni" ]] || { warn "Domain must not be empty"; return 0; }
-      local cur_sec
+      local cur_sec old_sni
       cur_sec="$(echo "$current_json" | jq -r '.streamSettings.security // "none"')"
-      if [[ "$cur_sec" != "reality" && "$cur_sec" != "tls" ]]; then
-        warn "Inbound security is ${cur_sec}; there is no editable SNI / decoy hostname."
+      if [[ "$cur_sec" != "reality" ]]; then
+        warn "Inbound security is ${cur_sec}; only REALITY serverNames can be edited here. TLS certificate selection follows the client SNI, so a server-side serverName edit has no effect."
+        return 0
+      fi
+      old_sni="$(echo "$current_json" | jq -r '.streamSettings.realitySettings.serverNames[0] // empty')"
+      if [[ -z "$old_sni" ]]; then
+        warn "Inbound has no REALITY serverNames entry; edit the configuration manually."
+        return 0
+      fi
+      if [[ "$old_sni" == "$new_sni" ]]; then
+        info "REALITY SNI is unchanged."
         return 0
       fi
       backup_existing_config
       local updated
-      updated="$(jq --arg tag "$cur_tag" --arg sni "$new_sni" '
+      updated="$(jq --arg tag "$cur_tag" --arg old "$old_sni" --arg sni "$new_sni" '
         (.inbounds[] | select(.tag == $tag)) |= (
-          if .streamSettings.realitySettings then
-            .streamSettings.realitySettings.serverNames = [$sni] |
-            .streamSettings.realitySettings.dest = ($sni + ":443") |
-            .streamSettings.realitySettings.target = ($sni + ":443")
-          elif .streamSettings.tlsSettings then
-            .streamSettings.tlsSettings.serverName = $sni
-          else . end
+          .streamSettings.realitySettings.serverNames = [$sni] |
+          (if (.streamSettings.realitySettings.dest // "") == ($old + ":443") then
+             .streamSettings.realitySettings.dest = ($sni + ":443")
+           else . end) |
+          (if (.streamSettings.realitySettings.target // "") == ($old + ":443") then
+             .streamSettings.realitySettings.target = ($sni + ":443")
+           else . end)
         )
       ' "$CONFIG_PATH")"
       commit_config "$updated" || { warn "SNI edit failed; original configuration retained."; return 1; }
       validate_and_restart_service
-      ok "Changed inbound [${cur_tag}] decoy hostname to ${new_sni}."
+      ok "Changed inbound [${cur_tag}] REALITY SNI to ${new_sni}. Default :443 target/dest were updated; custom targets were preserved."
       ;;
     4)
       if [[ "$cur_net" != "xhttp" ]]; then
@@ -3202,7 +3335,39 @@ modify_node_interactive() {
       validate_and_restart_service
       ok "Changed inbound [${cur_tag}] XHTTP path to ${new_path}."
       ;;
-    5) set_node_public_port_interactive "$cur_tag" "$cur_port" "$cur_net" "$(echo "$current_json" | jq -r '.streamSettings.security // "none"')" ;;
+    5)
+      if [[ "$cur_net" != "xhttp" ]]; then
+        warn "This inbound does not use XHTTP; its mode cannot be edited."
+        return 0
+      fi
+      local cur_mode mode_sel new_mode
+      cur_mode="$(echo "$current_json" | jq -r '.streamSettings.xhttpSettings.mode // "auto"')"
+      echo "Current XHTTP mode: ${cur_mode}"
+      echo "1) auto (adaptive default)"
+      echo "2) packet-up (chunked upload; CDN-friendly)"
+      echo "3) stream-up"
+      echo "4) stream-one"
+      read -r -p "Choose mode [1-4, default 1]: " mode_sel || mode_sel="1"
+      case "${mode_sel:-1}" in
+        2) new_mode="packet-up" ;;
+        3) new_mode="stream-up" ;;
+        4) new_mode="stream-one" ;;
+        *) new_mode="auto" ;;
+      esac
+      if [[ "$new_mode" == "$cur_mode" ]]; then
+        info "XHTTP mode is unchanged (${cur_mode})."
+        return 0
+      fi
+      backup_existing_config
+      local updated
+      updated="$(jq --arg tag "$cur_tag" --arg mode "$new_mode" '
+        (.inbounds[] | select(.tag == $tag)).streamSettings.xhttpSettings.mode = $mode
+      ' "$CONFIG_PATH")"
+      commit_config "$updated" || { warn "Failed to update XHTTP mode; original configuration retained."; return 1; }
+      validate_and_restart_service
+      ok "Changed inbound [${cur_tag}] XHTTP mode from ${cur_mode} to ${new_mode}. Clients may need to reimport the link."
+      ;;
+    6) set_node_public_port_interactive "$cur_tag" "$cur_port" "$cur_net" "$(echo "$current_json" | jq -r '.streamSettings.security // "none"')" ;;
     *) info "Edit cancelled." ;;
   esac
   echo && read -rp "Press Enter to return to the main menu..." _dummy
