@@ -1922,7 +1922,7 @@ show_user_node_links() {
         path="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.path // "/"')"
         mode="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.mode // "auto"')"
         local flow_param=""
-        [[ -n "$node_flow" ]] && flow_param="&flow=${node_flow}"
+        [[ -n "$node_flow" && "$enc_param" != "none" ]] && flow_param="&flow=$(url_encode "$node_flow")"
         link="vless://${node_user_id}@${host_for_link}:${share_port}?type=xhttp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F&path=$(url_encode "$path")&mode=${mode}&extra=$(xhttp_extra_query "$ib_json")${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "${tag}-${sel_email%%@*}")"
       fi
     elif [[ "$sec" == "tls" ]]; then
@@ -1933,7 +1933,7 @@ show_user_node_links() {
       path="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.path // "/"')"
       mode="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.mode // "auto"')"
       local flow_param=""
-      [[ -n "$node_flow" ]] && flow_param="&flow=${node_flow}"
+      [[ -n "$node_flow" && "$enc_param" != "none" ]] && flow_param="&flow=$(url_encode "$node_flow")"
       link="vless://${node_user_id}@${domain}:${share_port}?type=xhttp&security=tls&sni=${domain}&alpn=h2&fp=chrome&ech=$(url_encode "$XHTTP_CDN_ECH_CONFIG")&path=$(url_encode "$path")&mode=${mode}&extra=$(xhttp_extra_query "$ib_json")${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "${tag}-${sel_email%%@*}")"
     fi
 
@@ -2578,8 +2578,8 @@ list_and_show_nodes() {
         local dec
         dec="$(echo "$ib_json" | jq -r '.settings.decryption // "none"')"
         local flow_param=""
-        if [[ -n "$flow" ]]; then
-          flow_param="&flow=${flow}"
+        if [[ -n "$flow" && "$enc_param" != "none" ]]; then
+          flow_param="&flow=$(url_encode "$flow")"
         fi
         link="vless://${uuid}@${host_for_link}:${share_port}?type=xhttp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F&path=$(url_encode "$path")&mode=${mode}&extra=$(xhttp_extra_query "$ib_json")${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
         echo "  - 伪装 SNI: ${sni} | XHTTP 路径: ${path} | 模式: ${mode} | 流控: ${flow:-无} | 解密层: ${dec}"
@@ -2593,8 +2593,8 @@ list_and_show_nodes() {
       mode="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.mode // "auto"')"
       flow="$(echo "$ib_json" | jq -r '.settings.clients[0].flow // empty')"
       local flow_param=""
-      if [[ -n "$flow" ]]; then
-        flow_param="&flow=${flow}"
+      if [[ -n "$flow" && "$enc_param" != "none" ]]; then
+        flow_param="&flow=$(url_encode "$flow")"
       fi
       link="vless://${uuid}@${domain}:${share_port}?type=xhttp&security=tls&sni=${domain}&alpn=h2&fp=chrome&ech=$(url_encode "$XHTTP_CDN_ECH_CONFIG")&path=$(url_encode "$path")&mode=${mode}&extra=$(xhttp_extra_query "$ib_json")${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
       echo "  - TLS 域名/SNI: ${domain} | XHTTP 路径: ${path} | 模式: ${mode} | 流控: ${flow:-无} (CDN 代理适配)"
@@ -2660,8 +2660,8 @@ list_and_show_nodes() {
         path="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.path // "/"')"
         mode="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.mode // "auto"')"
         local flow_param=""
-        if [[ -n "$flow" ]]; then
-          flow_param="&flow=${flow}"
+        if [[ -n "$flow" && "$enc_param" != "none" ]]; then
+          flow_param="&flow=$(url_encode "$flow")"
         fi
         target_link="vless://${uuid}@${host_for_link}:${share_port}?type=xhttp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F&path=$(url_encode "$path")&mode=${mode}&extra=$(xhttp_extra_query "$ib_json")${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
       fi
@@ -2674,8 +2674,8 @@ list_and_show_nodes() {
       mode="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.mode // "auto"')"
       flow="$(echo "$ib_json" | jq -r '.settings.clients[0].flow // empty')"
       local flow_param=""
-      if [[ -n "$flow" ]]; then
-        flow_param="&flow=${flow}"
+      if [[ -n "$flow" && "$enc_param" != "none" ]]; then
+        flow_param="&flow=$(url_encode "$flow")"
       fi
       target_link="vless://${uuid}@${domain}:${share_port}?type=xhttp&security=tls&sni=${domain}&alpn=h2&fp=chrome&ech=$(url_encode "$XHTTP_CDN_ECH_CONFIG")&path=$(url_encode "$path")&mode=${mode}&extra=$(xhttp_extra_query "$ib_json")${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
     fi
