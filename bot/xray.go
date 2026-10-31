@@ -29,6 +29,7 @@ type XrayClient struct {
 type InboundDetails struct {
 	Tag           string
 	Port          int
+	PublicPort    int // client-facing HTTPS port; does not alter listener
 	Protocol      string
 	Network       string
 	Security      string
@@ -336,6 +337,7 @@ func LoadXrayInbounds(configPath string) ([]InboundDetails, error) {
 		inbounds = append(inbounds, node)
 	}
 
+	if err:=attachInboundPublicPorts(configPath,inbounds);err!=nil{return nil,err}
 	return inbounds, nil
 }
 
@@ -396,14 +398,18 @@ func formatHost(host string) string {
 // Emit it only for TLS + XHTTP links, not for REALITY transports.
 const defaultXHTTPECHConfig = "cloudflare-ech.com+https://dns.alidns.com/dns-query"
 
-func (node *InboundDetails) xhttpShareExtra(mode string) string {
- padding := node.XHTTPPaddingBytes
- if padding == "" { padding = "100-1000" }
- extra, _ := json.Marshal(struct {
-  Mode string `json:"mode"`
+func (node *InboundDetails) xhttpShareExtra() string {
+ padding:=node.XHTTPPaddingBytes
+ if padding=="" {padding="100-1000"}
+ extra,_:=json.Marshal(struct {
   XPaddingBytes string `json:"xPaddingBytes"`
- }{Mode:mode, XPaddingBytes:padding})
+ }{XPaddingBytes:padding})
  return string(extra)
+}
+
+func (node *InboundDetails) SharePort() int {
+ if node.PublicPort>=1&&node.PublicPort<=65535{return node.PublicPort}
+ return node.Port
 }
 
 // GenerateVlessURI builds a standard vless:// URI for the given client.
@@ -487,7 +493,7 @@ func (node *InboundDetails) GenerateVlessURI(client XrayClient, serverHost strin
 				mode = "auto"
 			}
 			q.Set("mode", mode)
-			q.Set("extra", node.xhttpShareExtra(mode))
+			q.Set("extra", node.xhttpShareExtra())
 		}
 	case "tls":
 		// CDN-friendly: address the node through its certificate domain
@@ -515,7 +521,7 @@ func (node *InboundDetails) GenerateVlessURI(client XrayClient, serverHost strin
 				mode = "auto"
 			}
 			q.Set("mode", mode)
-			q.Set("extra", node.xhttpShareExtra(mode))
+			q.Set("extra", node.xhttpShareExtra())
 		}
 	default:
 		if node.SNI != "" {
@@ -528,11 +534,11 @@ func (node *InboundDetails) GenerateVlessURI(client XrayClient, serverHost strin
 	}
 	q.Set("encryption", encryption)
 
-	remark := fmt.Sprintf("%s-%d-%s", node.Tag, node.Port, client.Email)
+	remark := fmt.Sprintf("%s-%d-%s", node.Tag, node.SharePort(), client.Email)
 	return fmt.Sprintf("vless://%s@%s:%d?%s#%s",
 		client.ID,
 		formatHost(host),
-		node.Port,
+		node.SharePort(),
 		q.Encode(),
 		url.QueryEscape(remark),
 	)
