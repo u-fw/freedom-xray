@@ -83,15 +83,16 @@ func (s *BotService) sendOnlineCard(chatID int64,msgID int) {
   s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"online.error",detail),s.backToMainMarkup())
   return
  }
- markup:=tgbotapi.NewInlineKeyboardMarkup(
+ rows:=[][]tgbotapi.InlineKeyboardButton{
   tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"online.refresh"),"menu_online"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"online.doctor"),"menu_online_doctor")),
   tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"online.details"),"menu_users"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.home"),"menu_main")),
- )
+ }
  text:=onlineCardTextWithError(state,time.Now(),s.cfg.Language,err)
  // An empty online list is expected when a level that owns clients never
- // enabled statsUserOnline; say so instead of leaving the cause invisible.
+ // enabled statsUserOnline; say so and make the fix reachable in one tap.
  if missing,lookupErr:=missingOnlineLevels(s.cfg.XrayConfigPath);lookupErr==nil&&len(missing)>0 {
   text=strings.TrimRight(text,"\n")+"\n"+tr(s.cfg.Language,"online.policyoff",strings.Join(missing,", "))
+  rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"stats.open"),"menu_stats")))
  }
- s.sendOrEdit(chatID,msgID,text,markup)
+ s.sendOrEdit(chatID,msgID,text,tgbotapi.NewInlineKeyboardMarkup(rows...))
 }

@@ -180,6 +180,8 @@ func (s *BotService) handleMessage(msg *tgbotapi.Message) {
   s.sendOnlineCard(msg.Chat.ID,0)
  case "onlinedoctor","onlinediag":
   s.sendOnlineDiagnostics(msg.Chat.ID,0)
+ case "stats","switches":
+  s.sendStatsSwitches(msg.Chat.ID,0)
  case "routing":
   s.sendRoutingCard(msg.Chat.ID,0)
  case "traffic", "usage":
@@ -239,6 +241,12 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
   s.doOnlineRepair(chatID,msgID)
  case data == "online_repair_cancel":
   s.sendOnlineDiagnostics(chatID,msgID)
+ case data == "menu_stats":
+  s.sendStatsSwitches(chatID,msgID)
+ case data == "stats_repair_ask":
+  s.askStatsRepair(chatID,msgID)
+ case data == "stats_repair_confirm":
+  s.doStatsRepair(chatID,msgID)
  case data == "menu_routing":
   s.sendRoutingCard(chatID,msgID)
  case data == "menu_traffic":
@@ -574,6 +582,7 @@ func (s *BotService) sendMainMenu(chatID int64,msgID int) {
  keyboard:=tgbotapi.NewInlineKeyboardMarkup(
   tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.users"),"menu_users"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.nodes"),"menu_nodes"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.routing"),"menu_routing")),
   tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.traffic"),"menu_traffic"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.online"),"menu_online"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.status"),"menu_status")),
+  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.stats"),"menu_stats"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.onlinedoctor"),"menu_online_doctor")),
   tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.update"),"menu_update"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.version"),"menu_version")),
   tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.restart"),"menu_restart_ask"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.backup"),"menu_backup")),
   tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.help"),"menu_help"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.refresh"),"menu_main")),
@@ -650,16 +659,27 @@ func (s *BotService) sendTrafficCard(chatID int64, msgID int) {
 	}
 
  sb.WriteString(tr(s.cfg.Language,"traffic.note"))
-	markup := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.refresh"), "menu_traffic"),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"traffic.reset"), "traffic_reset_ask"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"traffic.inbounds"), "menu_inbound_traffic"),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.back"), "menu_main"),
-		),
-	)
+ trafficMissing:=[]string{}
+ if report,reportErr:=inspectStatsSwitches(s.cfg.XrayConfigPath);reportErr==nil {
+  trafficMissing=report.MissingTrafficLevels
+  if len(trafficMissing)>0 {
+   sb.WriteString(tr(s.cfg.Language,"stats.traffic.off",mdCode(strings.Join(trafficMissing,", "))))
+  }
+ }
+ rows:=[][]tgbotapi.InlineKeyboardButton{
+  tgbotapi.NewInlineKeyboardRow(
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.refresh"), "menu_traffic"),
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"traffic.reset"), "traffic_reset_ask"),
+  ),
+  tgbotapi.NewInlineKeyboardRow(
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"traffic.inbounds"), "menu_inbound_traffic"),
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.back"), "menu_main"),
+  ),
+ }
+ if len(trafficMissing)>0 {
+  rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"stats.open"),"menu_stats")))
+ }
+	markup := tgbotapi.NewInlineKeyboardMarkup(rows...)
 
 	s.sendOrEdit(chatID, msgID, sb.String(), markup)
 }

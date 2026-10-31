@@ -17,17 +17,25 @@ func (s *BotService) sendInboundTrafficCard(chatID int64,msgID int) {
  var body strings.Builder
  body.WriteString(tr(s.cfg.Language,"inbound.title"))
  if err!=nil{body.WriteString(tr(s.cfg.Language,"inbound.stale",mdEsc(err.Error())))}
+ report,reportErr:=inspectStatsSwitches(s.cfg.XrayConfigPath)
+ inboundOff:=reportErr==nil&&!report.SystemInbound
  var total uint64
- if len(traffic)==0{body.WriteString(tr(s.cfg.Language,"inbound.empty"))}
+ if len(traffic)==0 {
+  if inboundOff {body.WriteString(tr(s.cfg.Language,"stats.inbound.off"))}else{body.WriteString(tr(s.cfg.Language,"inbound.empty"))}
+ }
  for _,entry:=range traffic{
   total+=entry.Total()
   body.WriteString(tr(s.cfg.Language,"inbound.row",mdEsc(entry.Tag),FormatBytes(entry.Uplink),FormatBytes(entry.Downlink),FormatBytes(entry.Total())))
  }
  body.WriteString(tr(s.cfg.Language,"inbound.total",FormatBytes(total)))
  body.WriteString(tr(s.cfg.Language,"inbound.note"))
- markup:=tgbotapi.NewInlineKeyboardMarkup(
+ rows:=[][]tgbotapi.InlineKeyboardButton{
   tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.refresh"),"menu_inbound_traffic"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"inbound.users"),"menu_traffic")),
-  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.home"),"menu_main")),
- )
- s.sendOrEdit(chatID,msgID,body.String(),markup)
+ }
+ if inboundOff {
+  if len(traffic)>0 {body.WriteString(tr(s.cfg.Language,"stats.inbound.off"))}
+  rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"stats.open"),"menu_stats")))
+ }
+ rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.home"),"menu_main")))
+ s.sendOrEdit(chatID,msgID,body.String(),tgbotapi.NewInlineKeyboardMarkup(rows...))
 }

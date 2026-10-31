@@ -79,10 +79,11 @@ func runTrafficDaemon(cfg *BotConfig) error {
  }
 }
 
-// Enable Xray's official per-user statistics policy for level 0 and for every
-// client level actually referenced by an inbound. Preserving all other
-// settings and validating before the guarded, rollback-capable restart keeps
-// the operation safe on a live server.
+// Enable every Xray statistics policy the Bot depends on: per-user counters and
+// the online map for level 0 and each client level, plus the inbound counters
+// used by the node traffic view. Preserving all other settings and validating
+// before the guarded, rollback-capable restart keeps the operation safe on a
+// live server.
 func ensureOnlineStatsPolicy(cfg *BotConfig) error {
  if cfg.XrayConfigPath=="" {return fmt.Errorf("empty Xray config path")}
  lock,err:=acquireConfigLock(cfg.XrayConfigPath,25*time.Second)
@@ -94,10 +95,46 @@ func ensureOnlineStatsPolicy(cfg *BotConfig) error {
  if err!=nil{return err}
  var root map[string]any
  if err=json.Unmarshal(original,&root);err!=nil{return err}
+ if !enableStatsPolicy(root){return nil}
+ next,err:=json.MarshalIndent(root,"","  ")
+ if err!=nil{return err}
+ next=append(next,'\n')
+ file,err:=os.CreateTemp(filepath.Dir(cfg.XrayConfigPath),".freedom-online-policy-*.json")
+ if err!=nil{return err}
+ defer os.Remove(file.Name())
+ if err=file.Chmod(info.Mode().Perm());err!=nil{file.Close();return err}
+ if _,err=file.Write(next);err!=nil{file.Close();return err}
+ if err=file.Close();err!=nil{return err}
+ if err=runChecked(cfg.XrayBinPath,"run","-test","-config",file.Name());err!=nil{
+  return fmt.Errorf("core rejected the statistics policy: %w",err)
+ }
+ snapshotTrafficBestEffortLocked(cfg.XrayConfigPath,cfg.XrayBinPath,cfg.StatsAPIServer)
+ if err=writeAtomically(cfg.XrayConfigPath,next,info.Mode().Perm());err!=nil{return err}
+ if err=runChecked("systemctl","restart","xray");err==nil {
+  err=runChecked("systemctl","is-active","--quiet","xray")
+ }
+ if err!=nil{
+  restoreErr:=writeAtomically(cfg.XrayConfigPath,original,info.Mode().Perm())
+  _=runChecked("systemctl","restart","xray")
+  return fmt.Errorf("enable statistics policy failed: %w (config restore: %v)",err,restoreErr)
+ }
+ return nil
+}
+
+// enableStatsPolicy mutates a decoded Xray config in place and reports whether
+// any required statistics flag was missing. It is deliberately pure so the
+// policy contents can be tested without touching systemd or a live core.
+func enableStatsPolicy(root map[string]any) bool {
  policy,ok:=root["policy"].(map[string]any)
  if !ok {policy=map[string]any{};root["policy"]=policy}
  levels,ok:=policy["levels"].(map[string]any)
  if !ok {levels=map[string]any{};policy["levels"]=levels}
+ system,ok:=policy["system"].(map[string]any)
+ if !ok {system=map[string]any{};policy["system"]=system}
+ changed:=false
+ for _,flag:=range []string{"statsInboundUplink","statsInboundDownlink"} {
+  if system[flag]!=true {system[flag]=true;changed=true}
+ }
 
  wanted:=map[string]bool{"0":true}
  if inbounds,ok:=root["inbounds"].([]any);ok {
@@ -120,7 +157,6 @@ func ensureOnlineStatsPolicy(cfg *BotConfig) error {
  names:=make([]string,0,len(wanted))
  for name:=range wanted{names=append(names,name)}
  sort.Strings(names)
- changed:=false
  for _,name:=range names {
   level,ok:=levels[name].(map[string]any)
   if !ok {level=map[string]any{};levels[name]=level}
@@ -128,30 +164,7 @@ func ensureOnlineStatsPolicy(cfg *BotConfig) error {
    if level[flag]!=true {level[flag]=true;changed=true}
   }
  }
- if !changed{return nil}
- next,err:=json.MarshalIndent(root,"","  ")
- if err!=nil{return err}
- next=append(next,'\n')
- file,err:=os.CreateTemp(filepath.Dir(cfg.XrayConfigPath),".freedom-online-policy-*.json")
- if err!=nil{return err}
- defer os.Remove(file.Name())
- if err=file.Chmod(info.Mode().Perm());err!=nil{file.Close();return err}
- if _,err=file.Write(next);err!=nil{file.Close();return err}
- if err=file.Close();err!=nil{return err}
- if err=runChecked(cfg.XrayBinPath,"run","-test","-config",file.Name());err!=nil{
-  return fmt.Errorf("core lacks online stats policy or rejected config: %w",err)
- }
- snapshotTrafficBestEffortLocked(cfg.XrayConfigPath,cfg.XrayBinPath,cfg.StatsAPIServer)
- if err=writeAtomically(cfg.XrayConfigPath,next,info.Mode().Perm());err!=nil{return err}
- if err=runChecked("systemctl","restart","xray");err==nil {
-  err=runChecked("systemctl","is-active","--quiet","xray")
- }
- if err!=nil{
-  restoreErr:=writeAtomically(cfg.XrayConfigPath,original,info.Mode().Perm())
-  _=runChecked("systemctl","restart","xray")
-  return fmt.Errorf("enable statsUserOnline failed: %w (config restore: %v)",err,restoreErr)
- }
- return nil
+ return changed
 }
 
 // The Bot's first start after an update provisions the dedicated service.

@@ -20,6 +20,7 @@ import (
 type onlineLevelInfo struct {
  Level string
  Enabled bool
+ TrafficEnabled bool
  Clients int
 }
 
@@ -76,11 +77,12 @@ func inspectOnlinePolicy(configPath string) ([]onlineLevelInfo,error) {
 
  result:=make([]onlineLevelInfo,0,len(ordered))
  for _,level:=range ordered {
-  enabled:=false
+  enabled,trafficEnabled:=false,false
   if settings,ok:=root.Policy.Levels[level];ok {
    enabled=settings["statsUserOnline"]==true
+   trafficEnabled=settings["statsUserUplink"]==true&&settings["statsUserDownlink"]==true
   }
-  result=append(result,onlineLevelInfo{Level:level,Enabled:enabled,Clients:clients[level]})
+  result=append(result,onlineLevelInfo{Level:level,Enabled:enabled,TrafficEnabled:trafficEnabled,Clients:clients[level]})
  }
  return result,nil
 }
