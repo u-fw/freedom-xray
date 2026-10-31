@@ -140,6 +140,14 @@ func (s *BotService) sendUserManageCard(chatID int64,msgID int,key string) {
   if c,ok:=state.Users[email];ok {
    usedBytes=c.TotalUp+c.TotalDown
    content.WriteString(tr(s.cfg.Language,"account.total",FormatBytes(c.TotalUp),FormatBytes(c.TotalDown),FormatBytes(usedBytes)))
+   if entries:=storedBindingTrafficForUser(state,email);len(entries)>0 {
+    content.WriteString(tr(s.cfg.Language,"account.bindings.header"))
+    limit:=len(entries);if limit>8{limit=8}
+    for _,item:=range entries[:limit]{
+     content.WriteString(tr(s.cfg.Language,"account.bindings.row",mdEsc(item.Tag),FormatBytes(item.Uplink),FormatBytes(item.Downlink),FormatBytes(item.Total())))
+    }
+    if len(entries)>limit{content.WriteString(tr(s.cfg.Language,"account.bindings.more",len(entries)-limit))}
+   }
   }
   if ips,known:=recentOnline(state,email,time.Now());!known{
    content.WriteString(tr(s.cfg.Language,"account.unknown"))
@@ -181,7 +189,7 @@ func (s *BotService) sendUserManageCard(chatID int64,msgID int,key string) {
  }
  for _,node:=range nodes {
   present:=false
-  for _,client:=range node.Clients{if client.Email==email{present=true;break}}
+  for _,client:=range node.Clients{if bindingOwner(client.Email)==email{present=true;break}}
   mark:=tr(s.cfg.Language,"account.join");op:="a"
   if present {mark=tr(s.cfg.Language,"account.leave");op="r"}
   status:=tr(s.cfg.Language,"account.unassigned");if present{status=tr(s.cfg.Language,"account.assigned")}

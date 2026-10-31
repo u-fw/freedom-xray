@@ -36,11 +36,20 @@ type InboundDetails struct {
 	MLDSA65Seed   string
 	ShortID       string
 	SpiderX       string
+	Dest          string
+	Target        string
+	Xver          int
+	MaxTimeDiff   int64
 	XHTTPPath     string
 	XHTTPHost     string
 	XHTTPMode     string
 	XHTTPPaddingBytes string
 	ClientEncrypt string
+	Decryption    string
+	CertFile      string
+	KeyFile       string
+	ALPN          []string
+	TrustedXForwardedFor []string
 	Clients       []XrayClient
 }
 
@@ -170,6 +179,36 @@ func deriveMLDSA65Verify(seed string) string {
 	return verify
 }
 
+func intValue(value any) int {
+ switch v:=value.(type) {
+ case float64:return int(v)
+ case json.Number:n,err:=v.Int64();if err==nil{return int(n)}
+ case int:return v
+ case int64:return int(v)
+ }
+ return 0
+}
+
+func int64Value(value any) int64 {
+ switch v:=value.(type) {
+ case float64:return int64(v)
+ case json.Number:n,err:=v.Int64();if err==nil{return n}
+ case int:return int64(v)
+ case int64:return v
+ }
+ return 0
+}
+
+func stringValues(value any) []string {
+ raw,ok:=value.([]any)
+ if !ok{return nil}
+ out:=make([]string,0,len(raw))
+ for _,item:=range raw {
+  if text,ok:=item.(string);ok&&text!=""{out=append(out,text)}
+ }
+ return out
+}
+
 // LoadXrayInbounds parses /usr/local/etc/xray/config.json into InboundDetails
 func LoadXrayInbounds(configPath string) ([]InboundDetails, error) {
 	data, err := os.ReadFile(configPath)
@@ -214,6 +253,9 @@ func LoadXrayInbounds(configPath string) ([]InboundDetails, error) {
 
 		// Clients
 		if settings, ok := in["settings"].(map[string]interface{}); ok {
+			if decryption, ok := settings["decryption"].(string); ok && decryption != "" {
+				node.Decryption = decryption
+			}
 			if clientsRaw, ok := settings["clients"].([]interface{}); ok {
 				for _, c := range clientsRaw {
 					if cMap, ok := c.(map[string]interface{}); ok {
@@ -250,6 +292,10 @@ func LoadXrayInbounds(configPath string) ([]InboundDetails, error) {
 				node.PrivateKey, _ = reality["privateKey"].(string)
 				node.MLDSA65Seed, _ = reality["mldsa65Seed"].(string)
 				node.SpiderX, _ = reality["spiderX"].(string)
+				node.Dest, _ = reality["dest"].(string)
+				node.Target, _ = reality["target"].(string)
+				node.Xver = intValue(reality["xver"])
+				node.MaxTimeDiff = int64Value(reality["maxTimeDiff"])
 				if sids, ok := reality["shortIds"].([]interface{}); ok && len(sids) > 0 {
 					node.ShortID, _ = sids[0].(string)
 				}
@@ -260,14 +306,20 @@ func LoadXrayInbounds(configPath string) ([]InboundDetails, error) {
 				if sni, ok := tls["serverName"].(string); ok && sni != "" {
 					node.SNI = sni
 				}
+				node.ALPN = stringValues(tls["alpn"])
 				if certs, ok := tls["certificates"].([]interface{}); ok && len(certs) > 0 {
 					if cert, ok := certs[0].(map[string]interface{}); ok {
-						certFile, _ := cert["certificateFile"].(string)
+						node.CertFile, _ = cert["certificateFile"].(string)
+						node.KeyFile, _ = cert["keyFile"].(string)
+						certFile := node.CertFile
 						if domain := domainFromCertFile(certFile); domain != "" && node.SNI == "" {
 							node.SNI = domain
 						}
 					}
 				}
+			}
+			if sockopt, ok := stream["sockopt"].(map[string]interface{}); ok {
+				node.TrustedXForwardedFor = stringValues(sockopt["trustedXForwardedFor"])
 			}
 
 			// XHTTP Settings
@@ -482,7 +534,9 @@ func (node *InboundDetails) GenerateVlessURI(client XrayClient, serverHost strin
 	}
 	q.Set("encryption", encryption)
 
-	remark := fmt.Sprintf("%s-%d-%s", node.Tag, node.SharePort(), client.Email)
+	// The binding email is an internal accounting identity; clients must keep
+	// seeing the historical username in the link remark.
+	remark := fmt.Sprintf("%s-%d-%s", node.Tag, node.SharePort(), bindingOwner(client.Email))
 	return fmt.Sprintf("vless://%s@%s:%d?%s#%s",
 		client.ID,
 		formatHost(host),

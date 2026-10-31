@@ -27,6 +27,16 @@ func (s *BotService) sendInboundTrafficCard(chatID int64,msgID int) {
   total+=entry.Total()
   body.WriteString(tr(s.cfg.Language,"inbound.row",mdEsc(entry.Tag),FormatBytes(entry.Uplink),FormatBytes(entry.Downlink),FormatBytes(entry.Total())))
  }
+ for _,entry:=range traffic{
+  entries:=storedBindingTrafficForTag(state,entry.Tag)
+  if len(entries)==0{continue}
+  body.WriteString(tr(s.cfg.Language,"inbound.bindings.header",mdEsc(entry.Tag)))
+  limit:=len(entries);if limit>3{limit=3}
+  for _,item:=range entries[:limit]{
+   body.WriteString(tr(s.cfg.Language,"inbound.bindings.row",mdEsc(item.User),FormatBytes(item.Uplink),FormatBytes(item.Downlink),FormatBytes(item.Total())))
+  }
+  if len(entries)>limit{body.WriteString(tr(s.cfg.Language,"inbound.bindings.more",len(entries)-limit))}
+ }
  body.WriteString(tr(s.cfg.Language,"inbound.total",FormatBytes(total)))
  body.WriteString(tr(s.cfg.Language,"inbound.note"))
  rows:=[][]tgbotapi.InlineKeyboardButton{

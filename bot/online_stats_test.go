@@ -159,6 +159,27 @@ exit 3
  }
 }
 
+func TestOnlineSnapshotAggregatesBindingEmailsByOwner(t *testing.T){
+ now:=time.Now()
+ state:=trafficStore{}
+ ensureTrafficMaps(&state)
+ raw:=bindingEmail("alice","raw")
+ cdn:=bindingEmail("alice","cdn")
+ observed:=[]onlineUser{
+  {Email:raw,IPs:[]onlineClientIP{{IP:"198.51.100.7",LastSeen:now.Unix()-10}}},
+  {Email:cdn,IPs:[]onlineClientIP{{IP:"198.51.100.7",LastSeen:now.Unix()-5},{IP:"2001:db8::9",LastSeen:now.Unix()-7}}},
+  {Email:"bob",IPs:[]onlineClientIP{{IP:"203.0.113.9",LastSeen:now.Unix()-8}}},
+ }
+ if !applyOnlineSnapshot(&state,observed,now){t.Fatal("snapshot did not change state")}
+ if _,ok:=state.LiveIPs[raw];ok{t.Fatal("binding email leaked into live user entries")}
+ if _,ok:=state.LiveIPs[cdn];ok{t.Fatal("binding email leaked into live user entries")}
+ live:=state.LiveIPs["alice"]
+ if len(live)!=2||live[0].IP!="198.51.100.7"||live[0].LastSeen!=now.Unix()-5{t.Fatalf("owner IP aggregation wrong: %+v",live)}
+ if state.LastOnline["alice"]!=now.Unix(){t.Fatalf("owner last-online missing: %+v",state.LastOnline)}
+ if len(state.OnlineIPs["alice"])!=2{t.Fatalf("owner history not merged: %+v",state.OnlineIPs["alice"])}
+ if len(state.OnlineIPs["bob"])!=1{t.Fatalf("legacy user history missing: %+v",state.OnlineIPs["bob"])}
+}
+
 func TestOnlineEmailResponseShapes(t *testing.T){
  mapForm:=[]byte(`{"name":"phone","ips":{"203.0.113.7":1800000000}}`)
  user,err:=parseOnlineEmailResponse(mapForm,"")

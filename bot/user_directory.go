@@ -34,10 +34,12 @@ func directoryFromConfig(root map[string]any) (userDirectory,error) {
    c,ok:=getMap(v);if !ok{return directory,errors.New("Invalid user configuration")}
    email,_:=c["email"].(string);id,_:=c["id"].(string)
    if email==""||id==""{continue}
-   if saved,ok:=directory.Users[email];ok&&saved.ID!=id{
-    return directory,fmt.Errorf("User %s has conflicting UUIDs across inbounds; fix locally before proceeding",email)
+   owner:=bindingOwner(email)
+   if owner==""{continue}
+   if saved,ok:=directory.Users[owner];ok&&saved.ID!=id{
+    return directory,fmt.Errorf("User %s has conflicting UUIDs across inbounds; fix locally before proceeding",owner)
    }
-   directory.Users[email]=directoryUser{ID:id}
+   directory.Users[owner]=directoryUser{ID:id}
   }
  }
  return directory,nil
@@ -106,11 +108,18 @@ func applyDirectoryUserChange(root map[string]any,dir *userDirectory,change User
   }
   dir.Users[change.User]=directoryUser{ID:uuid}
   if change.Node==""{return "Created independent user "+change.User+"; no inbound assigned, UUID: "+uuid,nil}
+  for _,in:=range inbounds {
+   if change.Node!="all"&&in["tag"]!=change.Node{continue}
+   tag,_:=in["tag"].(string)
+   if err:=validateNodeTag(tag);err!=nil{return "",fmt.Errorf("Inbound tag %q cannot be used for a binding email: %w",tag,err)}
+  }
   affected:=0
   for _,in:=range inbounds{
    if change.Node!="all"&&in["tag"]!=change.Node{continue}
+   tag,_:=in["tag"].(string)
+   if err:=validateNodeTag(tag);err!=nil{return "",fmt.Errorf("Inbound tag %q cannot be used for a binding email: %w",tag,err)}
    settings,_:=getMap(in["settings"]);list,_:=clientList(in)
-   client:=map[string]any{"id":uuid,"email":change.User}
+   client:=map[string]any{"id":uuid,"email":bindingEmail(change.User,tag)}
    if flow:=userFlowForInbound(in);flow!=""{client["flow"]=flow}
    settings["clients"]=append(list,client);affected++
   }
@@ -120,16 +129,27 @@ func applyDirectoryUserChange(root map[string]any,dir *userDirectory,change User
   if !exists{return "",errors.New("User not found")}
   if !managedUserName.MatchString(change.NewName){return "",errors.New("Invalid new username")}
   if _,ok:=dir.Users[change.NewName];ok{return "",errors.New("New username is already taken")}
-  for _,in:=range inbounds{list,_:=clientList(in);for _,value:=range list{
-   c,_:=getMap(value);if c["email"]==change.User&&c["id"]==existing.ID{c["email"]=change.NewName}
-  }}
+  for _,in:=range inbounds{
+   tag,_:=in["tag"].(string)
+   if err:=validateNodeTag(tag);err!=nil{return "",fmt.Errorf("Inbound tag %q cannot be used for a binding email: %w",tag,err)}
+  }
+  for _,in:=range inbounds{
+   tag,_:=in["tag"].(string)
+   list,_:=clientList(in)
+   for _,value:=range list{
+    c,_:=getMap(value)
+    email,_:=c["email"].(string)
+    if bindingOwner(email)==change.User&&c["id"]==existing.ID{c["email"]=bindingEmail(change.NewName,tag)}
+   }
+  }
   dir.Users[change.NewName]=existing;delete(dir.Users,change.User)
   return "Renamed user to "+change.NewName,nil
  case "rotate":
   if !exists{return "",errors.New("User not found")}
   uuid,err:=newManagedUUID();if err!=nil{return "",err}
   for _,in:=range inbounds{list,_:=clientList(in);for _,value:=range list{
-   c,_:=getMap(value);if c["email"]==change.User&&c["id"]==existing.ID{c["id"]=uuid}
+   c,_:=getMap(value);email,_:=c["email"].(string)
+   if bindingOwner(email)==change.User&&c["id"]==existing.ID{c["id"]=uuid}
   }}
   dir.Users[change.User]=directoryUser{ID:uuid}
   return "User "+change.User+" UUID rotated to "+uuid,nil
@@ -139,7 +159,8 @@ func applyDirectoryUserChange(root map[string]any,dir *userDirectory,change User
    settings,_:=getMap(in["settings"]);list,_:=clientList(in);next:=make([]any,0,len(list))
    for _,value:=range list{
     c,_:=getMap(value)
-    if c["email"]!=change.User{next=append(next,value)}
+    email,_:=c["email"].(string)
+    if bindingOwner(email)!=change.User{next=append(next,value)}
    }
    settings["clients"]=next
   }
@@ -149,9 +170,14 @@ func applyDirectoryUserChange(root map[string]any,dir *userDirectory,change User
   if !exists{return "",errors.New("Create the user in user management first")}
   for _,in:=range inbounds{
    if in["tag"]!=change.Node{continue}
+   tag,_:=in["tag"].(string)
+   if err:=validateNodeTag(tag);err!=nil{return "",fmt.Errorf("Inbound tag %q cannot be used for a binding email: %w",tag,err)}
    settings,_:=getMap(in["settings"]);list,_:=clientList(in)
-   for _,value:=range list{c,_:=getMap(value);if c["email"]==change.User{return "",errors.New("User is already assigned to this inbound")}}
-   client:=map[string]any{"id":existing.ID,"email":change.User}
+   for _,value:=range list{
+    c,_:=getMap(value);email,_:=c["email"].(string)
+    if bindingOwner(email)==change.User{return "",errors.New("User is already assigned to this inbound")}
+   }
+   client:=map[string]any{"id":existing.ID,"email":bindingEmail(change.User,tag)}
    if flow:=userFlowForInbound(in);flow!=""{client["flow"]=flow}
    settings["clients"]=append(list,client)
    return "Assigned "+change.User+" to inbound "+change.Node,nil
@@ -163,7 +189,10 @@ func applyDirectoryUserChange(root map[string]any,dir *userDirectory,change User
    if in["tag"]!=change.Node{continue}
    settings,_:=getMap(in["settings"]);list,_:=clientList(in)
    next:=make([]any,0,len(list));found:=false
-   for _,value:=range list {c,_:=getMap(value);if c["email"]==change.User&&c["id"]==existing.ID{found=true}else{next=append(next,value)}}
+   for _,value:=range list {
+    c,_:=getMap(value);email,_:=c["email"].(string)
+    if bindingOwner(email)==change.User&&c["id"]==existing.ID{found=true}else{next=append(next,value)}
+   }
    if !found{return "",errors.New("User is not assigned to this inbound")}
    settings["clients"]=next
    return "Unassigned "+change.User+" from "+change.Node+" (user identity retained)",nil

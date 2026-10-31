@@ -19,7 +19,7 @@ func trafficDBPath(configPath string) string {
  return filepath.Join(filepath.Dir(configPath), "freedom-stats.db")
 }
 func readLegacyTraffic(configPath string) (trafficStore, error) {
- state:=trafficStore{Users:map[string]trafficCounter{},Inbounds:map[string]trafficCounter{},LastOnline:map[string]int64{},LastActive:map[string]int64{},OnlineIPs:map[string][]onlineClientIP{},LiveIPs:map[string][]onlineClientIP{}}
+ state:=trafficStore{Users:map[string]trafficCounter{},Bindings:map[string]trafficCounter{},Inbounds:map[string]trafficCounter{},LastOnline:map[string]int64{},LastActive:map[string]int64{},OnlineIPs:map[string][]onlineClientIP{},LiveIPs:map[string][]onlineClientIP{}}
  b,err:=os.ReadFile(trafficStorePath(configPath))
  if errors.Is(err,os.ErrNotExist) {return state,nil}
  if err!=nil{return state,err}
@@ -40,6 +40,7 @@ func preserveLegacyTrafficBackup(configPath string) error {
 }
 func ensureTrafficMaps(state *trafficStore) {
  if state.Users==nil {state.Users=map[string]trafficCounter{}}
+ if state.Bindings==nil {state.Bindings=map[string]trafficCounter{}}
  if state.Inbounds==nil {state.Inbounds=map[string]trafficCounter{}}
  if state.LastOnline==nil {state.LastOnline=map[string]int64{}}
  if state.LastActive==nil {state.LastActive=map[string]int64{}}
@@ -85,7 +86,7 @@ func openTrafficDB(configPath string) (*sql.DB,error) {
  return db,nil
 }
 func writeTrafficTx(tx *sql.Tx, state trafficStore, migrate bool) error {
- for kind,group:=range map[string]map[string]trafficCounter{"user":state.Users,"inbound":state.Inbounds}{
+ for kind,group:=range map[string]map[string]trafficCounter{"user":state.Users,"binding":state.Bindings,"inbound":state.Inbounds}{
   for name,c:=range group {
    statement:="INSERT INTO counters(kind,name,total_up,total_down,last_up,last_down,epoch) VALUES(?,?,?,?,?,?,?)"
    if migrate {statement="INSERT OR IGNORE INTO counters(kind,name,total_up,total_down,last_up,last_down,epoch) VALUES(?,?,?,?,?,?,?)"}
@@ -132,7 +133,7 @@ func loadTrafficStore(configPath string) (trafficStore,error) {
   if err=rows.Scan(&kind,&name,&up,&down,&lastUp,&lastDown,&epoch);err!=nil{break}
   if up<0||down<0||lastUp<0||lastDown<0 {err=fmt.Errorf("invalid negative traffic counter for %s",name);break}
   c:=trafficCounter{TotalUp:uint64(up),TotalDown:uint64(down),LastUp:uint64(lastUp),LastDown:uint64(lastDown),Epoch:epoch}
-  switch kind {case "user":state.Users[name]=c;case "inbound":state.Inbounds[name]=c}
+  switch kind {case "user":state.Users[name]=c;case "binding":state.Bindings[name]=c;case "inbound":state.Inbounds[name]=c}
  }
  if e:=rows.Err();err==nil{err=e}
  rows.Close();if err!=nil{return state,err}
@@ -174,6 +175,28 @@ func saveTrafficStore(configPath string,state trafficStore) error {
  b,err:=json.MarshalIndent(state,"","  ");if err!=nil{return err}
  return writeAtomically(trafficStorePath(configPath),append(b,'\n'),0600)
 }
+// trafficMetaValue reads a private schema marker. An absent key returns an
+// empty string so callers can distinguish "never migrated" from a value.
+func trafficMetaValue(configPath,key string) (string,error) {
+ db,err:=openTrafficDB(configPath);if err!=nil{return "",err}
+ defer db.Close()
+ var value string
+ err=db.QueryRow("SELECT value FROM meta WHERE key=?",key).Scan(&value)
+ if errors.Is(err,sql.ErrNoRows){return "",nil}
+ return value,err
+}
+
+func setTrafficMetaValue(configPath,key,value string) error {
+ db,err:=openTrafficDB(configPath);if err!=nil{return err}
+ defer db.Close()
+ if value=="" {
+  _,err=db.Exec("DELETE FROM meta WHERE key=?",key)
+  return err
+ }
+ _,err=db.Exec("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",key,value)
+ return err
+}
+
 func pruneObservedIPs(state *trafficStore, now time.Time) bool {
  cutoff:=now.Add(-onlineHistoryRetention).Unix()
  changed:=false

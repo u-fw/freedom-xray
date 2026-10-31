@@ -24,7 +24,7 @@ func boundUserExportEntries(nodes []InboundDetails, email string) []userExportEn
  for _,node:=range nodes {
   if node.Protocol!="vless" {continue}
   for _,client:=range node.Clients{
-   if client.Email==email {
+   if bindingOwner(client.Email)==email {
     items=append(items,userExportEntry{Node:node,Client:client})
    }
   }

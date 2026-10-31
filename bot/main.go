@@ -30,12 +30,35 @@ func main() {
  localTrafficDaemon:=flag.Bool("local-traffic-daemon",false,"standalone persistent Xray traffic sampler")
  localTrafficInstall:=flag.Bool("local-traffic-install",false,"install or refresh standalone collector service (root only)")
  localTrafficResetLocked:=flag.Bool("local-traffic-reset-locked",false,"reset persisted traffic under caller-held config lock")
+ localMigrateBindings:=flag.Bool("local-migrate-bindings",false,"rewrite managed client emails to per-inbound binding identities (root only)")
+ localRevertBindings:=flag.Bool("local-revert-bindings",false,"rewrite binding client emails back to plain usernames (root only)")
 	flag.Parse()
 
 	if *showVersion {
 		fmt.Printf("freedom-bot %s (commit %s, build %s)\n", Version, Commit, BuildTime)
 		os.Exit(0)
 	}
+
+ if *localMigrateBindings&&*localRevertBindings {
+  log.Fatal("choose only one of -local-migrate-bindings or -local-revert-bindings")
+ }
+ if *localMigrateBindings||*localRevertBindings {
+  if os.Geteuid()!=0 {log.Fatal("binding migration requires root")}
+  cfg,err:=LoadConfig(*configPath);if err!=nil{log.Fatalf("load config: %v",err)}
+  var stats bindingMigrationStats
+  if *localMigrateBindings {
+   stats,err=migrateBindingEmailsForced(cfg.XrayConfigPath,cfg.XrayBinPath,cfg.StatsAPIServer)
+  }else{
+   stats,err=revertBindingEmails(cfg.XrayConfigPath,cfg.XrayBinPath,cfg.StatsAPIServer)
+  }
+  if err!=nil{log.Fatalf("binding migration failed: %v",err)}
+  fmt.Println(stats.String())
+  if warning:=bindingMigrationWarning(stats.SuspendedSkipped);warning!="" {
+   fmt.Printf("suspended records skipped: %s\n",warning)
+  }
+  if stats.BackupPath!=""{fmt.Printf("accounting backup: %s\n",stats.BackupPath)}
+  return
+ }
 
 
  if *localTrafficDaemon||*localTrafficInstall {
@@ -115,6 +138,18 @@ func main() {
 		log.Printf("[Init] Configured %d authorized admin(s)", len(cfg.AdminIDs))
 	}
 
+ // One-time upgrade to per-inbound accounting identities. A failure is not
+ // fatal: the Bot remains usable and the migration retries on the next start.
+ bindingStats,bindingErr:=migrateBindingEmails(cfg.XrayConfigPath,cfg.XrayBinPath,cfg.StatsAPIServer)
+ if bindingErr!=nil {
+  log.Printf("[Binding] per-node accounting migration failed and will be retried: %v",bindingErr)
+ }else if bindingStats.changed() {
+  log.Printf("[Binding] per-node accounting enabled: %s (backup %s)",bindingStats.String(),bindingStats.BackupPath)
+ }
+ if warning:=bindingMigrationWarning(bindingStats.SuspendedSkipped);warning!="" {
+  log.Printf("[Binding] suspended records were preserved without rewriting: %s",warning)
+ }
+
  // Routine Bot startup must not modify Xray configuration or systemd units.
  // applyVersionProvisioning is the one exception: it runs once per installed
  // version so an in-menu upgrade still enables the online-statistics policy
@@ -130,6 +165,9 @@ func main() {
 	}
 
 	service.collectorReady=collectorReady
+ if bindingErr==nil&&bindingStats.changed() {
+  service.startupNotice=tr(cfg.Language,"binding.notify.migrated",bindingStats.Rewritten,bindingStats.Inbounds)
+ }
 
 	// Handle graceful shutdown
 	sigCh := make(chan os.Signal, 1)

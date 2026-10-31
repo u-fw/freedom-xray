@@ -54,9 +54,17 @@ func applyUserSuspension(root map[string]any,store *suspendedStore,change UserCh
   parked:=suspendedAccount{UUID:uuid,Nodes:map[string]map[string]any{}}
   // Validate every affected inbound before changing any of them.
   for _,in:=range inbounds {
+   tag,_:=in["tag"].(string)
    list,_:=clientList(in)
    matches:=0
-   for _,v:=range list{c,_:=getMap(v);if c["email"]==change.User {matches++;if c["id"]!=uuid{return "",errors.New("UUID conflict")};parked.Nodes[in["tag"].(string)]=c}}
+   for _,v:=range list{
+    c,_:=getMap(v);email,_:=c["email"].(string)
+    if bindingOwner(email)==change.User {
+     matches++
+     if c["id"]!=uuid{return "",errors.New("UUID conflict")}
+     parked.Nodes[tag]=c
+    }
+   }
    if matches>1{return "",fmt.Errorf("Duplicate user entry in inbound %v",in["tag"])}
    if matches>0 && len(list)<=1{return "",fmt.Errorf("Inbound %v has only this user; refusing to suspend the last client",in["tag"])}
   }
@@ -64,7 +72,10 @@ func applyUserSuspension(root map[string]any,store *suspendedStore,change UserCh
   for _,in:=range inbounds {
    settings,_:=getMap(in["settings"]);list,_:=clientList(in)
    next:=make([]any,0,len(list))
-   for _,v:=range list{c,_:=getMap(v);if c["email"]!=change.User {next=append(next,v)}}
+   for _,v:=range list{
+    c,_:=getMap(v);email,_:=c["email"].(string)
+    if bindingOwner(email)!=change.User {next=append(next,v)}
+   }
    settings["clients"]=next
   }
   store.Users[change.User]=parked
@@ -77,16 +88,28 @@ func applyUserSuspension(root map[string]any,store *suspendedStore,change UserCh
   if len(ids)>0{return "",errors.New("An active user already has this name; refusing restore")}
   byTag:=make(map[string]map[string]any)
   for _,in:=range inbounds{tag,ok:=in["tag"].(string);if ok{byTag[tag]=in}}
+  restored:=make(map[string]map[string]any,len(parked.Nodes))
   for tag,client:=range parked.Nodes {
    in,ok:=byTag[tag];if !ok{return "",fmt.Errorf("Original inbound %s was deleted; refusing partial restore",tag)}
-   if client["email"]!=change.User||client["id"]!=parked.UUID{return "",errors.New("Suspension record identity mismatch")}
+   if err:=validateNodeTag(tag);err!=nil{return "",fmt.Errorf("Suspended record uses an invalid inbound tag %q: %w",tag,err)}
+   email,_:=client["email"].(string)
+   if email!=change.User {
+    owner,bindingTag,binding:=parseBindingEmail(email)
+    if !binding||owner!=change.User||bindingTag!=tag{return "",errors.New("Suspension record identity mismatch")}
+   }
+   if client["id"]!=parked.UUID{return "",errors.New("Suspension record identity mismatch")}
    list,_:=clientList(in)
    for _,v:=range list{
-    c,_:=getMap(v)
+    c,_:=getMap(v);existingEmail,_:=c["email"].(string)
     if c["id"]==parked.UUID {return "",fmt.Errorf("UUID is already in use on inbound %s",tag)}
+    if bindingOwner(existingEmail)==change.User{return "",fmt.Errorf("A client for this user already exists on inbound %s",tag)}
    }
+   restoredClient:=make(map[string]any,len(client))
+   for key,value:=range client{restoredClient[key]=value}
+   restoredClient["email"]=bindingEmail(change.User,tag)
+   restored[tag]=restoredClient
   }
-  for tag,client:=range parked.Nodes{
+  for tag,client:=range restored{
    in:=byTag[tag];settings,_:=getMap(in["settings"]);list,_:=clientList(in)
    settings["clients"]=append(list,client)
   }

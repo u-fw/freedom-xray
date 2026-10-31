@@ -26,6 +26,9 @@ type BotService struct {
 	bot    *tgbotapi.BotAPI
 	stopCh chan struct{}
  collectorReady bool
+ // startupNotice is set by main after a successful one-time migration and is
+ // delivered once the polling loop has started.
+ startupNotice string
 }
 
 // NewBotService initializes Telegram Bot with optional SOCKS5 proxy
@@ -72,6 +75,9 @@ func (s *BotService) Start() error {
 	u.Timeout = 30
 
 	updates := s.bot.GetUpdatesChan(u)
+	if s.startupNotice != "" {
+		s.notifyAdmins(s.startupNotice)
+	}
 
 	// Independently persist traffic, even when no report or chat is requested.
  if !s.collectorReady {go s.runTrafficSampler()}
@@ -161,6 +167,7 @@ func (s *BotService) handleUpdate(update tgbotapi.Update) {
 
 func (s *BotService) handleMessage(msg *tgbotapi.Message) {
 	s.maybeAutoDetectLanguage(msg)
+	if s.handleNodeCreateInput(msg) { return }
 	if s.handleNodePathInput(msg) { return }
 	if s.handleUserLimitInput(msg) { return }
 	if s.handleWizardMessage(msg) { return }
@@ -254,8 +261,23 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 	case data == "menu_inbound_traffic":
 		s.sendInboundTrafficCard(chatID,msgID)
 	case data == "menu_nodes":
+		clearNodeCreateState(chatID)
 		s.sendNodesCard(chatID, msgID)
-	case strings.HasPrefix(data,"node_detail:") || strings.HasPrefix(data,"node_mode:") || strings.HasPrefix(data,"node_path:") || strings.HasPrefix(data,"node_public_port:") || strings.HasPrefix(data,"node_sni:") || strings.HasPrefix(data,"node_short_id:") || strings.HasPrefix(data,"node_xhttp_host:") || strings.HasPrefix(data,"node_xhttp_padding:") || strings.HasPrefix(data,"node_listen_port:"):
+	case data == "node_new_menu":
+		s.sendNodeTemplatePicker(chatID,msgID)
+	case strings.HasPrefix(data,"node_new:"):
+		s.beginNodeCreate(chatID,cb.From.ID,msgID,NodeTemplate(strings.TrimPrefix(data,"node_new:")))
+	case strings.HasPrefix(data,"node_cert_source:"):
+		s.handleNodeCertSource(cb)
+	case strings.HasPrefix(data,"node_create_confirm:"):
+		s.confirmNodeCreate(cb,true)
+	case strings.HasPrefix(data,"node_create_cancel:"):
+		s.confirmNodeCreate(cb,false)
+	case strings.HasPrefix(data,"node_delete_confirm:"):
+		s.confirmNodeDelete(cb)
+	case strings.HasPrefix(data,"node_delete:"):
+		s.showNodeDeleteConfirm(chatID,msgID,strings.TrimPrefix(data,"node_delete:"))
+	case strings.HasPrefix(data,"node_detail:") || strings.HasPrefix(data,"node_mode:") || strings.HasPrefix(data,"node_path:") || strings.HasPrefix(data,"node_public_port:") || strings.HasPrefix(data,"node_sni:") || strings.HasPrefix(data,"node_short_id:") || strings.HasPrefix(data,"node_xhttp_host:") || strings.HasPrefix(data,"node_xhttp_padding:") || strings.HasPrefix(data,"node_listen_port:") || strings.HasPrefix(data,"node_dest:") || strings.HasPrefix(data,"node_target:") || strings.HasPrefix(data,"node_reality_key:") || strings.HasPrefix(data,"node_mldsa:") || strings.HasPrefix(data,"node_decryption:") || strings.HasPrefix(data,"node_cert_pair:") || strings.HasPrefix(data,"node_alpn:"):
 		s.handleNodeCallback(cb)
 	case strings.HasPrefix(data,"node_confirm:"):
 		s.confirmNodeChange(cb,true)
@@ -757,6 +779,9 @@ func (s *BotService) sendNodesCard(chatID int64, msgID int) {
 	}
 	markup := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.create.button"), "node_new_menu"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.refresh"), "menu_nodes"),
 			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.back"), "menu_main"),
 		),
@@ -984,14 +1009,16 @@ func (s *BotService) sendAlert(chatID int64, text string) {
 	}
 }
 
-// sortedEmails returns deterministic, de-duplicated user emails so callback
+// sortedEmails returns deterministic, de-duplicated user names so callback
 // data can reference a short list index instead of a potentially long email.
+// A migrated user owns one binding email per inbound; callers always mean the
+// historical username, never an individual accounting identity.
 func sortedEmails(nodes []InboundDetails) []string {
 	set := make(map[string]bool)
 	for _, n := range nodes {
 		for _, c := range n.Clients {
 			if c.Email != "" {
-				set[c.Email] = true
+				set[bindingOwner(c.Email)] = true
 			}
 		}
 	}

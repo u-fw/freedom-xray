@@ -158,14 +158,37 @@ func (s *BotService) onlineProbeText() string {
  if len(names)==0{return ""}
  limit:=len(names);if limit>4{limit=4}
  sample:=names[:limit]
+ groups,groupErr:=managedClientEmailsFromConfig(s.cfg.XrayConfigPath)
+ probeEmails:=make([]string,0,len(sample))
+ for _,name:=range sample {
+  emails:=groups[name]
+  if groupErr!=nil||len(emails)==0{emails=[]string{name}}
+  for _,email:=range emails {
+   if len(probeEmails)>=maxOnlineProbeEmails{break}
+   probeEmails=append(probeEmails,email)
+  }
+  probeEmails=sortedUniqueStrings(probeEmails)
+ }
  ipCtx,ipCancel:=context.WithTimeout(context.Background(),8*time.Second)
- users,probeErr:=queryOnlineClientsByEmail(ipCtx,s.cfg.XrayBinPath,s.cfg.StatsAPIServer,sample)
+ users,probeErr:=queryOnlineClientsByEmail(ipCtx,s.cfg.XrayBinPath,s.cfg.StatsAPIServer,probeEmails)
  ipCancel()
  countCtx,countCancel:=context.WithTimeout(context.Background(),8*time.Second)
- counts:=queryOnlineSessionCounts(countCtx,s.cfg.XrayBinPath,s.cfg.StatsAPIServer,sample)
+ counts:=queryOnlineSessionCounts(countCtx,s.cfg.XrayBinPath,s.cfg.StatsAPIServer,probeEmails)
  countCancel()
- byEmail:=map[string]int{}
- for _,user:=range users{byEmail[user.Email]=len(user.IPs)}
+ ipSet:=map[string]map[string]bool{}
+ for _,user:=range users{
+  owner:=bindingOwner(user.Email)
+  if ipSet[owner]==nil{ipSet[owner]=map[string]bool{}}
+  for _,ip:=range user.IPs{ipSet[owner][ip.IP]=true}
+ }
+ sessionCount:=map[string]int64{}
+ counted:=map[string]bool{}
+ for _,email:=range probeEmails {
+  count,ok:=counts[email]
+  if !ok{continue}
+  counted[bindingOwner(email)]=true
+  sessionCount[bindingOwner(email)]+=count
+ }
  var out strings.Builder
  out.WriteString(tr(lang,"online.doctor.probe"))
  if probeErr!=nil&&len(users)==0 {
@@ -178,11 +201,12 @@ func (s *BotService) onlineProbeText() string {
  sawSessionsWithoutIP:=false
  for _,name:=range sample {
   sessions:="?"
-  if count,ok:=counts[name];ok {
+  if counted[name] {
+   count:=sessionCount[name]
    sessions=strconv.FormatInt(count,10)
-   if count>0&&byEmail[name]==0{sawSessionsWithoutIP=true}
+   if count>0&&len(ipSet[name])==0{sawSessionsWithoutIP=true}
   }
-  out.WriteString(tr(lang,"online.doctor.proberow",mdCode(name),sessions,byEmail[name]))
+  out.WriteString(tr(lang,"online.doctor.proberow",mdCode(name),sessions,len(ipSet[name])))
  }
  if len(names)>limit{out.WriteString(tr(lang,"online.doctor.probemore",len(names)-limit))}
  if sawSessionsWithoutIP{out.WriteString(tr(lang,"online.doctor.hint.sessions"))}

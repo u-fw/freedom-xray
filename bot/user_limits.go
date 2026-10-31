@@ -239,7 +239,7 @@ func (s *BotService) enforceUserLimitsOnce(){
  active:=map[string]bool{}
  for _,node:=range nodes {
   for _,client:=range node.Clients {
-   if client.Email!=""{active[client.Email]=true}
+   if client.Email!=""{active[bindingOwner(client.Email)]=true}
   }
  }
  now:=time.Now()

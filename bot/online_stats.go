@@ -362,25 +362,44 @@ func isOnlineUnsupported(err error) bool {
 }
 func applyOnlineSnapshot(state *trafficStore,observed []onlineUser,now time.Time) bool {
  ensureTrafficMaps(state)
- current:=make(map[string][]onlineClientIP)
+ // Xray reports one entry per client email. A user usually owns several
+ // binding emails, so aggregate them into one owner entry before the card,
+ // history, or LastOnline maps see the data.
+ observedByOwner:=make(map[string]map[string]int64)
  changed:=false
  t:=now.Unix()
  for _,u:=range observed {
   if u.Email==""||len(u.IPs)==0{continue}
-  current[u.Email]=u.IPs
+  owner:=bindingOwner(u.Email)
+  if owner==""{continue}
+  if observedByOwner[owner]==nil{observedByOwner[owner]=make(map[string]int64)}
+  for _,ip:=range u.IPs {
+   if ip.LastSeen>observedByOwner[owner][ip.IP]{observedByOwner[owner][ip.IP]=ip.LastSeen}
+  }
   // The user is connected now, even when the core's most recent dispatch
   // time is older (idle long-lived connections).
-  if t>state.LastOnline[u.Email] {state.LastOnline[u.Email]=t;changed=true}
+  if t>state.LastOnline[owner]{state.LastOnline[owner]=t;changed=true}
+ }
+ current:=make(map[string][]onlineClientIP,len(observedByOwner))
+ for owner,seen:=range observedByOwner {
+  live:=make([]onlineClientIP,0,len(seen))
+  for ip,lastSeen:=range seen{live=append(live,onlineClientIP{IP:ip,LastSeen:lastSeen})}
+  sort.Slice(live,func(i,j int)bool{
+   if live[i].LastSeen!=live[j].LastSeen{return live[i].LastSeen>live[j].LastSeen}
+   return live[i].IP<live[j].IP
+  })
+  if len(live)>maxOnlineIPsPerUser{live=live[:maxOnlineIPsPerUser]}
+  current[owner]=live
   history:=make(map[string]int64)
-  for _,ip:=range state.OnlineIPs[u.Email] {history[ip.IP]=ip.LastSeen}
-  for _,ip:=range u.IPs {
-   if ip.LastSeen>history[ip.IP] {history[ip.IP]=ip.LastSeen;changed=true}
+  for _,ip:=range state.OnlineIPs[owner]{history[ip.IP]=ip.LastSeen}
+  for ip,lastSeen:=range seen {
+   if lastSeen>history[ip]{history[ip]=lastSeen;changed=true}
   }
   all:=make([]onlineClientIP,0,len(history))
-  for ip,seen:=range history {all=append(all,onlineClientIP{IP:ip,LastSeen:seen})}
+  for ip,lastSeen:=range history{all=append(all,onlineClientIP{IP:ip,LastSeen:lastSeen})}
   sort.Slice(all,func(i,j int)bool{return all[i].LastSeen>all[j].LastSeen})
-  if len(all)>maxOnlineIPsPerUser {all=all[:maxOnlineIPsPerUser];changed=true}
-  state.OnlineIPs[u.Email]=all
+  if len(all)>maxOnlineIPsPerUser{all=all[:maxOnlineIPsPerUser];changed=true}
+  state.OnlineIPs[owner]=all
  }
  if !reflect.DeepEqual(state.LiveIPs,current){state.LiveIPs=current;changed=true}
  if state.OnlinePollAt!=t {state.OnlinePollAt=t;changed=true}

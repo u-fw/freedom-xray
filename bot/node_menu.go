@@ -4,6 +4,7 @@ import (
  "crypto/rand"
  "encoding/hex"
  "log"
+ "path/filepath"
  "strconv"
  "strings"
  "sync"
@@ -13,7 +14,7 @@ import (
 )
 
 type pendingNodeChange struct{ Change NodeChange; ChatID int64; AdminID int64; Expires time.Time }
-type nodePathWizard struct {Tag string; AdminID int64; Expires time.Time; Kind string}
+type nodePathWizard struct {Tag string; AdminID int64; Expires time.Time; Kind string; Value string}
 
 var pendingNodes=struct{sync.Mutex;items map[string]pendingNodeChange}{items:map[string]pendingNodeChange{}}
 var nodePathWizards=struct{sync.Mutex;items map[int64]nodePathWizard}{items:map[int64]nodePathWizard{}}
@@ -44,13 +45,24 @@ func nodeChangeFieldLabel(lang,kind string) string {
  case "port": return tr(lang,"node.field.listenport")
  case "xhttp_host": return tr(lang,"node.field.host")
  case "xhttp_padding": return tr(lang,"node.field.padding")
+ case "reality_dest": return tr(lang,"node.field.dest")
+ case "reality_target": return tr(lang,"node.field.target")
+ case "reality_private_key": return tr(lang,"node.field.privatekey")
+ case "reality_mldsa_seed": return tr(lang,"node.field.mldsa")
+ case "decryption": return tr(lang,"node.field.decryption")
+ case "tls_pair": return tr(lang,"node.field.certpair")
+ case "alpn": return tr(lang,"node.field.alpn")
  }
  return kind
 }
 
 func (s *BotService) startNodeWizard(chatID,adminID int64,msgID int,tag,kind,prompt string){
+ s.startNodeWizardValue(chatID,adminID,msgID,tag,kind,prompt,"")
+}
+
+func (s *BotService) startNodeWizardValue(chatID,adminID int64,msgID int,tag,kind,prompt,value string){
  nodePathWizards.Lock()
- nodePathWizards.items[chatID]=nodePathWizard{Tag:tag,AdminID:adminID,Expires:time.Now().Add(5*time.Minute),Kind:kind}
+ nodePathWizards.items[chatID]=nodePathWizard{Tag:tag,AdminID:adminID,Expires:time.Now().Add(5*time.Minute),Kind:kind,Value:value}
  nodePathWizards.Unlock()
  s.sendOrEdit(chatID,msgID,prompt,s.backToMainMarkup())
 }
@@ -65,11 +77,29 @@ func (s *BotService) sendNodeDetail(chatID int64,msgID int,key string) {
   node.Tag,strings.ToUpper(node.Protocol),strings.ToUpper(node.Network),strings.ToUpper(node.Security),
   node.Port,node.SharePort(),len(node.Clients))
  rows:=[][]tgbotapi.InlineKeyboardButton{}
+ encryptionState:=tr(s.cfg.Language,"node.encryption.disabled")
+ if node.Decryption!=""&&node.Decryption!="none"{encryptionState=tr(s.cfg.Language,"node.encryption.enabled")}
+ mldsaState:=tr(s.cfg.Language,"node.encryption.disabled")
+ if node.MLDSA65Seed!=""{mldsaState=tr(s.cfg.Language,"node.encryption.enabled")}
 
  if node.Security=="reality" {
   msg+=tr(s.cfg.Language,"node.realitydetail",node.SNI,maskRealityShortID(node.ShortID,s.cfg.Language))
-  rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.edit.sni"),"node_sni:"+key)))
-  rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.edit.shortid"),"node_short_id:"+key)))
+  dest:=node.Dest;if dest==""{dest=tr(s.cfg.Language,"node.notconfigured")}
+  target:=node.Target;if target==""{target=tr(s.cfg.Language,"node.notconfigured")}
+  msg+=tr(s.cfg.Language,"node.realityadvanced",dest,target,encryptionState,mldsaState)
+  rows=append(rows,tgbotapi.NewInlineKeyboardRow(
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.edit.sni"),"node_sni:"+key),
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.edit.shortid"),"node_short_id:"+key),
+  ))
+  rows=append(rows,tgbotapi.NewInlineKeyboardRow(
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.edit.dest"),"node_dest:"+key),
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.edit.target"),"node_target:"+key),
+  ))
+  rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.edit.privatekey"),"node_reality_key:"+key)))
+  mldsaLabel:=tr(s.cfg.Language,"node.edit.mldsaenable")
+  mldsaAction:="set"
+  if node.MLDSA65Seed!=""{mldsaLabel=tr(s.cfg.Language,"node.edit.mldsadisable");mldsaAction="clear"}
+  rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(mldsaLabel,"node_mldsa:"+key+":"+mldsaAction)))
  }
  if node.Network=="xhttp" {
   mode:=node.XHTTPMode
@@ -79,8 +109,10 @@ func (s *BotService) sendNodeDetail(chatID int64,msgID int,key string) {
   padding:=node.XHTTPPaddingBytes
   if padding=="" {padding=tr(s.cfg.Language,"node.default")}
   msg+=tr(s.cfg.Language,"node.xhttpdetail",node.XHTTPPath,mode,host,padding)
-  rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.edit.path"),"node_path:"+key)))
-  rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.edit.host"),"node_xhttp_host:"+key)))
+  rows=append(rows,tgbotapi.NewInlineKeyboardRow(
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.edit.path"),"node_path:"+key),
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.edit.host"),"node_xhttp_host:"+key),
+  ))
   rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.edit.padding"),"node_xhttp_padding:"+key)))
   if node.Security=="tls" {
    msg+=tr(s.cfg.Language,"node.publicnote")
@@ -97,7 +129,27 @@ func (s *BotService) sendNodeDetail(chatID int64,msgID int,key string) {
    rows=append(rows,tgbotapi.NewInlineKeyboardRow(buttons...))
   }
  }
+ if node.Security=="tls" {
+  cert:=node.CertFile;if cert==""{cert=tr(s.cfg.Language,"node.notconfigured")}
+  certKey:=node.KeyFile;if certKey==""{certKey=tr(s.cfg.Language,"node.notconfigured")}
+  alpn:=tr(s.cfg.Language,"node.default")
+  if len(node.ALPN)>0{alpn=strings.Join(node.ALPN,", ")}
+  msg+=tr(s.cfg.Language,"node.tlsdetail",cert,certKey,alpn)
+  rows=append(rows,tgbotapi.NewInlineKeyboardRow(
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.edit.certpair"),"node_cert_pair:"+key),
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.edit.alpn"),"node_alpn:"+key),
+  ))
+ }
+ if node.Security=="reality"||(node.Network=="xhttp"&&node.Security=="tls") {
+  action:="enable"
+  label:=tr(s.cfg.Language,"node.edit.encryptionenable")
+  if encryptionState==tr(s.cfg.Language,"node.encryption.enabled"){action="disable";label=tr(s.cfg.Language,"node.edit.encryptiondisable")}
+  rows=append(rows,tgbotapi.NewInlineKeyboardRow(
+   tgbotapi.NewInlineKeyboardButtonData(label+" ("+encryptionState+")","node_decryption:"+key+":"+action),
+  ))
+ }
  rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.edit.listenport"),"node_listen_port:"+key)))
+ rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.delete.button"),"node_delete:"+key)))
  rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.backlist"),"menu_nodes")))
  s.sendOrEdit(chatID,msgID,msg,tgbotapi.NewInlineKeyboardMarkup(rows...))
 }
@@ -119,10 +171,50 @@ func (s *BotService) offerNodeChange(chatID,adminID int64,msgID int,change NodeC
  case "xhttp_host": note=tr(s.cfg.Language,"node.changenote.host")
  case "xhttp_padding": note=tr(s.cfg.Language,"node.changenote.padding")
  case "reality_short_id": note=tr(s.cfg.Language,"node.changenote.shortid")
+ case "reality_dest": note=tr(s.cfg.Language,"node.changenote.dest")
+ case "reality_target": note=tr(s.cfg.Language,"node.changenote.target")
+ case "tls_pair": note=tr(s.cfg.Language,"node.changenote.certpair")
+ case "alpn": note=tr(s.cfg.Language,"node.changenote.alpn")
  }
  value:=change.Value
  if value==""{value=tr(s.cfg.Language,"node.clear")}
  body:=tr(s.cfg.Language,"node.changebody",mdCode(change.Tag),mdEsc(nodeChangeFieldLabel(s.cfg.Language,change.Kind)),mdCode(value),note)
+ keyboard:=tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
+  tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.confirm"),"node_confirm:"+key),
+  tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.cancel"),"node_cancel:"+key)))
+ s.sendOrEdit(chatID,msgID,body,keyboard)
+}
+
+// offerNodeSecretChange confirms an operation whose new value is generated by
+// the Bot or intentionally omitted. Secret material is never rendered.
+func (s *BotService) offerNodeSecretChange(chatID,adminID int64,msgID int,change NodeChange,noteKey string){
+ if !s.cfg.AllowMutations{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.mutationsdisabled"),s.backToMainMarkup());return}
+ var randKey [8]byte
+ if _,err:=rand.Read(randKey[:]);err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.tokenerror"));return}
+ key:=hex.EncodeToString(randKey[:])
+ pendingNodes.Lock()
+ for token,v:=range pendingNodes.items {if time.Now().After(v.Expires){delete(pendingNodes.items,token)}}
+ pendingNodes.items[key]=pendingNodeChange{Change:change,ChatID:chatID,AdminID:adminID,Expires:time.Now().Add(3*time.Minute)}
+ pendingNodes.Unlock()
+ body:=tr(s.cfg.Language,"node.secretchange",mdCode(change.Tag),mdEsc(nodeChangeFieldLabel(s.cfg.Language,change.Kind)),mdEsc(tr(s.cfg.Language,noteKey)))
+ keyboard:=tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
+  tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.confirm"),"node_confirm:"+key),
+  tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.cancel"),"node_cancel:"+key)))
+ s.sendOrEdit(chatID,msgID,body,keyboard)
+}
+
+// offerNodeTLSPair shows both paths because a certificate replacement must be
+// committed as one pair; validating either half alone would always fail.
+func (s *BotService) offerNodeTLSPair(chatID,adminID int64,msgID int,change NodeChange,noteKey string){
+ if !s.cfg.AllowMutations{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.mutationsdisabled"),s.backToMainMarkup());return}
+ var randKey [8]byte
+ if _,err:=rand.Read(randKey[:]);err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.tokenerror"));return}
+ key:=hex.EncodeToString(randKey[:])
+ pendingNodes.Lock()
+ for token,v:=range pendingNodes.items {if time.Now().After(v.Expires){delete(pendingNodes.items,token)}}
+ pendingNodes.items[key]=pendingNodeChange{Change:change,ChatID:chatID,AdminID:adminID,Expires:time.Now().Add(3*time.Minute)}
+ pendingNodes.Unlock()
+ body:=tr(s.cfg.Language,"node.certpairchange",mdCode(change.Tag),mdCode(change.Value),mdCode(change.Secret),mdEsc(tr(s.cfg.Language,noteKey)))
  keyboard:=tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.confirm"),"node_confirm:"+key),
   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.cancel"),"node_cancel:"+key)))
@@ -147,7 +239,7 @@ func (s *BotService) confirmNodeChange(cb *tgbotapi.CallbackQuery,confirm bool){
   if parseErr!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.invalidport"));return}
   result,err=SetInboundPublicPort(s.cfg.XrayConfigPath,p.Change.Tag,port)
  }else{
-  result,err=ChangeNodeConfig(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,p.Change)
+  result,err=ChangeNodeConfig(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer,p.Change)
  }
  if err!=nil{log.Printf("[Bot] node update failed: %v",err);s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.updatefailed",err.Error()),s.backToMainMarkup());return}
  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.updatesuccess",result),s.backToMainMarkup())
@@ -198,6 +290,48 @@ func (s *BotService) handleNodeCallback(cb *tgbotapi.CallbackQuery){
  case "node_mode":
   if node.Network!="xhttp"||len(parts)!=3{return}
   s.offerNodeChange(chatID,cb.From.ID,msgID,NodeChange{Kind:"mode",Tag:node.Tag,Value:parts[2]})
+ case "node_dest","node_target":
+  if node.Security!="reality"{s.sendAlert(chatID,tr(s.cfg.Language,"node.notreality"));return}
+  if !s.cfg.AllowMutations{s.sendAlert(chatID,tr(s.cfg.Language,"node.enablemutations"));return}
+  kind:="reality_dest";current:=node.Dest;promptKey:="node.destprompt"
+  if parts[0]=="node_target"{kind="reality_target";current=node.Target;promptKey="node.targetprompt"}
+  if current==""{current=node.SNI+":443"}
+  s.startNodeWizard(chatID,cb.From.ID,msgID,node.Tag,kind,tr(s.cfg.Language,promptKey,mdCode(current)))
+ case "node_reality_key":
+  if node.Security!="reality"{s.sendAlert(chatID,tr(s.cfg.Language,"node.notreality"));return}
+  private,_,err:=generateRealityKeyPair()
+  if err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.secretgeneratefailed",err.Error()));return}
+  s.offerNodeSecretChange(chatID,cb.From.ID,msgID,NodeChange{Kind:"reality_private_key",Tag:node.Tag,Secret:private},"node.secretnote.privatekey")
+ case "node_mldsa":
+  if node.Security!="reality"||len(parts)!=3{s.sendAlert(chatID,tr(s.cfg.Language,"node.notreality"));return}
+  if parts[2]=="clear" {
+   s.offerNodeSecretChange(chatID,cb.From.ID,msgID,NodeChange{Kind:"reality_mldsa_seed",Tag:node.Tag},"node.secretnote.mldsaclear")
+   return
+  }
+  seed,err:=generateMLDSA65Seed()
+  if err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.secretgeneratefailed",err.Error()));return}
+  s.offerNodeSecretChange(chatID,cb.From.ID,msgID,NodeChange{Kind:"reality_mldsa_seed",Tag:node.Tag,Secret:seed},"node.secretnote.mldsaset")
+ case "node_decryption":
+  if len(parts)!=3{return}
+  if parts[2]=="disable" {
+   s.offerNodeSecretChange(chatID,cb.From.ID,msgID,NodeChange{Kind:"decryption",Tag:node.Tag,Secret:"none",ClientSecret:"none"},"node.secretnote.encryptiondisable")
+   return
+  }
+  dec,enc,err:=generateVLESSEncryptionPair()
+  if err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.secretgeneratefailed",err.Error()));return}
+  s.offerNodeSecretChange(chatID,cb.From.ID,msgID,NodeChange{Kind:"decryption",Tag:node.Tag,Secret:dec,ClientSecret:enc},"node.secretnote.encryptionenable")
+ case "node_cert_pair":
+  if node.Security!="tls"{s.sendAlert(chatID,tr(s.cfg.Language,"node.nottls"));return}
+  if !s.cfg.AllowMutations{s.sendAlert(chatID,tr(s.cfg.Language,"node.enablemutations"));return}
+  current:=node.CertFile
+  if current==""{current=tr(s.cfg.Language,"node.notconfigured")}
+  s.startNodeWizard(chatID,cb.From.ID,msgID,node.Tag,"tls_pair_cert",tr(s.cfg.Language,"node.certpairprompt",mdCode(current)))
+ case "node_alpn":
+  if node.Security!="tls"{s.sendAlert(chatID,tr(s.cfg.Language,"node.nottls"));return}
+  if !s.cfg.AllowMutations{s.sendAlert(chatID,tr(s.cfg.Language,"node.enablemutations"));return}
+  current:=strings.Join(node.ALPN,", ")
+  if current==""{current="h2, http/1.1"}
+  s.startNodeWizard(chatID,cb.From.ID,msgID,node.Tag,"alpn",tr(s.cfg.Language,"node.alpnprompt",mdCode(current)))
  }
 }
 
@@ -235,6 +369,19 @@ func (s *BotService) handleNodePathInput(msg *tgbotapi.Message) bool {
   if err:=validateXHTTPHost(value);err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.hostinvalid",err.Error()));return true}
  case "xhttp_padding":
   if err:=validateXHTTPPadding(value);err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.paddinginvalid",err.Error()));return true}
+ case "reality_dest","reality_target":
+  if _,err:=validateRealityTarget(value);err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.targetinvalid",err.Error()));return true}
+ case "tls_pair_cert":
+  if !filepath.IsAbs(value){s.sendAlert(chatID,tr(s.cfg.Language,"node.create.absolutepath"));return true}
+  certPath:=filepath.Clean(value)
+  s.startNodeWizardValue(chatID,msg.From.ID,0,state.Tag,"tls_pair_key",tr(s.cfg.Language,"node.keypairprompt",mdCode(certPath)),certPath)
+  return true
+ case "tls_pair_key":
+  if !filepath.IsAbs(value){s.sendAlert(chatID,tr(s.cfg.Language,"node.create.absolutepath"));return true}
+  s.offerNodeTLSPair(chatID,msg.From.ID,0,NodeChange{Kind:"tls_pair",Tag:state.Tag,Value:state.Value,Secret:filepath.Clean(value)},"node.secretnote.certpair")
+  return true
+ case "alpn":
+  if _,err:=validateNodeALPNText(value);err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.alpninvalid",err.Error()));return true}
  default:
   s.sendAlert(chatID,tr(s.cfg.Language,"node.unknownop"));return true
  }

@@ -85,6 +85,96 @@ func TestNodeChangeRealityShortID(t *testing.T) {
  if _,err:=applyManagedNodeChange(tls,NodeChange{Kind:"reality_short_id",Tag:"TCP-REALITY-443",Value:"cc"});err==nil{t.Fatal("allowed short-ID update on TLS inbound")}
 }
 
+func TestNodeChangeRealityDestinationAndKeys(t *testing.T) {
+ root:=realityTestConfig(t,"reality",[]string{"www.nvidia.com"},"www.nvidia.com:443","www.nvidia.com:443")
+ settings:=realitySettingsFromRoot(t,root)
+ settings["publicKey"]="stale-public-key"
+ if _,err:=applyManagedNodeChange(root,NodeChange{Kind:"reality_dest",Tag:"TCP-REALITY-443",Value:"decoy.example.com:8443"});err!=nil{t.Fatal(err)}
+ if settings["dest"]!="decoy.example.com:8443"{t.Fatalf("dest not applied: %#v",settings)}
+ if _,err:=applyManagedNodeChange(root,NodeChange{Kind:"reality_target",Tag:"TCP-REALITY-443",Value:"www.example.com:443"});err!=nil{t.Fatal(err)}
+ if settings["target"]!="www.example.com:443"{t.Fatalf("target not applied: %#v",settings)}
+ rotatedKey:="rotated-private-key-material-000000000000"
+ if _,err:=applyManagedNodeChange(root,NodeChange{Kind:"reality_private_key",Tag:"TCP-REALITY-443",Secret:rotatedKey});err!=nil{t.Fatal(err)}
+ if settings["privateKey"]!=rotatedKey{t.Fatalf("private key not rotated: %#v",settings)}
+ if _,exists:=settings["publicKey"];exists{t.Fatalf("stale public key retained: %#v",settings)}
+ if _,err:=applyManagedNodeChange(root,NodeChange{Kind:"reality_mldsa_seed",Tag:"TCP-REALITY-443",Secret:"seed-value"});err!=nil{t.Fatal(err)}
+ if settings["mldsa65Seed"]!="seed-value"{t.Fatalf("ML-DSA seed not applied: %#v",settings)}
+ if _,err:=applyManagedNodeChange(root,NodeChange{Kind:"reality_mldsa_seed",Tag:"TCP-REALITY-443"});err!=nil{t.Fatal(err)}
+ if _,exists:=settings["mldsa65Seed"];exists{t.Fatalf("ML-DSA seed not cleared: %#v",settings)}
+ for _,change:=range []NodeChange{
+  {Kind:"reality_dest",Tag:"TCP-REALITY-443",Value:"https://example.com"},
+  {Kind:"reality_dest",Tag:"TCP-REALITY-443",Value:"example.com"},
+  {Kind:"reality_target",Tag:"TCP-REALITY-443",Value:"example.com:0"},
+  {Kind:"reality_target",Tag:"TCP-REALITY-443",Value:"bad host:443"},
+  {Kind:"reality_private_key",Tag:"TCP-REALITY-443",Secret:""},
+  {Kind:"reality_mldsa_seed",Tag:"TCP-REALITY-443"},
+  {Kind:"reality_dest",Tag:"missing",Value:"example.com:443"},
+ }{
+  if _,err:=applyManagedNodeChange(root,change);err==nil{t.Fatalf("accepted invalid REALITY change: %+v",change)}
+ }
+ tls:=realityTestConfig(t,"tls",[]string{"www.nvidia.com"},"www.nvidia.com:443","www.nvidia.com:443")
+ if _,err:=applyManagedNodeChange(tls,NodeChange{Kind:"reality_private_key",Tag:"TCP-REALITY-443",Secret:"key"});err==nil{t.Fatal("allowed REALITY key rotation on TLS")}
+}
+
+func TestNodeChangeDecryption(t *testing.T) {
+ var config map[string]any
+ data:=[]byte(`{"inbounds":[{"tag":"node","port":443,"protocol":"vless","settings":{"clients":[],"decryption":"none"},"streamSettings":{"network":"tcp","security":"reality"}}]}`)
+ if err:=json.Unmarshal(data,&config);err!=nil{t.Fatal(err)}
+ settings:=config["inbounds"].([]any)[0].(map[string]any)["settings"].(map[string]any)
+ if _,err:=applyManagedNodeChange(config,NodeChange{Kind:"decryption",Tag:"node",Secret:"new-decryption"});err!=nil{t.Fatal(err)}
+ if settings["decryption"]!="new-decryption"{t.Fatalf("decryption not applied: %#v",settings)}
+ if _,err:=applyManagedNodeChange(config,NodeChange{Kind:"decryption",Tag:"node",Secret:"none"});err!=nil{t.Fatal(err)}
+ if settings["decryption"]!="none"{t.Fatalf("decryption not disabled: %#v",settings)}
+ if _,err:=applyManagedNodeChange(config,NodeChange{Kind:"decryption",Tag:"node",Secret:"none"});err==nil{t.Fatal("accepted unchanged decryption")}
+}
+
+func TestNodeChangeTLSPairAndALPN(t *testing.T) {
+ dir:=t.TempDir()
+ certPath,keyPath:=writeTestCertificate(t,dir,"www.example.com")
+ newDir:=t.TempDir()
+ newCert,newKey:=writeTestCertificate(t,newDir,"www.example.com")
+ otherCert,otherKey:=writeTestCertificate(t,newDir,"other.example.com")
+ var config map[string]any
+ raw:=map[string]any{"inbounds":[]any{map[string]any{
+  "tag":"cdn","port":float64(443),"protocol":"vless",
+  "settings":map[string]any{"clients":[]any{}},
+  "streamSettings":map[string]any{
+   "network":"xhttp","security":"tls",
+   "tlsSettings":map[string]any{
+    "serverName":"www.example.com",
+    "certificates":[]any{map[string]any{"certificateFile":certPath,"keyFile":keyPath}},
+    "alpn":[]any{"h2","http/1.1"},
+   },
+   "xhttpSettings":map[string]any{"path":"/s","mode":"auto"},
+  },
+ }}}
+ serialized,_:=json.Marshal(raw)
+ if err:=json.Unmarshal(serialized,&config);err!=nil{t.Fatal(err)}
+ if _,err:=applyManagedNodeChange(config,NodeChange{Kind:"tls_pair",Tag:"cdn",Value:newCert,Secret:newKey});err!=nil{t.Fatal(err)}
+ tlsSettings:=config["inbounds"].([]any)[0].(map[string]any)["streamSettings"].(map[string]any)["tlsSettings"].(map[string]any)
+ cert:=tlsSettings["certificates"].([]any)[0].(map[string]any)
+ if cert["certificateFile"]!=newCert||cert["keyFile"]!=newKey{t.Fatalf("pair not replaced: %#v",cert)}
+ if _,err:=applyManagedNodeChange(config,NodeChange{Kind:"tls_pair",Tag:"cdn",Value:otherCert,Secret:otherKey});err==nil{t.Fatal("accepted a certificate that does not cover the SNI")}
+ if _,err:=applyManagedNodeChange(config,NodeChange{Kind:"tls_pair",Tag:"cdn",Value:certPath,Secret:newKey});err==nil{t.Fatal("accepted mismatched certificate and key")}
+ if _,err:=applyManagedNodeChange(config,NodeChange{Kind:"tls_pair",Tag:"cdn",Value:"relative.crt",Secret:newKey});err==nil{t.Fatal("accepted relative certificate path")}
+ if _,err:=applyManagedNodeChange(config,NodeChange{Kind:"alpn",Tag:"cdn",Value:"h2, http/1.1"});err!=nil{t.Fatal(err)}
+ alpn:=tlsSettings["alpn"].([]any)
+ if len(alpn)!=2||alpn[0]!="h2"||alpn[1]!="http/1.1"{t.Fatalf("ALPN not written: %#v",alpn)}
+ if _,err:=applyManagedNodeChange(config,NodeChange{Kind:"alpn",Tag:"cdn",Value:"h3"});err==nil{t.Fatal("accepted unsupported ALPN")}
+ tcp:=realityTestConfig(t,"reality",[]string{"www.nvidia.com"},"www.nvidia.com:443","www.nvidia.com:443")
+ if _,err:=applyManagedNodeChange(tcp,NodeChange{Kind:"alpn",Tag:"TCP-REALITY-443",Value:"h2"});err==nil{t.Fatal("allowed ALPN on REALITY")}
+}
+
+func TestNodeChangeListenAddress(t *testing.T) {
+ root:=realityTestConfig(t,"reality",[]string{"www.nvidia.com"},"www.nvidia.com:443","www.nvidia.com:443")
+ inbound:=root["inbounds"].([]any)[0].(map[string]any)
+ if _,err:=applyManagedNodeChange(root,NodeChange{Kind:"listen",Tag:"TCP-REALITY-443",Value:"127.0.0.1"});err!=nil{t.Fatal(err)}
+ if inbound["listen"]!="127.0.0.1"{t.Fatalf("listen address not applied: %#v",inbound)}
+ if _,err:=applyManagedNodeChange(root,NodeChange{Kind:"listen",Tag:"TCP-REALITY-443",Value:"not-an-ip"});err==nil{t.Fatal("accepted invalid listen address")}
+ if _,err:=applyManagedNodeChange(root,NodeChange{Kind:"listen",Tag:"TCP-REALITY-443",Value:""});err!=nil{t.Fatal(err)}
+ if _,exists:=inbound["listen"];exists{t.Fatalf("listen address not cleared: %#v",inbound)}
+}
+
 func TestParseInboundTraffic(t *testing.T){
  payload:=[]byte(`{"stat":[{"name":"inbound>>>cdn>>>traffic>>>uplink","value":"123"},{"name":"inbound>>>cdn>>>traffic>>>downlink","value":50},{"name":"inbound>>>direct>>>traffic>>>uplink","value":"9"},{"name":"user>>>admin>>>traffic>>>uplink","value":"20"}]}`)
  values,err:=parseInboundTraffic(payload);if err!=nil{t.Fatal(err)}

@@ -27,7 +27,7 @@ func TestManagedUserCreationAndFlow(t *testing.T) {
  for _,tag:=range []string{"raw","cdn"} {
   list:=clientsIn(t,root,tag)
   if len(list)!=2 {t.Fatalf("%s clients %d",tag,len(list))}
-  c,_:=getMap(list[1]);if c["email"]!="phone" {t.Fatal(c)}
+  c,_:=getMap(list[1]);if c["email"]!=bindingEmail("phone",tag) {t.Fatal(c)}
   if tag=="raw" && c["flow"]!="xtls-rprx-vision" {t.Fatal("Vision not copied")}
   if tag=="cdn" && c["flow"]!=nil {t.Fatal("Unexpected Vision on CDN")}
  }

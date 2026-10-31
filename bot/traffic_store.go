@@ -22,6 +22,10 @@ type trafficCounter struct {
 
 type trafficStore struct {
  Users map[string]trafficCounter `json:"users"`
+ // Bindings holds per-inbound counters for users migrated to binding emails.
+ // Users remains the authoritative aggregate and also contains pre-migration
+ // history that cannot be split by node.
+ Bindings map[string]trafficCounter `json:"bindings,omitempty"`
  Inbounds map[string]trafficCounter `json:"inbounds,omitempty"`
  UpdatedAt string `json:"updated_at,omitempty"`
  LastOnline map[string]int64 `json:"last_online,omitempty"`
@@ -67,9 +71,27 @@ func updatedCounter(old trafficCounter,up,down uint64,epoch string) trafficCount
 }
 
 func applyTrafficSnapshot(state *trafficStore,users []UserTraffic,inbounds []InboundTraffic,epoch string) bool {
+ ensureTrafficMaps(state)
  changed:=false
  for _,u:=range users {
   if u.Email==""{continue}
+  if owner,_,ok:=parseBindingEmail(u.Email);ok {
+   current,bindingExists:=state.Bindings[u.Email]
+   next:=updatedCounter(current,u.Uplink,u.Downlink,epoch)
+   if !bindingExists||next!=current {
+    state.Bindings[u.Email]=next
+    // Users keeps the rolling total every existing limit, quota, and
+    // directory view already reads. Only the totals move: the binding's
+    // LastUp/LastDown/Epoch describe the per-node runtime counter, while the
+    // owner row stays a sum and must not produce a second delta calculation.
+    aggregate:=state.Users[owner]
+    aggregate.TotalUp+=next.TotalUp-current.TotalUp
+    aggregate.TotalDown+=next.TotalDown-current.TotalDown
+    state.Users[owner]=aggregate
+    changed=true
+   }
+   continue
+  }
   current,ok:=state.Users[u.Email]
   next:=updatedCounter(current,u.Uplink,u.Downlink,epoch)
   if !ok||next!=current{state.Users[u.Email]=next;changed=true}
@@ -133,15 +155,16 @@ func snapshotTraffic(configPath,xrayBinary,statsServer string)(trafficStore,erro
 // directory is best effort: the collector must never fail because the user
 // directory is temporarily unreadable.
 func onlineQueryEmails(configPath string,state trafficStore) []string {
- seen:=make(map[string]bool,len(state.Users))
- for name:=range state.Users{seen[name]=true}
+ candidates:=make([]string,0,len(state.Users))
+ for name:=range state.Users{candidates=append(candidates,name)}
+ for email:=range state.Bindings{candidates=append(candidates,email)}
  if names,err:=allDirectoryNames(configPath);err==nil {
-  for _,name:=range names{seen[name]=true}
+  candidates=append(candidates,names...)
  }
- emails:=make([]string,0,len(seen))
- for name:=range seen{emails=append(emails,name)}
- sort.Strings(emails)
- return emails
+ if groups,err:=managedClientEmailsFromConfig(configPath);err==nil {
+  for _,emails:=range groups{candidates=append(candidates,emails...)}
+ }
+ return sortedUniqueStrings(candidates)
 }
 
 func snapshotTrafficBestEffortLocked(configPath,xrayBinary,statsServer string) {
@@ -180,7 +203,13 @@ func editTrafficStore(configPath string,edit func(*trafficStore)error)error{
 // Remove per-user accounting and IP history, preserving inbound totals.
 func discardTrafficUser(state *trafficStore,name string) bool {
  changed:=false
+ ensureTrafficMaps(state)
  if _,ok:=state.Users[name];ok{delete(state.Users,name);changed=true}
+ for email:=range state.Bindings {
+  if owner,_,ok:=parseBindingEmail(email);ok&&owner==name {
+   delete(state.Bindings,email);changed=true
+  }
+ }
  if _,ok:=state.LastOnline[name];ok{delete(state.LastOnline,name);changed=true}
  if _,ok:=state.LastActive[name];ok{delete(state.LastActive,name);changed=true}
  if _,ok:=state.OnlineIPs[name];ok{delete(state.OnlineIPs,name);changed=true}
@@ -205,6 +234,10 @@ func reconcileTrafficUsersLocked(configPath string,state *trafficStore)(bool,err
  for _,name:=range suspended{allowed[name]=true}
  changed:=false
  for name:=range state.Users {if !allowed[name]&&discardTrafficUser(state,name){changed=true}}
+ for email:=range state.Bindings {
+  owner,_,ok:=parseBindingEmail(email)
+  if ok&&!allowed[owner]&&discardTrafficUser(state,owner){changed=true}
+ }
  for name:=range state.LiveIPs {if !allowed[name]&&discardTrafficUser(state,name){changed=true}}
  for name:=range state.OnlineIPs {if !allowed[name]&&discardTrafficUser(state,name){changed=true}}
  for name:=range state.LastOnline {if !allowed[name]&&discardTrafficUser(state,name){changed=true}}
@@ -229,15 +262,18 @@ func refreshOnlineTraffic(configPath,xrayBinary,statsServer string)(trafficStore
  state,err:=loadTrafficStore(configPath);if err!=nil{return state,err}
  reconciled,err:=reconcileTrafficUsersLocked(configPath,&state);if err!=nil{return state,err}
  active,err:=activeTrafficUserSet(configPath);if err!=nil{return state,err}
- emails:=make([]string,0,len(active))
- for name:=range active{emails=append(emails,name)}
- sort.Strings(emails)
+ candidates:=make([]string,0,len(active))
+ for name:=range active{candidates=append(candidates,name)}
+ if groups,groupsErr:=managedClientEmailsFromConfig(configPath);groupsErr==nil {
+  for name:=range active{candidates=append(candidates,groups[name]...)}
+ }
+ emails:=sortedUniqueStrings(candidates)
  ctx,cancel:=context.WithTimeout(context.Background(),10*time.Second);defer cancel()
  online,queryErr:=queryOnlineClientsForEmails(ctx,xrayBinary,statsServer,emails)
  changed:=reconciled
  if queryErr==nil {
   filtered:=online[:0]
-  for _,user:=range online{if active[user.Email]{filtered=append(filtered,user)}}
+  for _,user:=range online{if active[bindingOwner(user.Email)]{filtered=append(filtered,user)}}
   if applyOnlineSnapshot(&state,filtered,time.Now()){changed=true}
  }
  if changed {if err=saveTrafficStore(configPath,state);err!=nil{return state,err}}
@@ -252,15 +288,37 @@ func activeTrafficUserSet(configPath string)(map[string]bool,error){
 }
 
 func renameTrafficStoreLocked(configPath,oldName,newName string)error{
+ if oldName==newName{return nil}
  state,err:=loadTrafficStore(configPath)
  if err!=nil{return err}
- item,ok:=state.Users[oldName];if !ok{return nil}
  if _,exists:=state.Users[newName];exists{return errors.New("The new name already has historical traffic")}
- item.LastUp=0
- item.LastDown=0
- item.Epoch=""
- state.Users[newName]=item
- delete(state.Users,oldName)
+ type bindingMove struct{from,to string}
+ moves:=make([]bindingMove,0)
+ for email:=range state.Bindings {
+  owner,tag,ok:=parseBindingEmail(email)
+  if !ok||owner!=oldName{continue}
+  target:=bindingEmail(newName,tag)
+  if target==email{continue}
+  if _,exists:=state.Bindings[target];exists{return fmt.Errorf("The new name already has traffic for inbound %s",tag)}
+  moves=append(moves,bindingMove{from:email,to:target})
+ }
+ if item,ok:=state.Users[oldName];ok {
+  item.LastUp=0
+  item.LastDown=0
+  item.Epoch=""
+  state.Users[newName]=item
+  delete(state.Users,oldName)
+ }
+ for _,move:=range moves {
+  item:=state.Bindings[move.from]
+  // The Xray client email changes, so its runtime counter starts at zero.
+  // Keeping the old watermark would undercount until it catches up.
+  item.LastUp=0
+  item.LastDown=0
+  item.Epoch=""
+  state.Bindings[move.to]=item
+  delete(state.Bindings,move.from)
+ }
  if at,ok:=state.LastOnline[oldName];ok{state.LastOnline[newName]=at;delete(state.LastOnline,oldName)}
  if at,ok:=state.LastActive[oldName];ok{state.LastActive[newName]=at;delete(state.LastActive,oldName)}
  if ips,ok:=state.OnlineIPs[oldName];ok{state.OnlineIPs[newName]=ips;delete(state.OnlineIPs,oldName)}
@@ -277,6 +335,7 @@ func renameTrafficStore(configPath,oldName,newName string)error{
 func resetTrafficStore(configPath string)error{
  return editTrafficStore(configPath,func(state *trafficStore)error{
   for name:=range state.Users {state.Users[name]=trafficCounter{}}
+  for email:=range state.Bindings {state.Bindings[email]=trafficCounter{}}
   return nil
  })
 }
@@ -284,26 +343,92 @@ func resetTrafficStore(configPath string)error{
 func resetTrafficUserLocked(configPath,name string)error {
  state,err:=loadTrafficStore(configPath);if err!=nil{return err}
  state.Users[name]=trafficCounter{}
+ for email:=range state.Bindings {
+  if owner,_,ok:=parseBindingEmail(email);ok&&owner==name{state.Bindings[email]=trafficCounter{}}
+ }
  return saveTrafficStore(configPath,state)
 }
 
-// resetUserTraffic clears the live Xray counter and then the persisted ledger
-// entry for one user. The runtime reset must succeed first: zeroing only the
-// ledger would add the still-live counter back on the next sample.
+// resetUserTraffic clears the live Xray counters and then the persisted ledger
+// entry for one user. Every binding email must be reset individually because
+// statsquery matches patterns with strings.Contains and "user>>>alice>>>"
+// never matches "user>>>alice+VEN...>>>".
 func resetUserTraffic(configPath,xrayBinary,statsServer,email string)error{
  if !managedUserName.MatchString(email){return errors.New("Invalid user identifier")}
  lock,err:=acquireConfigLock(configPath,10*time.Second)
  if err!=nil{return err}
  defer releaseConfigLock(lock)
- ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second)
- defer cancel()
- out,err:=exec.CommandContext(ctx,xrayBinary,"api","statsquery","--server="+statsServer,"-pattern=user>>>"+email+">>>","-reset=true").CombinedOutput()
- if err!=nil{return fmt.Errorf("Xray counter reset failed: %w: %s",err,strings.TrimSpace(string(out)))}
+ state,err:=loadTrafficStore(configPath);if err!=nil{return err}
+ aliases,err:=bindingEmailAliases(configPath,state,email)
+ if err!=nil{return err}
+ for _,alias:=range aliases {
+  ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second)
+  out,runErr:=exec.CommandContext(ctx,xrayBinary,"api","statsquery","--server="+statsServer,"-pattern=user>>>"+alias+">>>","-reset=true").CombinedOutput()
+  cancel()
+  if runErr!=nil{return fmt.Errorf("Xray counter reset failed for %s: %w: %s",alias,runErr,strings.TrimSpace(string(out)))}
+ }
  return resetTrafficUserLocked(configPath,email)
 }
 
 func resetTrafficAllUsersLocked(configPath string)error {
  state,err:=loadTrafficStore(configPath);if err!=nil{return err}
  for name:=range state.Users{state.Users[name]=trafficCounter{}}
+ for email:=range state.Bindings{state.Bindings[email]=trafficCounter{}}
  return saveTrafficStore(configPath,state)
+}
+
+// resetNodeBindingCounters keeps per-node history after an inbound is deleted
+// but clears the runtime watermark, so a later node reusing the tag does not
+// inherit a stale "last" value and undercount the new counter.
+func resetNodeBindingCounters(configPath,tag string) error {
+ return editTrafficStore(configPath,func(state *trafficStore)error{
+  for email,item:=range state.Bindings {
+   tagValue,ok:=bindingTag(email)
+   if !ok||tagValue!=tag{continue}
+   item.LastUp=0
+   item.LastDown=0
+   item.Epoch=""
+   state.Bindings[email]=item
+  }
+  return nil
+ })
+}
+
+type bindingTrafficEntry struct {
+ Email string
+ User string
+ Tag string
+ Uplink uint64
+ Downlink uint64
+}
+
+func (e bindingTrafficEntry) Total() uint64 {return e.Uplink+e.Downlink}
+
+func sortedBindingTraffic(entries []bindingTrafficEntry) []bindingTrafficEntry {
+ sort.Slice(entries,func(i,j int)bool{
+  if entries[i].Total()!=entries[j].Total(){return entries[i].Total()>entries[j].Total()}
+  if entries[i].Tag!=entries[j].Tag{return entries[i].Tag<entries[j].Tag}
+  return entries[i].User<entries[j].User
+ })
+ return entries
+}
+
+func storedBindingTrafficForUser(state trafficStore,user string) []bindingTrafficEntry {
+ entries:=make([]bindingTrafficEntry,0)
+ for email,item:=range state.Bindings {
+  owner,tag,ok:=parseBindingEmail(email)
+  if !ok||owner!=user{continue}
+  entries=append(entries,bindingTrafficEntry{Email:email,User:owner,Tag:tag,Uplink:item.TotalUp,Downlink:item.TotalDown})
+ }
+ return sortedBindingTraffic(entries)
+}
+
+func storedBindingTrafficForTag(state trafficStore,tag string) []bindingTrafficEntry {
+ entries:=make([]bindingTrafficEntry,0)
+ for email,item:=range state.Bindings {
+  owner,bindingTag,ok:=parseBindingEmail(email)
+  if !ok||bindingTag!=tag{continue}
+  entries=append(entries,bindingTrafficEntry{Email:email,User:owner,Tag:bindingTag,Uplink:item.TotalUp,Downlink:item.TotalDown})
+ }
+ return sortedBindingTraffic(entries)
 }
