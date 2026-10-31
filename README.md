@@ -26,15 +26,19 @@ Run `sudo freedom` to open the terminal menu. The Telegram submenu can install t
 | Add, rename, remove, suspend and restore users | Yes (Go manager required) | Yes |
 | Rotate user UUIDs | Yes | Yes |
 | Per-node VLESS URI, text export and QR codes | Yes | Yes |
-| Change XHTTP path/mode and supported REALITY SNI settings | Yes | Yes (confirmation required) |
+| Change XHTTP path/mode, host, padding, listener port and REALITY SNI/short ID | Yes | Yes (confirmation required) |
 | User and inbound traffic totals | Yes | Yes |
-| Online users, source IPs and last-online information | Via collector | `/online` and user details |
+| Per-user traffic quota and expiry with automatic suspension and admin notices | Local metadata | Yes |
+| Online users, source IPs and last-online information | Via collector | `/online`, `/onlinedoctor` and user details |
+| Routing rules, outbounds and balancers | Config file | Read-only `/routing` |
 | Bot and manager updates; Xray upgrades and rollback | Yes | Permission-gated |
 | Public subscription service and full web dashboard | Not provided | Not provided |
 
 User identities are kept separately from Xray inbounds in a local, permission-restricted `freedom-users.json`. A newly created user is **not** automatically granted access to every inbound. Assign access explicitly by node. Existing users are imported from Xray configuration without rotating their UUIDs. Conflicting identities are rejected rather than merged silently.
 
 Suspended users retain their UUID and previous bindings in the local `freedom-disabled-users.json` file (mode 0600). This file is not encrypted. If an inbound is deleted, restoring its former binding can fail.
+
+Traffic quotas and expiry dates are stored in `freedom-user-limits.json` (mode 0600) because Xray has no native quota fields. The Bot checks them once a minute while it is running and suspends a client through the same reversible suspension flow when its total traffic reaches the quota or its expiry date passes. Administrators receive an 80% warning, expiry warnings three days ahead, and final suspension notices. Enforcement requires `allow_mutations`, never suspends the last remaining client of an inbound, and restarts Xray once per enforced suspension. Raising the quota or resetting traffic does not re-enable an automatically suspended user; restore it explicitly after reviewing the limits.
 
 ### Bot commands
 
@@ -54,6 +58,8 @@ Suspended users retain their UUID and previous bindings in the local `freedom-di
 /traffic                   Persisted user traffic totals
 /inboundtraffic            Persisted inbound traffic totals
 /online                    Online users and recent source IPs (v1.3.0)
+/onlinedoctor              Diagnose online statistics and repair the policy
+/routing                   Read-only routing, outbound and balancer view
 /status                    Server status
 /version                   Installed and upstream component versions
 /update                    Update the manager and bot

@@ -74,6 +74,7 @@ func (s *BotService) Start() error {
 
 	// Independently persist traffic, even when no report or chat is requested.
  if !s.collectorReady {go s.runTrafficSampler()}
+ go s.runLimitEnforcer()
 
  // Start periodic report if enabled
 	if s.cfg.ReportHours > 0 {
@@ -160,6 +161,7 @@ func (s *BotService) handleUpdate(update tgbotapi.Update) {
 func (s *BotService) handleMessage(msg *tgbotapi.Message) {
 	s.maybeAutoDetectLanguage(msg)
 	if s.handleNodePathInput(msg) { return }
+	if s.handleUserLimitInput(msg) { return }
 	if s.handleWizardMessage(msg) { return }
 	text := strings.TrimSpace(msg.Text)
 	cmd := msg.Command()
@@ -303,7 +305,8 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 	case strings.HasPrefix(data, "manage_cancel:"):
 		s.resolveUserChange(cb, false)
 	case strings.HasPrefix(data, "manage_user:") || strings.HasPrefix(data, "manage_rotate:") ||
-		strings.HasPrefix(data, "manage_delete:") || strings.HasPrefix(data, "manage_disable:") || strings.HasPrefix(data, "manage_node:"):
+		strings.HasPrefix(data, "manage_delete:") || strings.HasPrefix(data, "manage_disable:") || strings.HasPrefix(data, "manage_node:") ||
+		strings.HasPrefix(data, "manage_quota:") || strings.HasPrefix(data, "manage_expiry:") || strings.HasPrefix(data, "manage_limitclear:"):
 		s.handleManagedUserCallback(cb)
 	}
 }

@@ -83,6 +83,10 @@ func (s *BotService) resolveUserChange(cb *tgbotapi.CallbackQuery,confirm bool) 
   return
  }
  // Traffic rename is performed by changeDirectoryUser under the same config lock.
+ switch request.Change.Kind {
+ case "delete": s.dropUserLimit(request.Change.User,"")
+ case "rename": s.dropUserLimit(request.Change.User,request.Change.NewName)
+ }
  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"manage.completed",msg),s.backToMainMarkup())
 }
 
@@ -130,10 +134,12 @@ func (s *BotService) sendUserManageCard(chatID int64,msgID int,key string) {
  if email==""{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"users.empty"),s.backToMainMarkup());return}
  var rows [][]tgbotapi.InlineKeyboardButton
  var content strings.Builder
+ var usedBytes uint64
  content.WriteString(tr(s.cfg.Language,"account.title",email))
  if state,e:=loadTrafficStore(s.cfg.XrayConfigPath);e==nil {
   if c,ok:=state.Users[email];ok {
-   content.WriteString(tr(s.cfg.Language,"account.total",FormatBytes(c.TotalUp),FormatBytes(c.TotalDown),FormatBytes(c.TotalUp+c.TotalDown)))
+   usedBytes=c.TotalUp+c.TotalDown
+   content.WriteString(tr(s.cfg.Language,"account.total",FormatBytes(c.TotalUp),FormatBytes(c.TotalDown),FormatBytes(usedBytes)))
   }
   if ips,known:=recentOnline(state,email,time.Now());!known{
    content.WriteString(tr(s.cfg.Language,"account.unknown"))
@@ -152,6 +158,20 @@ func (s *BotService) sendUserManageCard(chatID int64,msgID int,key string) {
   content.WriteString(tr(s.cfg.Language,"account.warning"))
  }else{
   content.WriteString(tr(s.cfg.Language,"account.error",e.Error()))
+ }
+ limits,limitErr:=snapshotUserLimits(s.cfg.XrayConfigPath)
+ if limitErr!=nil {
+  content.WriteString(tr(s.cfg.Language,"account.limits.error",mdEsc(limitErr.Error())))
+ }else if limit,ok:=limits[email];ok&&!limit.empty() {
+  content.WriteString(tr(s.cfg.Language,"account.limits.header"))
+  if limit.QuotaBytes>0 {
+   content.WriteString(tr(s.cfg.Language,"account.limits.quota",mdCode(FormatBytes(uint64(limit.QuotaBytes))),mdCode(FormatBytes(usedBytes))))
+  }
+  if limit.ExpiryUnix>0 {
+   content.WriteString(tr(s.cfg.Language,"account.limits.expiry",mdCode(expiryLabel(limit,s.cfg.Language))))
+  }
+ }else{
+  content.WriteString(tr(s.cfg.Language,"account.limits.none"))
  }
  for _,node:=range nodes {
   present:=false
@@ -174,6 +194,13 @@ func (s *BotService) sendUserManageCard(chatID int64,msgID int,key string) {
  ))
  rows=append(rows,tgbotapi.NewInlineKeyboardRow(
   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"account.suspend"),"manage_disable:"+key),
+ ))
+ rows=append(rows,tgbotapi.NewInlineKeyboardRow(
+  tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"account.quota"),"manage_quota:"+key),
+  tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"account.expiry"),"manage_expiry:"+key),
+ ))
+ rows=append(rows,tgbotapi.NewInlineKeyboardRow(
+  tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"account.limitsclear"),"manage_limitclear:"+key),
  ))
  rows=append(rows,tgbotapi.NewInlineKeyboardRow(
   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"account.delete"),"manage_delete:"+key),
@@ -199,6 +226,19 @@ func (s *BotService) handleManagedUserCallback(cb *tgbotapi.CallbackQuery) {
   if email==""{s.sendAlert(chatID,tr(s.cfg.Language,"manage.usermissing"));return}
   kind:="rotate";if parts[0]=="manage_delete"{kind="delete"};if parts[0]=="manage_disable"{kind="disable"}
   s.offerUserChange(chatID,cb.From.ID,msgID,UserChange{Kind:kind,User:email})
+ case "manage_quota","manage_expiry","manage_limitclear":
+  email:=lookupManagedUserByKey(s.cfg.XrayConfigPath,parts[1])
+  if email==""{s.sendAlert(chatID,tr(s.cfg.Language,"manage.usermissing"));return}
+  if parts[0]=="manage_limitclear"{s.clearUserLimits(chatID,msgID,parts[1],email);return}
+  if !s.cfg.AllowMutations{s.sendAlert(chatID,tr(s.cfg.Language,"manage.disabled"));return}
+  limits,limitErr:=snapshotUserLimits(s.cfg.XrayConfigPath)
+  if limitErr!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"limit.savefailed",limitErr.Error()));return}
+  limit:=limits[email]
+  if parts[0]=="manage_quota" {
+   s.beginUserLimitWizard(chatID,cb.From.ID,msgID,email,"quota",tr(s.cfg.Language,"limit.quotaprompt",mdCode(quotaLabel(limit,s.cfg.Language))))
+  }else{
+   s.beginUserLimitWizard(chatID,cb.From.ID,msgID,email,"expiry",tr(s.cfg.Language,"limit.expiryprompt",mdCode(expiryLabel(limit,s.cfg.Language))))
+  }
  case "manage_node":
   if len(parts)!=4{return}
   email:=lookupManagedUserByKey(s.cfg.XrayConfigPath,parts[2])
