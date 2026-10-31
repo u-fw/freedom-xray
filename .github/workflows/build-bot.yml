@@ -1,11 +1,16 @@
 name: Build Freedom Bot
 
 on:
-  push:
-    paths:
-      - 'bot/**'
-      - '.github/workflows/build-bot.yml'
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/release-trigger'
+
+concurrency:
+  group: freedom-bot-release-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -23,16 +28,45 @@ jobs:
           go-version: '1.24'
           cache-dependency-path: bot/go.sum
 
+      - name: Validate scripts and English-first source
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n freedom.sh 1stream.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          paths = [Path("README.md"), Path("freedom.sh"), *Path("bot").glob("*.go")]
+          for path in paths:
+              if re.search(r"[\u4e00-\u9fff]", path.read_text(encoding="utf-8")):
+                  raise SystemExit(f"Non-English text found in default source: {path}")
+          print("English-first source validation passed")
+          PY
+
+      - name: Verify dependency integrity
+        working-directory: bot
+        run: go mod verify
+
+      - name: Verify Bot before publishing
+        working-directory: bot
+        run: |
+          go test ./...
+          go test -race ./...
+
       - name: Build Binaries
+        id: build_binaries
         shell: bash
         run: |
           set -Eeuo pipefail
           mkdir -p dist
           cd bot
 
-          VERSION=$(git describe --tags --always 2>/dev/null || echo "v1.0.0")
+          COMMIT=$(git rev-parse --short=12 HEAD)
           BUILD_TIME=$(date -u +%Y-%m-%d)
-          LDFLAGS="-s -w -X main.Version=${VERSION} -X main.BuildTime=${BUILD_TIME}"
+          BOT_VERSION=$(awk -F'"' '/^[[:space:]]*Version[[:space:]]*=/{print $2; exit}' main.go)
+          test -n "$BOT_VERSION"
+          echo "bot_version=$BOT_VERSION" >> "$GITHUB_OUTPUT"
+          LDFLAGS="-s -w -X main.Commit=${COMMIT} -X main.BuildTime=${BUILD_TIME}"
 
           echo "Building linux/amd64..."
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="${LDFLAGS}" -o ../dist/freedom-bot-linux-amd64 .
@@ -52,14 +86,30 @@ jobs:
           path: dist/*
           retention-days: 7
 
+      - name: Verify Bot source has not been superseded
+        id: latest
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --quiet --depth=1 origin main
+          built_tree="$(git rev-parse HEAD:bot)"
+          latest_tree="$(git rev-parse FETCH_HEAD:bot)"
+          if [[ "$built_tree" == "$latest_tree" ]]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping stale Bot artifact release: bot source has changed."
+          fi
       - name: Publish Release
         uses: softprops/action-gh-release@v2
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && steps.latest.outputs.publish == 'true'
         with:
           tag_name: bot-latest
           name: Freedom Bot Latest Release
           body: |
             Automated build of `freedom-bot` (Telegram Bot for freedom.sh & Xray-core).
+            Commit: ${{ github.sha }}
+            Version: ${{ steps.build_binaries.outputs.bot_version }}
 
             ### Binaries & Verification
             - `freedom-bot-linux-amd64`

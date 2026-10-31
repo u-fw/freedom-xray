@@ -1,114 +1,185 @@
-# xray-rule-assets
+# freedom-xray
 
-Xray rule assets and related automation scripts.
+A lightweight, self-hosted Xray-core manager with a terminal interface (`freedom.sh`) and an optional Telegram bot (`freedom-bot`).
 
-## 1stream.dat
+It manages the official Xray-core under systemd; no web panel is required. It is intended for personal and small-server administration. No transport can guarantee resistance to fingerprinting or censorship.
 
-This repository can manually build `1stream.dat` with GitHub Actions.
+## Install
 
-The generated file is a geosite/domain asset for Xray `domain` rules. It does not contain geoip data.
+Review the script before running it as root:
 
-### Build
+```bash
+curl -fsSLo freedom.sh https://raw.githubusercontent.com/u-fw/freedom-xray/main/freedom.sh
+bash -n freedom.sh
+less freedom.sh
+sudo bash ./freedom.sh
+```
 
-Run the `Build 1stream.dat` workflow manually from the GitHub Actions page.
+Run `sudo freedom` to open the terminal menu. The Telegram submenu can install the bot and configure its BotFather token, administrator Telegram user IDs and remote permissions.
 
-The workflow publishes these files to the `1stream-latest` release:
+## Features
 
-- `1stream.dat`
-- `1stream.dat.sha256`
-- `1stream-tags.md`
-- `source-info.json`
+| Capability | Terminal | Telegram |
+| --- | --- | --- |
+| VLESS RAW/REALITY/Vision, XHTTP/REALITY and XHTTP/TLS/CDN | Create and manage | Inspect and export |
+| Independent user identities and node assignments | Yes | Yes |
+| Add, rename, remove, suspend and restore users | Yes (Go manager required) | Yes |
+| Rotate user UUIDs | Yes | Yes |
+| Per-node VLESS URI, text export and QR codes | Yes | Yes |
+| Change XHTTP path/mode and supported REALITY SNI settings | Yes | Yes (confirmation required) |
+| User and inbound traffic totals | Yes | Yes |
+| Online users, source IPs and last-online information | Via collector | `/online` and user details |
+| Bot and manager updates; Xray upgrades and rollback | Yes | Permission-gated |
+| Public subscription service and full web dashboard | Not provided | Not provided |
 
-### Xray Usage
+User identities are kept separately from Xray inbounds in a local, permission-restricted `freedom-users.json`. A newly created user is **not** automatically granted access to every inbound. Assign access explicitly by node. Existing users are imported from Xray configuration without rotating their UUIDs. Conflicting identities are rejected rather than merged silently.
 
-Download `1stream.dat` to Xray's asset directory, usually `/usr/local/share/xray`.
+Suspended users retain their UUID and previous bindings in the local `freedom-disabled-users.json` file (mode 0600). This file is not encrypted. If an inbound is deleted, restoring its former binding can fail.
 
-Example routing rule:
+### Bot commands
+
+```text
+/start                     Main menu
+/users                     User management
+/adduser phone             Create an unassigned user
+/adduser phone cdn         Create and assign to inbound "cdn"
+/renameuser old new        Rename a user
+/rotateuser phone          Rotate a UUID
+/removeuser phone          Delete a user
+/disableuser phone         Suspend a user
+/enableuser phone          Restore a suspended user
+/assignuser phone cdn      Assign a user to an inbound
+/unassignuser phone cdn    Remove a user from an inbound
+/nodes                     Inbound list
+/traffic                   Persisted user traffic totals
+/inboundtraffic            Persisted inbound traffic totals
+/online                    Online users and recent source IPs (v1.3.0)
+/status                    Server status
+/version                   Installed and upstream component versions
+/update                    Update the manager and bot
+/restart                   Confirmed Xray restart
+/help                      Help
+/cancel                    Cancel the current input flow
+```
+
+The bot only accepts authorized administrator messages in **private chats**. Remote configuration changes, updates, core updates and full sensitive configuration backups must each be explicitly enabled in the local `bot.json`:
 
 ```json
 {
-  "type": "field",
-  "domain": [
-    "ext:1stream.dat:ai"
-  ],
-  "outboundTag": "proxy"
+  "allow_mutations": false,
+  "allow_updates": false,
+  "allow_core_updates": false,
+  "allow_sensitive_backup": false
 }
 ```
 
-Download `1stream-tags.md` from the release to see all generated tags.
+`allow_core_updates` additionally requires `allow_updates`. Keep sensitive backup sending disabled unless required. Use a different Telegram Bot token for each VPS unless you have a dedicated centralized polling architecture.
 
-## Scripts
+### Exporting user configurations
 
-- `1stream.sh`: build `1stream.dat` from 1stream upstream domain rules.
-- `freedom.sh`: Modern modular node lifecycle manager dedicated 100% exclusively to Xray-core.
+The user export menu lets you choose one assigned inbound or export all assigned links as a plain-text file. Individual links are sent without truncation; oversized links are delivered as TXT. QR generation is optional, and a failed QR does not suppress the underlying link.
 
-### Quick Start (Linux)
+The exporter preserves REALITY public-key, encryption, post-quantum and short-ID parameters. XHTTP exports use a standalone `mode=auto` (or the configured mode) and `extra={"xPaddingBytes":"100-1000"}`: `mode` is not duplicated inside `extra`. Padding can be read from `xhttpSettings.extra.xPaddingBytes` or the legacy top-level XHTTP setting.
 
-Run directly in terminal without manual download or permissions:
+The default XHTTP/TLS/CDN link includes an optional ECH value `cloudflare-ech.com+https://dns.alidns.com/dns-query`, intended for compatible v2rayN/v2rayNG imports. Compatibility depends on the client's core and the CDN's support; if the imported connection fails, test without ECH. ECH does not eliminate all metadata exposure.
 
-```bash
-# Direct connection (Overseas VPS)
-sudo bash <(curl -fsSL https://raw.githubusercontent.com/u-fw/xray-rule-assets/main/freedom.sh)
+### VLESS Vision compatibility
 
-# Accelerated mirror (CN / High-latency VPS)
-sudo bash <(curl -fsSL https://ghproxy.net/https://raw.githubusercontent.com/u-fw/xray-rule-assets/main/freedom.sh)
+| Transport / encryption | `xtls-rprx-vision` |
+| --- | --- |
+| RAW/TCP with TLS or REALITY | Supported when applicable |
+| XHTTP with `decryption=none` / `encryption=none` | Do not enable |
+| XHTTP with supported VLESS Encryption | Can be used with Encryption; not the same as RAW TCP splice |
+
+The exported flow must match the inbound user configuration. Neither CLI nor bot fabricates a Vision flow when none is configured.
+
+## Internationalization
+
+English is the **default locale** for the repository, terminal manager and Telegram Bot.
+
+- **Telegram:** use `/language en` (default) or `/language zh-CN` in an administrator private chat. The preference is saved in `bot.json` as `"language": "en"` or `"zh-CN"`. The main dashboard, traffic, online monitoring, help, commands and user details use embedded locale catalogs in `bot/locales/`; untranslated legacy messages fall back to English.
+- **Terminal:** choose **11. Language** from the main menu, or set `FREEDOM_LANG=en` / `FREEDOM_LANG=zh-CN`. The preference is stored at `/usr/local/etc/xray/freedom-cli-language`. Simplified Chinese main-menu strings are an optional, separately installed catalog (`locales/zh-CN.json`) downloaded from the official repository when selected; if unavailable, English is used. Other terminal submenus use English.
+- All development comments, errors, default UI text, documentation and commit messages are English. Translated strings are kept in language resource files. The default locale never depends on the host's operating-system locale.
+
+Language preferences do not alter Xray inbound settings, credentials, DNS rules, CDN headers or client sharing links.
+
+## Cloudflare Origin Rules and external ports
+
+When clients connect to `cdn.example.com:443` and a Cloudflare **Origin Rule** forwards traffic to `VPS:55555`, keep `inbounds[].port=55555` in Xray. Set the node's public-facing port to `443` in the terminal or Telegram node configuration. Exports then use the public port, without changing Xray's listener.
+
+This mapping is stored separately in `/usr/local/etc/xray/freedom-public-ports.json`:
+
+```json
+{
+  "nodes": {
+    "XHTTP-TLS-CDN-55555": {
+      "listen_port": 55555,
+      "public_port": 443
+    }
+  }
+}
 ```
 
-### Key Highlights & Features
+Only XHTTP/TLS nodes support this override. A value of `0` clears it. Stale mappings are ignored if the actual inbound listening port changes. The metadata does not modify Cloudflare rules, the firewall, TLS certificates or the Xray service itself.
 
-- **Live Version Dashboard & Global Shortcut (`freedom`)**:
-  - Console header displays active Xray-core version, script version, systemd service status, managed node count, managed user count, and panel coexistence status at a glance.
-  - Automatically registers `/usr/local/bin/freedom` so you can bring up the control panel anytime by simply typing `freedom`.
-- **Native Multi-User Management & Real-Time Traffic Statistics (StatsService)**:
-  - Powered 100% natively by Xray-core's internal `StatsService` gRPC API (`127.0.0.1:10085`, `dokodemo-door`), completely eliminating the need for external databases or third-party web panels.
-  - Independent user management: add/delete users with custom email tags and distinct UUIDs, automatically synchronized across all managed node inbounds.
-  - Real-time traffic query leaderboard (Uplink, Downlink, Total with automatic human-readable unit conversion: KB / MB / GB / TB).
-  - One-click traffic reset (for a single user or all users) and instant export of user-specific `vless://` URLs and terminal ANSI QR codes.
-- **Online Upgrade & Maintenance Center**:
-  - **Script Self-Updater**: Check and update `freedom.sh` directly from GitHub with syntax verification and safe rollback.
-  - **Xray-core Updater**: Query XTLS official releases and upgrade Xray-core in-place with zero downtime and automatic configuration re-validation.
-  - **Asset Updater**: One-click updates for official GeoIP/GeoSite databases and repository-built `1stream.dat` streaming media routing rules.
-- **Dynamic Modular Node Management (CRUD)**:
-  - Add, list, edit, and delete inbounds dynamically within a single unified Xray configuration (`config.json`).
-  - **Zero-Friction Node Setup**: Completely automated, silent UUID generation (no manual prompting or typing required).
-  - **Automatic Firewall Automation**: Intelligently detects and opens listening TCP ports on `ufw`, `firewalld`, or `iptables` upon adding/modifying nodes, and cleans them up upon node deletion.
-  - **Default Disguise**: Uses high-reputation `www.nvidia.com:443` as the default REALITY SNI target.
-  - **Flexible User Identifiers**: Supports arbitrary nicknames (e.g. `admin`, `alice`, `my_phone`) without enforcing fake email domain suffixes.
-  - Instant export of standard `vless://` URIs and terminal ANSI QR code rendering for all managed nodes.
-- **3 Core Atomic Architecture Templates**:
-  - **Template 1: VLESS + TCP + REALITY + Vision**: Highest performance, direct connection with Linux kernel Splice zero-copy hardware acceleration.
-  - **Template 2: VLESS + XHTTP + REALITY**: Next-gen HTTP streaming disguise (Beyond REALITY) with dynamic padding (`xPaddingBytes`) and anti-DPI probing, no domain required.
-  - **Template 3: VLESS + XHTTP + TLS**: Engineered for Cloudflare CDN proxying and IP unblocking (with automatic 10-year ECC self-signed certs and full ALPN negotiation).
-- **Vision Penetration on XHTTP**:
-  - Automatically enables `flow: "xtls-rprx-vision"` when paired with VLESS Encryption (`ML-KEM-768`), penetrating encryption layers to eliminate TLS-in-TLS fingerprints according to the official Xray specification.
-- **Cloudflare ECH Zero-Exposure Integration**:
-  - Automatically includes Outer SNI (`cloudflare-ech.com`) and secure DoH (`https://dns.alidns.com/dns-query`) guidance for CDN nodes, hiding origin custom domains completely from middleboxes.
-- **Strict Dual-Layer Port Conflict Prevention**:
-  - Automatically audits both internal Xray inbound definitions and global operating system TCP listeners (`ss`/`lsof`/`netstat`) before applying any port changes.
-- **Live System Network Tuning Diagnostics & Reversible Snapshots (Menu Option 6)**:
-  - One compact status view of the values that matter: BBR + FQ, TCP Fast Open, idle slow-start, 32MB socket buffers, `tcp_notsent_lowat`, local port range, connection queues, and live file-descriptor limits.
-  - Full-stack tuning also applies TCP user timeout and keepalive to every managed inbound and the direct outbound, then restarts Xray once so the new descriptor limit takes effect.
-  - **Automatic Original Snapshot Backup**: Automatically captures and archives native kernel parameter snapshots before applying any tuning (`/usr/local/etc/xray/sysctl_backup.conf`).
-  - **One-Click Reversible Rollback**: Instant restoration to original factory OS kernel values at any time with verification.
-  - System benchmark scoring (0-100) with a plain summary line.
-- **Standalone Go Telegram Bot (`freedom-bot`, Menu Option 9)**:
-  - Reference architecture based on 3X-UI, engineered in 100% pure Go with zero CGO or external database dependencies (`CGO_ENABLED=0`).
-  - Managed, configured, and daemonized seamlessly via `freedom.sh` and systemd (`freedom-bot.service`).
-  - **Interactive Inline Dashboard & Remote Control**:
-    - `/start` / `/menu`: Brings up the rich inline control console with instant navigation buttons.
-    - 📊 **Real-Time System Health**: Monitors CPU load, per-core utilization, RAM usage (Used/Total/%), Disk capacity, Uptime, and Xray status.
-    - 📈 **Native Traffic Leaderboard**: Direct integration with Xray's `StatsService` to display real-time Uplink, Downlink, and Total consumption per user, with an interactive one-click traffic reset confirmation flow.
-    - 📋 **Active Inbound Matrix**: Displays all active node ports, protocols (TCP / XHTTP), security layers (REALITY / TLS), and disguised SNIs.
-    - 👥 **User Export with In-Memory QR Codes**: Select any user to instantly receive standard `vless://` URLs alongside pure-Go generated high-resolution PNG QR code photos.
-    - 🔄 **Remote Service Operations**: Safe one-click Xray daemon reboot with confirmation dialogues.
-    - 💾 **Remote Config Backup**: Instantly sends `/usr/local/etc/xray/config.json` to the admin chat as a document attachment.
-    - 📢 **Automated Scheduled Reporting**: Configurable periodic broadcaster (e.g. every 12 hours) reporting VPS resource utilization and user traffic leaderboards directly to admins.
-  - **Security & Censorship-Resistant Networking**:
-    - Strict Admin ID validation (`admin_ids` whitelist), silently discarding or rejecting unauthorized requests.
-    - Built-in SOCKS5 proxy support (`socks5_proxy`), ensuring reliable connectivity to Telegram API even on mainland or restricted VPS nodes.
-  - **Automated CI/CD Cross-Compilation**:
-    - Dedicated GitHub Actions workflow (`build-bot.yml`) automatically builds static binaries for `linux/amd64` and `linux/arm64` with sha256 checksums, available via GitHub Releases and high-speed mirrors.
-- **Post-Quantum Cryptography (PQC)**:
-  - Integrated `vlessenc` (ML-KEM-768 / X25519) for post-quantum forward secrecy against *Harvest Now, Decrypt Later* attacks.
-  - Native `mldsa65` (ML-DSA-65 / Dilithium) post-quantum digital signature authentication for REALITY.
+Configure the DNS record as **Proxied**, then use **Rules → Origin Rules → Destination Port** for the intended hostname/path. URL Rewrite Rules do not replace Origin Rules. Prefer a valid origin certificate and Cloudflare **Full (strict)** TLS mode. The origin port must be reachable from Cloudflare; limiting access to Cloudflare IP ranges is recommended when practical. Do not inadvertently restrict a separate direct REALITY listener.
 
+### Real client IPs behind Cloudflare: deferred hardening
+
+**Current decision: do not automatically sanitize X-Forwarded-For (XFF).** Keep the existing CDN and Origin Rule configuration unchanged. A direct REALITY inbound obtains its source IP from the socket without a CDN forwarding header.
+
+For online-client telemetry, Xray supports `policy.levels["0"].statsUserOnline: true` and, on a trusted Cloudflare XHTTP inbound, `streamSettings.sockopt.trustedXForwardedFor: ["CF-Connecting-IP"]`. New XHTTP/TLS/CDN inbounds generated by the manager include the latter setting. Existing inbounds must be inspected and explicitly updated if they need real-client-IP observation. This is a **server-side inbound setting**, not an exported client `extra` field.
+
+**Important:** Xray's current header handling checks that a configured trusted header is present but actually extracts the **first address in X-Forwarded-For**. It does not read the `CF-Connecting-IP` value directly. A client-supplied XFF header may therefore forge the reported source IP. Without validation, source addresses are informational only. **Never use these IPs for automatic bans, connection limits or other security decisions.**
+
+If IP-based enforcement is added later:
+
+1. Add a Cloudflare **Request Header Transform Rule** scoped to the XHTTP hostname that removes the incoming `X-Forwarded-For`. Verify Cloudflare's regenerated forwarding chain, including any Workers or unusual proxy paths.
+2. Restrict the CDN origin listener (for example, `55555/TCP`) to trusted Cloudflare egress and use stronger origin authentication when appropriate. Restricting to Cloudflare IPs alone does not prove a request belongs to your zone. Do not block the separate REALITY `443` listener.
+3. Test ordinary IPv4/IPv6 clients, deliberately forged XFF values, and the Xray online-stats API before enabling automated IP decisions.
+
+References: [Cloudflare request header transformations](https://developers.cloudflare.com/rules/transform/request-header-modification/), [Cloudflare HTTP headers](https://developers.cloudflare.com/fundamentals/reference/http-headers/), [Xray-core header implementation](https://github.com/XTLS/Xray-core/blob/main/common/protocol/http/headers.go).
+
+## Traffic accounting and persistence
+
+Previously, the bot sampled Xray StatsService about every 15 seconds and saved totals to `/usr/local/etc/xray/freedom-stats.json`. v1.3.0 introduces a standalone `freedom-stats.service` and a transactional SQLite ledger at `/usr/local/etc/xray/freedom-stats.db` with a migration path from the JSON ledger. The JSON remains available as a compatibility mirror; it is not the canonical ledger after migration.
+
+The sampler maintains separate totals by **user** and by **inbound**. These independent counters **cannot** be used to calculate an exact per-user/per-inbound traffic matrix. Runtime resets and service restarts are handled by counter baselines and systemd invocation identifiers.
+
+Committed historical totals survive ordinary service reboots. Abrupt crashes or power loss may still omit traffic generated after the last successful sample. This is **not** exact billing-grade accounting, and Xray-level payload statistics are not interchangeable with hosting-provider transfer quotas.
+
+Recent observed IPs are retained only for a limited period. Online presence is ephemeral: stale polls must be shown as **unknown**, not as connected. CDN source IPs have the unvalidated-XFF caveat above. Full access logging is not required for the online-stats API.
+
+## Updating and troubleshooting
+
+Download and inspect the current manager, then start its menu:
+
+```bash
+curl --proto "=https" -fsSLo /tmp/freedom-latest.sh https://raw.githubusercontent.com/u-fw/freedom-xray/main/freedom.sh
+bash -n /tmp/freedom-latest.sh
+less /tmp/freedom-latest.sh
+sudo install -m 755 /tmp/freedom-latest.sh /usr/local/bin/freedom
+sudo freedom
+```
+
+Use the update menu to update the manager and Bot together, or install/update the Bot separately. Remote `/update` requires `allow_updates`; Xray-core upgrade and rollback require separate authorization and confirmation. Bot binaries are downloaded from this repository's GitHub Release and verified with published SHA-256 checksums. An updated GitHub source tree does **not** mean the VPS is running the latest process.
+
+```bash
+sudo /usr/local/bin/freedom-bot -v
+sudo systemctl status freedom-bot --no-pager
+sudo systemctl status freedom-stats --no-pager
+sudo journalctl -u freedom-bot -n 50 --no-pager
+sudo journalctl -u freedom-stats -n 50 --no-pager
+```
+
+Core updates may break compatibility with older Shadowrocket/v2rayN/v2rayNG REALITY or ML-KEM implementations. Keep an independent SSH/Tailscale recovery route and a working alternate node. An Xray process starting successfully does not establish that clients can complete a handshake.
+
+`StatsService` binds to `127.0.0.1` by default and should not be exposed to the public internet. The Bot currently needs elevated local privileges to manage configuration and systemd; protect its token, administrator chat and release sources. Controlled restarts can preserve a final snapshot, but cannot promise uninterrupted client sessions.
+
+## CI/CD
+
+GitHub Actions workflows are **manually dispatched** to avoid redundant builds and notification spam during development. Use **Source validation** to check Bash syntax and run Go tests; after validation, manually run **Build Freedom Bot** to publish the versioned Bot binary and its SHA-256 checksums. The separate `1stream.dat` builder is already manual. The build workflow never commits generated module files. Releases may also be triggered by explicitly changing `.github/release-trigger`; ordinary source commits do not publish a Bot binary.
+
+## 1stream geosite data
+
+`1stream.sh` generates the optional `1stream.dat` domain/geosite asset. It does not include GeoIP data and is separate from the user, node and Bot-management components.
