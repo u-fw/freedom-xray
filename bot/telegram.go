@@ -221,7 +221,7 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 		s.sendInboundTrafficCard(chatID,msgID)
 	case data == "menu_nodes":
 		s.sendNodesCard(chatID, msgID)
-	case strings.HasPrefix(data,"node_detail:") || strings.HasPrefix(data,"node_mode:") || strings.HasPrefix(data,"node_path:"):
+	case strings.HasPrefix(data,"node_detail:") || strings.HasPrefix(data,"node_mode:") || strings.HasPrefix(data,"node_path:") || strings.HasPrefix(data,"node_public_port:"):
 		s.handleNodeCallback(cb)
 	case strings.HasPrefix(data,"node_confirm:"):
 		s.confirmNodeChange(cb,true)
