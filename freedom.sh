@@ -29,6 +29,8 @@ NC='\033[0m'
 export PATH="$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
 
 SCRIPT_VERSION="v13.2-synced-updates"
+# 客户端侧 ECH（仅 TLS + XHTTP 导出；不修改 Xray 服务端 TLS）
+XHTTP_CDN_ECH_CONFIG="cloudflare-ech.com+https://dns.alidns.com/dns-query"
 DEFAULT_SNI="www.nvidia.com"
 DEFAULT_PORT="443"
 DEFAULT_NODE_NAME="Premium-Node"
@@ -1788,6 +1790,14 @@ get_xray_stats_json() {
   fi
 }
 
+# Encode the full XHTTP settings required by v2rayN/v2rayNG. Keep mode both
+# in the flat URI field and inside extra for compatibility with 3x-ui imports.
+xhttp_extra_query() {
+  local inbound_json="$1" mode="$2" padding extra
+  padding="$(jq -r '.streamSettings.xhttpSettings.xPaddingBytes // "100-1000"' <<< "$inbound_json")" || return 1
+  extra="$(jq -nc --arg mode "$mode" --arg padding "$padding" '{mode:$mode,xPaddingBytes:$padding}')" || return 1
+  url_encode "$extra"
+}
 show_user_node_links() {
   local users
   users="$(get_all_system_users)"
@@ -1896,7 +1906,7 @@ show_user_node_links() {
         mode="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.mode // "auto"')"
         local flow_param=""
         [[ -n "$node_flow" ]] && flow_param="&flow=${node_flow}"
-        link="vless://${node_user_id}@${host_for_link}:${port}?type=xhttp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F&path=$(url_encode "$path")&mode=${mode}&extra=$(url_encode '{"xPaddingBytes":"100-1000"}')${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "${tag}-${sel_email%%@*}")"
+        link="vless://${node_user_id}@${host_for_link}:${port}?type=xhttp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F&path=$(url_encode "$path")&mode=${mode}&extra=$(xhttp_extra_query "$ib_json" "$mode")${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "${tag}-${sel_email%%@*}")"
       fi
     elif [[ "$sec" == "tls" ]]; then
       local cert_file domain path mode
@@ -1907,7 +1917,7 @@ show_user_node_links() {
       mode="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.mode // "auto"')"
       local flow_param=""
       [[ -n "$node_flow" ]] && flow_param="&flow=${node_flow}"
-      link="vless://${node_user_id}@${domain}:${port}?type=xhttp&security=tls&sni=${domain}&alpn=h2&fp=chrome&path=$(url_encode "$path")&mode=${mode}&extra=$(url_encode '{"xPaddingBytes":"100-1000"}')${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "${tag}-${sel_email%%@*}")"
+      link="vless://${node_user_id}@${domain}:${port}?type=xhttp&security=tls&sni=${domain}&alpn=h2&fp=chrome&ech=$(url_encode "$XHTTP_CDN_ECH_CONFIG")&path=$(url_encode "$path")&mode=${mode}&extra=$(xhttp_extra_query "$ib_json" "$mode")${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "${tag}-${sel_email%%@*}")"
     fi
 
     node_links+=("$link")
@@ -2552,7 +2562,7 @@ list_and_show_nodes() {
         if [[ -n "$flow" ]]; then
           flow_param="&flow=${flow}"
         fi
-        link="vless://${uuid}@${host_for_link}:${port}?type=xhttp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F&path=$(url_encode "$path")&mode=${mode}&extra=$(url_encode '{"xPaddingBytes":"100-1000"}')${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
+        link="vless://${uuid}@${host_for_link}:${port}?type=xhttp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F&path=$(url_encode "$path")&mode=${mode}&extra=$(xhttp_extra_query "$ib_json" "$mode")${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
         echo "  - 伪装 SNI: ${sni} | XHTTP 路径: ${path} | 模式: ${mode} | 流控: ${flow:-无} | 解密层: ${dec}"
       fi
     elif [[ "$sec" == "tls" ]]; then
@@ -2567,9 +2577,9 @@ list_and_show_nodes() {
       if [[ -n "$flow" ]]; then
         flow_param="&flow=${flow}"
       fi
-      link="vless://${uuid}@${domain}:${port}?type=xhttp&security=tls&sni=${domain}&alpn=h2&fp=chrome&path=$(url_encode "$path")&mode=${mode}&extra=$(url_encode '{"xPaddingBytes":"100-1000"}')${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
+      link="vless://${uuid}@${domain}:${port}?type=xhttp&security=tls&sni=${domain}&alpn=h2&fp=chrome&ech=$(url_encode "$XHTTP_CDN_ECH_CONFIG")&path=$(url_encode "$path")&mode=${mode}&extra=$(xhttp_extra_query "$ib_json" "$mode")${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
       echo "  - TLS 域名/SNI: ${domain} | XHTTP 路径: ${path} | 模式: ${mode} | 流控: ${flow:-无} (CDN 代理适配)"
-      echo -e "  - ${CYAN}[Cloudflare ECH 增强提示]${NC} 客户端支持 ECH 时，可设置 Outer SNI 为: ${BOLD}cloudflare-ech.com${NC}，配合 DoH: ${BOLD}https://dns.alidns.com/dns-query${NC}，实现真实域名零泄露！"
+      info "ECH 参数已写入客户端链接。该配置需域名/CDN 提供有效 ECH DNS 记录且客户端支持；连接异常时可在客户端清除 ECH。"
     fi
 
     if [[ "$enc_param" != "none" ]]; then
@@ -2632,7 +2642,7 @@ list_and_show_nodes() {
         if [[ -n "$flow" ]]; then
           flow_param="&flow=${flow}"
         fi
-        target_link="vless://${uuid}@${host_for_link}:${port}?type=xhttp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F&path=$(url_encode "$path")&mode=${mode}&extra=$(url_encode '{"xPaddingBytes":"100-1000"}')${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
+        target_link="vless://${uuid}@${host_for_link}:${port}?type=xhttp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F&path=$(url_encode "$path")&mode=${mode}&extra=$(xhttp_extra_query "$ib_json" "$mode")${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
       fi
     elif [[ "$sec" == "tls" ]]; then
       local cert_file domain path mode flow
@@ -2646,7 +2656,7 @@ list_and_show_nodes() {
       if [[ -n "$flow" ]]; then
         flow_param="&flow=${flow}"
       fi
-      target_link="vless://${uuid}@${domain}:${port}?type=xhttp&security=tls&sni=${domain}&alpn=h2&fp=chrome&path=$(url_encode "$path")&mode=${mode}&extra=$(url_encode '{"xPaddingBytes":"100-1000"}')${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
+      target_link="vless://${uuid}@${domain}:${port}?type=xhttp&security=tls&sni=${domain}&alpn=h2&fp=chrome&ech=$(url_encode "$XHTTP_CDN_ECH_CONFIG")&path=$(url_encode "$path")&mode=${mode}&extra=$(xhttp_extra_query "$ib_json" "$mode")${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
     fi
 
     if [[ -n "$target_link" ]]; then
