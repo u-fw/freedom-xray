@@ -1915,7 +1915,9 @@ show_user_node_links() {
       fi
 
       if [[ "$net" == "tcp" ]]; then
-        link="vless://${node_user_id}@${host_for_link}:${share_port}?type=tcp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F&flow=${node_flow}&encryption=$(url_encode "$enc_param")#$(url_encode "${tag}-${sel_email%%@*}")"
+        local node_flow_query=""
+        [[ -n "$node_flow" ]] && node_flow_query="&flow=$(url_encode "$node_flow")"
+        link="vless://${node_user_id}@${host_for_link}:${share_port}?type=tcp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F${node_flow_query}&encryption=$(url_encode "$enc_param")#$(url_encode "${tag}-${sel_email%%@*}")"
       elif [[ "$net" == "xhttp" ]]; then
         path="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.path // "/"')"
         mode="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.mode // "auto"')"
@@ -3001,7 +3003,8 @@ set_node_public_port_interactive() {
   if [[ "$net" != "xhttp" || "$sec" != "tls" ]]; then warn "仅支持 XHTTP + TLS"; return 1; fi
   info "当前监听端口：$listen。此设置不会创建 Cloudflare Origin Rule 或重启 Xray。"
   read -r -p "对外 HTTPS 端口（例如 443；0 清除）: " value || return 0
-  if ! [[ "$value" =~ ^[0-9]+$ ]] || ((10#$value > 65535));then warn "端口无效";return 1;fi
+  if ! [[ "$value" =~ ^[0-9]{1,5}$ ]] || ((10#$value > 65535));then warn "端口无效";return 1;fi
+  value="$((10#$value))"
   [[ "$value" == "0" || "$value" == "$listen" ]] || info "请确保已在 Cloudflare Origin Rules 中将客户端端口 $value 回源到 $listen。"
   read -r -p "确认更新导出元数据？[y/N]: " confirm || confirm="N"
   case "$confirm" in y|Y|yes|YES);; *) info "已取消";return 0;; esac
