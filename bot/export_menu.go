@@ -1,8 +1,10 @@
 package main
 
 import (
+ "errors"
  "fmt"
  "log"
+ "net"
  "net/url"
  "sort"
  "strings"
@@ -34,12 +36,27 @@ func boundUserExportEntries(nodes []InboundDetails, email string) []userExportEn
  return items
 }
 
+// errExportHostUnavailable identifies failures that an administrator can fix
+// by setting server_host in bot.json instead of a node-level configuration
+// problem. Callers localize this case and show technical details separately.
+var errExportHostUnavailable=errors.New("no usable public server address for REALITY links")
+
 func validatedUserExportURI(item userExportEntry, serverHost string) (string,error) {
  if item.Client.ID==""{return "",fmt.Errorf("Inbound %s has no user UUID",item.Node.Tag)}
  uri:=item.Node.GenerateVlessURI(item.Client,serverHost)
  parsed,err:=url.Parse(uri)
  if err!=nil||parsed.Scheme!="vless"||parsed.User==nil {
   return "",fmt.Errorf("Inbound %s generated an invalid link",item.Node.Tag)
+ }
+ // Public-IP discovery can fail in a NAT, firewalled, or proxied environment.
+ // Reject an empty or loopback authority instead of handing clients a link
+ // that can never connect.
+ host:=parsed.Hostname()
+ if host=="" {
+  return "",fmt.Errorf("%w: inbound %s",errExportHostUnavailable,item.Node.Tag)
+ }
+ if ip:=net.ParseIP(host);ip!=nil&&(ip.IsLoopback()||ip.IsUnspecified()) {
+  return "",fmt.Errorf("%w: inbound %s resolved to %s",errExportHostUnavailable,item.Node.Tag,host)
  }
  if item.Node.Security=="reality" {
   q:=parsed.Query()
@@ -51,9 +68,19 @@ func validatedUserExportURI(item userExportEntry, serverHost string) (string,err
  return uri,nil
 }
 
+// exportServerHost resolves the client-facing address once per export action.
+// Failure is not fatal for TLS nodes (they are addressed by certificate SNI),
+// so the error is logged and the empty host is left for validation to reject
+// only the links that genuinely cannot work.
+func (s *BotService) exportServerHost() string {
+ host,err:=resolveServerHost(s.cfg)
+ if err!=nil{log.Printf("[Export] %v",err)}
+ return host
+}
+
 func (s *BotService) sendUserExportMenu(chatID int64,msgID int,email string) {
  nodes,err:=LoadXrayInbounds(s.cfg.XrayConfigPath)
- if err!=nil{s.sendOrEdit(chatID,msgID,"Unable to load inbounds: "+err.Error(),backToMainMarkup());return}
+ if err!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"export.loadfailed",err.Error()),s.backToMainMarkup());return}
  entries:=boundUserExportEntries(nodes,email)
  key:=userCallbackKey(email)
  rows:=make([][]tgbotapi.InlineKeyboardButton,0,len(entries)+3)
@@ -65,18 +92,18 @@ func (s *BotService) sendUserExportMenu(chatID int64,msgID int,email string) {
  }
  if len(entries)>0{
   rows=append(rows,tgbotapi.NewInlineKeyboardRow(
-   tgbotapi.NewInlineKeyboardButtonData("📄 Export all links (TXT)","user_export_all:"+key),
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"export.all"),"user_export_all:"+key),
   ))
   rows=append(rows,tgbotapi.NewInlineKeyboardRow(
-   tgbotapi.NewInlineKeyboardButtonData("▦ Export all QR codes","user_export_qrs:"+key),
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"export.qrs"),"user_export_qrs:"+key),
   ))
  }
  rows=append(rows,tgbotapi.NewInlineKeyboardRow(
-  tgbotapi.NewInlineKeyboardButtonData("👤 Back to user","manage_user:"+key),
-  tgbotapi.NewInlineKeyboardButtonData("👥 User list","menu_users"),
+  tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"export.backuser"),"manage_user:"+key),
+  tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"export.userlist"),"menu_users"),
  ))
- content:=fmt.Sprintf("📤 User %s · Export inbound links\n\n%d assigned inbounds. Choose one inbound or export all links.\n\nSingle inbound: complete link and optional QR code\nBatch TXT: one VLESS link per line for v2rayN/v2rayNG import\nBatch QR: send TXT first, then attempt individual QR images.",email,len(entries))
- if len(entries)==0{content="User "+email+" has no assigned VLESS inbounds. Assign one from user details first."}
+ content:=tr(s.cfg.Language,"export.menu.title",email,len(entries))
+ if len(entries)==0{content=tr(s.cfg.Language,"export.menu.empty",email)}
  s.sendOrEdit(chatID,msgID,content,tgbotapi.NewInlineKeyboardMarkup(rows...))
 }
 
@@ -86,36 +113,36 @@ func (s *BotService) handleUserExportCallback(cb *tgbotapi.CallbackQuery,mode st
  parts:=strings.Split(cb.Data,":")
  minParts:=2
  if mode=="one"{minParts=3}
- if len(parts)!=minParts{s.sendAlert(chatID,"Invalid export operation. Reopen the user list.");return}
+ if len(parts)!=minParts{s.sendAlert(chatID,tr(s.cfg.Language,"export.invalid"));return}
  email:=lookupManagedUserByKey(s.cfg.XrayConfigPath,parts[1])
- if email==""{s.sendAlert(chatID,"User not found. Refresh the user list.");return}
+ if email==""{s.sendAlert(chatID,tr(s.cfg.Language,"export.usermissing"));return}
  nodes,err:=LoadXrayInbounds(s.cfg.XrayConfigPath)
- if err!=nil{s.sendAlert(chatID,"Unable to read inbounds: "+err.Error());return}
+ if err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"export.readfailed",err.Error()));return}
  entries:=boundUserExportEntries(nodes,email)
- if len(entries)==0{s.sendAlert(chatID,"This user has no assigned inbounds.");return}
+ if len(entries)==0{s.sendAlert(chatID,tr(s.cfg.Language,"export.noinbounds"));return}
  if mode=="one"{
   for _,item:=range entries {
    if userCallbackKey(item.Node.Tag)==parts[2]{
-    s.exportOneUserNode(chatID,email,item,GetPublicIP())
+    s.exportOneUserNode(chatID,email,item,s.exportServerHost())
     return
    }
   }
-  s.sendAlert(chatID,"The selected inbound was unassigned or deleted. Refresh the export menu.")
+  s.sendAlert(chatID,tr(s.cfg.Language,"export.unassigned"))
   return
  }
  s.exportAllUserNodes(chatID,email,entries,mode=="qrs")
 }
 
 func (s *BotService) sendUserLink(chatID int64,item userExportEntry,email,uri string) bool{
- label:=fmt.Sprintf("🔗 Inbound %s (client port %d)\nUser: %s\nTransport: %s + %s\n\n",item.Node.Tag,item.Node.SharePort(),email,item.Node.Network,item.Node.Security)
- if item.Node.SharePort()!=item.Node.Port{label+=fmt.Sprintf("Cloudflare origin listener port: %d\n",item.Node.Port)}
+ label:=tr(s.cfg.Language,"export.linklabel",item.Node.Tag,item.Node.SharePort(),email,item.Node.Network,item.Node.Security)
+ if item.Node.SharePort()!=item.Node.Port{label+=tr(s.cfg.Language,"export.originport",item.Node.Port)}
  payload:=label+uri
  if len(payload)>3500 {
   doc:=tgbotapi.NewDocument(chatID,tgbotapi.FileBytes{Name:fmt.Sprintf("freedom-node-%s-%d.txt",userCallbackKey(item.Node.Tag)[:8],item.Node.SharePort()),Bytes:[]byte(uri+"\n")})
-  doc.Caption=fmt.Sprintf("Complete VLESS link for inbound %s (client port %d)",item.Node.Tag,item.Node.SharePort())
+  doc.Caption=tr(s.cfg.Language,"export.txtcaption",item.Node.Tag,item.Node.SharePort())
   if _,err:=s.bot.Send(doc);err!=nil{
    log.Printf("[Bot] VLESS TXT send failed for node %s: %v",item.Node.Tag,err)
-   s.sendAlert(chatID,fmt.Sprintf("❌ Failed to send TXT for inbound %s (%d): %v",item.Node.Tag,item.Node.Port,err))
+   s.sendAlert(chatID,tr(s.cfg.Language,"export.txtfail",item.Node.Tag,item.Node.Port,err.Error()))
    return false
   }
   return true
@@ -126,7 +153,7 @@ func (s *BotService) sendUserLink(chatID int64,item userExportEntry,email,uri st
  // Markdown metacharacters. Never trim, reformat or Markdown-escape the URI.
  if _,err:=s.bot.Send(msg);err!=nil{
   log.Printf("[Bot] VLESS text send failed for node %s: %v",item.Node.Tag,err)
-  s.sendAlert(chatID,fmt.Sprintf("❌ Failed to send link for inbound %s (%d): %v",item.Node.Tag,item.Node.Port,err))
+  s.sendAlert(chatID,tr(s.cfg.Language,"export.linkfail",item.Node.Tag,item.Node.Port,err.Error()))
   return false
  }
  return true
@@ -136,22 +163,29 @@ func (s *BotService) sendUserQR(chatID int64,item userExportEntry,email,uri stri
  png,err:=GenerateQRCodePNG(uri,512)
  if err!=nil {
   log.Printf("[Bot] QR generation failed for %s URI bytes=%d: %v",item.Node.Tag,len(uri),err)
-  s.sendAlert(chatID,fmt.Sprintf("⚠️ Inbound %s (%d): QR generation failed (URI %d bytes): %v. Use the previously sent link or TXT.",item.Node.Tag,item.Node.Port,len(uri),err))
+  s.sendAlert(chatID,tr(s.cfg.Language,"export.qrfail",item.Node.Tag,item.Node.Port,len(uri),err.Error()))
   return false
  }
  photo:=tgbotapi.NewPhoto(chatID,tgbotapi.FileBytes{Name:fmt.Sprintf("freedom-qr-%s-%d.png",userCallbackKey(item.Node.Tag)[:8],item.Node.SharePort()),Bytes:png})
- photo.Caption=fmt.Sprintf("Inbound %s (client port %d) · %s\nQR covers only this inbound; the full URI was sent separately.",item.Node.Tag,item.Node.SharePort(),email)
+ photo.Caption=tr(s.cfg.Language,"export.qrcaption",item.Node.Tag,item.Node.SharePort(),email)
  if _,err=s.bot.Send(photo);err!=nil{
   log.Printf("[Bot] QR send failed for node %s: %v",item.Node.Tag,err)
-  s.sendAlert(chatID,fmt.Sprintf("⚠️ Inbound %s (%d): failed to send QR: %v. The full URI remains usable.",item.Node.Tag,item.Node.Port,err))
+  s.sendAlert(chatID,tr(s.cfg.Language,"export.qrsendfail",item.Node.Tag,item.Node.Port,err.Error()))
   return false
  }
  return true
 }
 
+// exportIssueText localizes failures an administrator can act on while keeping
+// node-specific technical details visible.
+func (s *BotService) exportIssueText(err error) string {
+ if errors.Is(err,errExportHostUnavailable){return tr(s.cfg.Language,"export.hostunavailable")}
+ return err.Error()
+}
+
 func (s *BotService) exportOneUserNode(chatID int64,email string,item userExportEntry,host string){
  uri,err:=validatedUserExportURI(item,host)
- if err!=nil{s.sendAlert(chatID,"❌ "+err.Error());return}
+ if err!=nil{s.sendAlert(chatID,s.exportIssueText(err));return}
  if !s.sendUserLink(chatID,item,email,uri){return}
  s.sendUserQR(chatID,item,email,uri)
 }
@@ -168,27 +202,40 @@ func assembleBatchUserLinks(items []userExportEntry,host string)(string,[]string
 }
 
 func (s *BotService) exportAllUserNodes(chatID int64,email string,items []userExportEntry,includeQR bool){
- host:=GetPublicIP()
+ host:=s.exportServerHost()
  data,issues:=assembleBatchUserLinks(items,host)
  if len(strings.TrimSpace(data))==0 {
-  s.sendAlert(chatID,"❌ No exportable links: "+strings.Join(issues,"; "))
+  localized:=make([]string,0,len(issues))
+  for _,issue:=range issues{localized=append(localized,s.localizedExportIssue(issue))}
+  s.sendAlert(chatID,tr(s.cfg.Language,"export.noexportable",strings.Join(localized,"; ")))
   return
  }
  doc:=tgbotapi.NewDocument(chatID,tgbotapi.FileBytes{
   Name:"freedom-vless-"+userCallbackKey(email)+".txt",
   Bytes:[]byte(data),
  })
- doc.Caption=fmt.Sprintf("User %s: exported %d/%d inbounds. Each line is a complete vless:// link for v2rayN/v2rayNG.",email,len(items)-len(issues),len(items))
+ doc.Caption=tr(s.cfg.Language,"export.batchcaption",email,len(items)-len(issues),len(items))
  if _,err:=s.bot.Send(doc);err!=nil{
   log.Printf("[Bot] batch VLESS TXT failed for user %s: %v",email,err)
-  s.sendAlert(chatID,fmt.Sprintf("❌ Failed to send batch export file: %v",err))
+  s.sendAlert(chatID,tr(s.cfg.Language,"export.batchfail",err.Error()))
   return
  }
- if len(issues)>0{s.sendAlert(chatID,"⚠️ Some inbounds could not generate valid sharing links:\n"+strings.Join(issues,"\n"))}
+ if len(issues)>0{
+  localized:=make([]string,0,len(issues))
+  for _,issue:=range issues{localized=append(localized,s.localizedExportIssue(issue))}
+  s.sendAlert(chatID,tr(s.cfg.Language,"export.partial",strings.Join(localized,"\n")))
+ }
  if !includeQR{return}
  for _,item:=range items {
   uri,err:=validatedUserExportURI(item,host)
   if err!=nil{continue}
   s.sendUserQR(chatID,item,email,uri)
  }
+}
+
+// localizedExportIssue maps the shared host-resolution sentinel, which carries
+// no language of its own, onto the active locale.
+func (s *BotService) localizedExportIssue(issue string) string {
+ if strings.Contains(issue,errExportHostUnavailable.Error()){return tr(s.cfg.Language,"export.hostunavailable")}
+ return issue
 }

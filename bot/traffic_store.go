@@ -105,7 +105,7 @@ func snapshotTrafficLocked(configPath,xrayBinary,statsServer string) (trafficSto
  // APIs must not stop the durable traffic sampler.
  onlineCtx,onlineCancel:=context.WithTimeout(context.Background(),5*time.Second)
  defer onlineCancel()
- if observed,onlineErr:=queryOnlineClients(onlineCtx,xrayBinary,statsServer);onlineErr==nil {
+ if observed,onlineErr:=queryOnlineClientsForEmails(onlineCtx,xrayBinary,statsServer,onlineQueryEmails(configPath,state));onlineErr==nil {
   if applyOnlineSnapshot(&state,observed,time.Now()){changed=true}
  }else if !isOnlineUnsupported(onlineErr){
   log.Printf("[Online] optional poll failed: %v",onlineErr)
@@ -122,6 +122,22 @@ func snapshotTraffic(configPath,xrayBinary,statsServer string)(trafficStore,erro
  if err!=nil{return trafficStore{},err}
  defer releaseConfigLock(lock)
  return snapshotTrafficLocked(configPath,xrayBinary,statsServer)
+}
+
+// onlineQueryEmails supplies the candidate list used only by the per-email
+// compatibility path for cores without "statsonlineiplist -all". Reading the
+// directory is best effort: the collector must never fail because the user
+// directory is temporarily unreadable.
+func onlineQueryEmails(configPath string,state trafficStore) []string {
+ seen:=make(map[string]bool,len(state.Users))
+ for name:=range state.Users{seen[name]=true}
+ if names,err:=allDirectoryNames(configPath);err==nil {
+  for _,name:=range names{seen[name]=true}
+ }
+ emails:=make([]string,0,len(seen))
+ for name:=range seen{emails=append(emails,name)}
+ sort.Strings(emails)
+ return emails
 }
 
 func snapshotTrafficBestEffortLocked(configPath,xrayBinary,statsServer string) {
@@ -206,11 +222,14 @@ func refreshOnlineTraffic(configPath,xrayBinary,statsServer string)(trafficStore
  defer releaseConfigLock(lock)
  state,err:=loadTrafficStore(configPath);if err!=nil{return state,err}
  reconciled,err:=reconcileTrafficUsersLocked(configPath,&state);if err!=nil{return state,err}
+ active,err:=activeTrafficUserSet(configPath);if err!=nil{return state,err}
+ emails:=make([]string,0,len(active))
+ for name:=range active{emails=append(emails,name)}
+ sort.Strings(emails)
  ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second);defer cancel()
- online,queryErr:=queryOnlineClients(ctx,xrayBinary,statsServer)
+ online,queryErr:=queryOnlineClientsForEmails(ctx,xrayBinary,statsServer,emails)
  changed:=reconciled
  if queryErr==nil {
-  active,err:=activeTrafficUserSet(configPath);if err!=nil{return state,err}
   filtered:=online[:0]
   for _,user:=range online{if active[user.Email]{filtered=append(filtered,user)}}
   if applyOnlineSnapshot(&state,filtered,time.Now()){changed=true}

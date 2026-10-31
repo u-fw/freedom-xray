@@ -18,11 +18,11 @@ var safeUpdateMutex sync.Mutex
 // Xray-core and rollback always retain a separate, time-limited confirmation.
 func (s *BotService) runSafeUpdates(chatID int64,msgID int,components []string) {
  if !s.cfg.AllowUpdates {
-  s.sendOrEdit(chatID,msgID,"Remote updates are disabled. Enable allow_updates on the VPS. Core updates additionally require allow_core_updates.",backToMainMarkup())
+  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"update.disabled"),s.backToMainMarkup())
   return
  }
  if !safeUpdateMutex.TryLock() {
-  s.sendOrEdit(chatID,msgID,"Another management component update is already running.",backToMainMarkup())
+  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"update.busy"),s.backToMainMarkup())
   return
  }
  defer safeUpdateMutex.Unlock()
@@ -30,26 +30,26 @@ func (s *BotService) runSafeUpdates(chatID int64,msgID int,components []string) 
  defer cancel()
  results:=make([]string,0,len(components))
  for _,comp:=range components {
-  if !s.cfg.AllowUpdates {results=append(results,"Cancelled: updates disabled");break}
+  if !s.cfg.AllowUpdates {results=append(results,tr(s.cfg.Language,"update.cancelled.disabled"));break}
   switch comp {
   case "script":
    commit,err:=remoteComponentVersion(ctx,"script")
-   if err!=nil {results=append(results,"freedom.sh: failed to fetch version: "+err.Error());continue}
+   if err!=nil {results=append(results,tr(s.cfg.Language,"update.script.fetch",err.Error()));continue}
    message,err:=checkedScriptUpdate(ctx,commit)
-   if err!=nil {results=append(results,"freedom.sh: update failed: "+err.Error())} else {results=append(results,"freedom.sh: "+message)}
+   if err!=nil {results=append(results,tr(s.cfg.Language,"update.script.failed",err.Error()))} else {results=append(results,tr(s.cfg.Language,"update.script.ok",message))}
   case "bot":
    // checkedBotUpdate validates the release checksum and schedules an
    // independent watchdog. Its return does NOT mean the reboot passed.
    message,err:=checkedBotUpdate(ctx)
-   if err!=nil {results=append(results,"Telegram Bot: update failed: "+err.Error())} else {results=append(results,"Telegram Bot: "+message)}
+   if err!=nil {results=append(results,tr(s.cfg.Language,"update.bot.failed",err.Error()))} else {results=append(results,tr(s.cfg.Language,"update.bot.ok",message))}
   default:
-   results=append(results,"Refusing an unconfirmed update component: "+comp)
+   results=append(results,tr(s.cfg.Language,"update.refuse",comp))
   }
  }
  rows:=tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-  tgbotapi.NewInlineKeyboardButtonData("Open update center (core needs confirmation)","menu_update"),
-  tgbotapi.NewInlineKeyboardButtonData("Main menu","menu_main")))
- s.sendOrEdit(chatID,msgID,"Management component update results:\n\n"+strings.Join(results,"\n\n")+"\n\nXray-core was not modified. Verify Bot self-updates with the independent health check.",rows)
+  tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"update.opencenter"),"menu_update"),
+  tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.main"),"menu_main")))
+ s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"update.result",strings.Join(results,"\n\n")),rows)
 }
 
 type pendingUpdate struct {
@@ -67,30 +67,30 @@ var pendingUpdates = struct{
 
 func (s *BotService) showUpdatesMenu(chatID int64,msgID int) {
  if !s.cfg.AllowUpdates {
-  s.sendOrEdit(chatID,msgID,"🔒 Remote updates are disabled by default. Enable allow_updates in the VPS Telegram Bot settings.\n\nCore upgrades also need allow_core_updates.",backToMainMarkup())
+  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"update.disabled.title"),s.backToMainMarkup())
   return
  }
  ctx,cancel:=context.WithTimeout(context.Background(),15*time.Second)
  defer cancel()
  var out strings.Builder
- out.WriteString("Software Update Center (manual)\n\n")
+ out.WriteString(tr(s.cfg.Language,"update.center.title"))
  rows:=[][]tgbotapi.InlineKeyboardButton{}
  for _,comp:=range []string{"script","bot","core"} {
   if comp=="core"&&!s.cfg.AllowCoreUpdates {
-   out.WriteString("Xray-core: core upgrade disabled\n");continue
+   out.WriteString(tr(s.cfg.Language,"update.core.disabled"));continue
   }
   remote,err:=remoteComponentVersion(ctx,comp)
   label:=componentLabel(comp)
   current:=currentComponentVersion(comp,s.cfg.XrayBinPath)
-  if err!=nil{out.WriteString(label+" : failed to fetch remote version: "+err.Error()+"\n");continue}
-  if comp=="script"&&len(remote)>12{out.WriteString(label+"："+current+" / commit "+remote[:12]+"\n")}else{out.WriteString(label+"："+current+" / upstream "+remote+"\n")}
-  rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("Update now: "+label,"update_ask:"+comp)))
+  if err!=nil{out.WriteString(tr(s.cfg.Language,"update.fetchfailed",label,err.Error()));continue}
+  if comp=="script"&&len(remote)>12{out.WriteString(tr(s.cfg.Language,"update.row.commit",label,current,remote[:12]))}else{out.WriteString(tr(s.cfg.Language,"update.row.upstream",label,current,remote))}
+  rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"update.update.now",label),"update_ask:"+comp)))
  }
  if s.cfg.AllowCoreUpdates {
-  rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("↩ Roll back Xray-core","update_ask:core-rollback")))
+  rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"update.rollback"),"update_ask:core-rollback")))
  }
- out.WriteString("\nManager/Bot updates run upon selection after validation; core upgrades and rollbacks require confirmation. Bot updates are verified by an independent health check.")
- rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("Back to main menu","menu_main")))
+ out.WriteString(tr(s.cfg.Language,"update.note"))
+ rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.main"),"menu_main")))
  s.sendOrEdit(chatID,msgID,out.String(),tgbotapi.NewInlineKeyboardMarkup(rows...))
 }
 
@@ -103,33 +103,33 @@ func (s *BotService) askUpdate(cb *tgbotapi.CallbackQuery,comp string) {
  if cb.Message==nil{return}
  chatID:=cb.Message.Chat.ID;msgID:=cb.Message.MessageID
  if !s.cfg.AllowUpdates || ((comp=="core"||comp=="core-rollback")&&!s.cfg.AllowCoreUpdates) {
-  s.sendOrEdit(chatID,msgID,"This update is not authorized on the VPS.",backToMainMarkup());return
+  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"update.unauthorized"),s.backToMainMarkup());return
  }
  if comp=="script"||comp=="bot" {
   s.runSafeUpdates(chatID,msgID,[]string{comp})
   return
  }
  if comp!="core"&&comp!="core-rollback" {
-  s.sendOrEdit(chatID,msgID,"Unsupported update component.",backToMainMarkup());return
+  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"update.unsupported"),s.backToMainMarkup());return
  }
  ctx,cancel:=context.WithTimeout(context.Background(),15*time.Second);defer cancel()
  version:="previous"
  var err error
  if comp!="core-rollback"{version,err=remoteComponentVersion(ctx,comp)}
- if err!=nil{s.sendOrEdit(chatID,msgID,"Unable to fetch version: "+err.Error(),backToMainMarkup());return}
+ if err!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"update.fetcherror",err.Error()),s.backToMainMarkup());return}
  var nonce [8]byte
- if _,err=rand.Read(nonce[:]);err!=nil{s.sendOrEdit(chatID,msgID,"Unable to generate confirmation token",backToMainMarkup());return}
+ if _,err=rand.Read(nonce[:]);err!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"update.tokenfailed"),s.backToMainMarkup());return}
  token:=hex.EncodeToString(nonce[:])
  pendingUpdates.Lock()
  for id,p:=range pendingUpdates.items{if time.Now().After(p.Deadline){delete(pendingUpdates.items,id)}}
  pendingUpdates.items[token]=pendingUpdate{Component:comp,Version:version,ChatID:chatID,AdminID:cb.From.ID,Deadline:time.Now().Add(3*time.Minute)}
  pendingUpdates.Unlock()
  note:=""
- if comp=="core"||comp=="core-rollback"{note="\nWarning: upgrading Xray-core can break REALITY / ML-KEM compatibility with older clients. Keep a separate recovery path."}
- s.sendOrEdit(chatID,msgID,fmt.Sprintf("Confirm update of %s?\nTarget: %s\nCurrent: %s%s\n\nConfirmation expires in 3 minutes.",componentLabel(comp),version,currentComponentVersion(comp,s.cfg.XrayBinPath),note),
+ if comp=="core"||comp=="core-rollback"{note=tr(s.cfg.Language,"update.corenote")}
+ s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"update.confirmbody",componentLabel(comp),version,currentComponentVersion(comp,s.cfg.XrayBinPath),note),
   tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-   tgbotapi.NewInlineKeyboardButtonData("Confirm update","update_confirm:"+token),
-   tgbotapi.NewInlineKeyboardButtonData("Cancel","update_cancel:"+token),
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"update.confirm"),"update_confirm:"+token),
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.cancel"),"update_cancel:"+token),
   )))
 }
 
@@ -142,20 +142,20 @@ func (s *BotService) resolveUpdate(cb *tgbotapi.CallbackQuery,confirm bool) {
  if ok {delete(pendingUpdates.items,token)}
  pendingUpdates.Unlock()
  if !ok || time.Now().After(pending.Deadline) || pending.AdminID!=cb.From.ID || pending.ChatID!=chatID {
-  s.sendOrEdit(chatID,msgID,"Update authorization expired; check the version again.",backToMainMarkup());return
+  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"update.expired"),s.backToMainMarkup());return
  }
- if !confirm{s.sendOrEdit(chatID,msgID,"Update cancelled.",backToMainMarkup());return}
+ if !confirm{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"update.cancelled"),s.backToMainMarkup());return}
  if !s.cfg.AllowUpdates || ((pending.Component=="core"||pending.Component=="core-rollback")&&!s.cfg.AllowCoreUpdates) {
-  s.sendOrEdit(chatID,msgID,"Update permissions are disabled.",backToMainMarkup());return
+  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"update.permissions"),s.backToMainMarkup());return
  }
- s.sendOrEdit(chatID,msgID,"Verifying the release package and performing the update.",tgbotapi.InlineKeyboardMarkup{})
+ s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"update.verifying"),tgbotapi.InlineKeyboardMarkup{})
  ctx,cancel:=context.WithTimeout(context.Background(),3*time.Minute)
  defer cancel()
  // Check a mutable upstream release label again before downloading.
  if pending.Component=="core"||pending.Component=="bot" {
   latest,err:=remoteComponentVersion(ctx,pending.Component)
-  if err!=nil{s.sendOrEdit(chatID,msgID,"Version verification failed: "+err.Error(),backToMainMarkup());return}
-  if latest!=pending.Version{s.sendOrEdit(chatID,msgID,"The upstream version changed; confirm again.",backToMainMarkup());return}
+  if err!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"update.verifyfailed",err.Error()),s.backToMainMarkup());return}
+  if latest!=pending.Version{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"update.changed"),s.backToMainMarkup());return}
  }
  var result string
  var err error
@@ -164,10 +164,10 @@ func (s *BotService) resolveUpdate(cb *tgbotapi.CallbackQuery,confirm bool) {
  case "bot":result,err=checkedBotUpdate(ctx)
  case "core":result,err=checkedCoreUpdate(ctx,s.cfg.XrayBinPath,s.cfg.XrayConfigPath,pending.Version)
  case "core-rollback":result,err=checkedCoreRollback(s.cfg.XrayBinPath,s.cfg.XrayConfigPath)
- default:err=fmt.Errorf("Unknown update type")
+ default:err=fmt.Errorf("unknown update type")
  }
  if err!=nil {
-  s.sendOrEdit(chatID,msgID,"Update failed: "+err.Error(),backToMainMarkup());return
+  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"update.failed",err.Error()),s.backToMainMarkup());return
  }
- s.sendOrEdit(chatID,msgID,"Update result: "+result,backToMainMarkup())
+ s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"update.resultprefix",result),s.backToMainMarkup())
 }

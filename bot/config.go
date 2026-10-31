@@ -23,6 +23,10 @@ type BotConfig struct {
 	XrayConfigPath   string  `json:"xray_config_path"`
 	XrayBinPath      string  `json:"xray_bin_path"`
 	StatsAPIServer   string  `json:"stats_api_server"`
+	// ServerHost is the public address clients use to reach this VPS. It is
+	// required for REALITY links when automatic public-IP discovery is blocked
+	// by NAT, a firewall, or an outbound proxy.
+	ServerHost       string  `json:"server_host,omitempty"`
 }
 
 // DefaultConfig returns default paths and settings
@@ -78,6 +82,13 @@ func LoadConfig(path string) (*BotConfig, error) {
 	}
 	if cfg.StatsAPIServer == "" {
 		cfg.StatsAPIServer = "127.0.0.1:10085"
+	}
+	if cfg.ServerHost != "" {
+		host, hostErr := normalizeServerHost(cfg.ServerHost)
+		if hostErr != nil {
+			return nil, fmt.Errorf("invalid server_host in %s: %w", path, hostErr)
+		}
+		cfg.ServerHost = host
 	}
 
 	return cfg, nil

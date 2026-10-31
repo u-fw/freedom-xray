@@ -10,7 +10,7 @@ func (s *BotService) sendInboundTrafficCard(chatID int64,msgID int) {
  state,err:=snapshotTraffic(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer)
  if err!=nil {
   cached,readErr:=loadTrafficStore(s.cfg.XrayConfigPath)
-  if readErr!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"inbound.failure",mdEsc(err.Error()),mdEsc(readErr.Error())),backToMainMarkup());return}
+  if readErr!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"inbound.failure",mdEsc(err.Error()),mdEsc(readErr.Error())),s.backToMainMarkup());return}
   state=cached
  }
  traffic:=storedInboundTraffic(state)

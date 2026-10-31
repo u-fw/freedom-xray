@@ -1,16 +1,19 @@
 package main
 
 import (
+ "bytes"
  "context"
  "encoding/json"
  "errors"
  "fmt"
+ "log"
  "net"
  "os/exec"
  "reflect"
  "sort"
  "strconv"
  "strings"
+ "sync"
  "time"
 )
 
@@ -38,6 +41,27 @@ func parseOnlineTimestamp(raw json.RawMessage, fallback int64) int64 {
  return seconds
 }
 
+// normalizeOnlineUsers validates addresses, sorts them, and drops users that
+// have no usable IP. Both the aggregate and per-email response formats flow
+// through this single normalization step.
+func normalizeOnlineUsers(users []onlineUser, now int64) []onlineUser {
+ result:=make([]onlineUser,0,len(users))
+ for _,user:=range users {
+  if user.Email==""{continue}
+  entry:=onlineUser{Email:user.Email}
+  for _,row:=range user.IPs {
+   if net.ParseIP(row.IP)==nil{continue}
+   lastSeen:=row.LastSeen
+   if lastSeen<=0{lastSeen=now}
+   entry.IPs=append(entry.IPs,onlineClientIP{IP:row.IP,LastSeen:lastSeen})
+   if len(entry.IPs)>=32{break}
+  }
+  sort.Slice(entry.IPs,func(i,j int)bool{return entry.IPs[i].IP<entry.IPs[j].IP})
+  if len(entry.IPs)>0 {result=append(result,entry)}
+ }
+ return result
+}
+
 // Xray-core implements GetUsersStats through the statsonlineiplist CLI.
 // Querying the core directly avoids parsing connection/access logs.
 func queryOnlineClients(ctx context.Context, xrayBin,statsServer string) ([]onlineUser,error) {
@@ -56,22 +80,121 @@ func queryOnlineClients(ctx context.Context, xrayBin,statsServer string) ([]onli
  now:=time.Now().Unix()
  users:=make([]onlineUser,0,len(response.Users))
  for _,user:=range response.Users {
-  if user.Email==""{continue}
-  result:=onlineUser{Email:user.Email}
+  entry:=onlineUser{Email:user.Email}
   for _,row:=range user.IPs {
-   if net.ParseIP(row.IP)==nil{continue}
-   result.IPs=append(result.IPs,onlineClientIP{IP:row.IP,LastSeen:parseOnlineTimestamp(row.LastSeen,now)})
-   if len(result.IPs)>=32{break}
+   entry.IPs=append(entry.IPs,onlineClientIP{IP:row.IP,LastSeen:parseOnlineTimestamp(row.LastSeen,now)})
   }
-  sort.Slice(result.IPs,func(i,j int)bool{return result.IPs[i].IP<result.IPs[j].IP})
-  if len(result.IPs)>0 {users=append(users,result)}
+  users=append(users,entry)
  }
- return users,nil
+ return normalizeOnlineUsers(users,now),nil
 }
+
+// parseOnlineEmailResponse accepts both response shapes emitted by Xray CLI
+// versions: the protobuf JSON form {"name":...,"ips":{"ip":lastSeen}} and an
+// array-like form used by some builds.
+func parseOnlineEmailResponse(out []byte, fallbackEmail string) (onlineUser,error) {
+ var response struct {
+  Name string `json:"name"`
+  Email string `json:"email"`
+  IPs json.RawMessage `json:"ips"`
+ }
+ if err:=json.Unmarshal(out,&response);err!=nil{return onlineUser{},err}
+ email:=response.Email
+ if email==""{email=response.Name}
+ if email==""{email=fallbackEmail}
+ result:=onlineUser{Email:email}
+ now:=time.Now().Unix()
+ raw:=bytes.TrimSpace(response.IPs)
+ if len(raw)==0||bytes.Equal(raw,[]byte("null")){return result,nil}
+
+ // Protobuf JSON map<string,int64>: {"203.0.113.7": 1700000000}.
+ var mapped map[string]json.RawMessage
+ if err:=json.Unmarshal(raw,&mapped);err==nil {
+  for ip,seenRaw:=range mapped {
+   result.IPs=append(result.IPs,onlineClientIP{IP:ip,LastSeen:parseOnlineTimestamp(seenRaw,now)})
+  }
+  return result,nil
+ }
+
+ // Array form: [{"ip":"203.0.113.7","lastSeen":"..."}].
+ var listed []struct{
+  IP string `json:"ip"`
+  LastSeen json.RawMessage `json:"lastSeen"`
+ }
+ if err:=json.Unmarshal(raw,&listed);err!=nil {
+  return onlineUser{},fmt.Errorf("unsupported ips field: %w",err)
+ }
+ for _,row:=range listed {
+  result.IPs=append(result.IPs,onlineClientIP{IP:row.IP,LastSeen:parseOnlineTimestamp(row.LastSeen,now)})
+ }
+ return result,nil
+}
+
+// onlineAllFlagUnsupported matches cores that predate the GetUsersStats "-all"
+// flag. Those cores still expose the long-standing per-email query.
+func onlineAllFlagUnsupported(err error) bool {
+ if err==nil{return false}
+ text:=strings.ToLower(err.Error())
+ for _,marker:=range []string{"flag provided but not defined","unknown flag","unknown shorthand flag","no such flag","unrecognized flag"} {
+  if strings.Contains(text,marker){return true}
+ }
+ return false
+}
+
+// queryOnlineClientsByEmail is the compatibility path for Xray-core versions
+// that implement statsonlineiplist but not its aggregate "-all" output.
+func queryOnlineClientsByEmail(ctx context.Context, xrayBin,statsServer string, emails []string) ([]onlineUser,error) {
+ if len(emails)==0{return nil,errors.New("no users available for per-email online statistics")}
+ const workers=4
+ semaphore:=make(chan struct{},workers)
+ var wait sync.WaitGroup
+ var mu sync.Mutex
+ results:=make([]onlineUser,0,len(emails))
+ failures:=make([]string,0)
+ for _,email:=range emails {
+  if ctx.Err()!=nil{break}
+  wait.Add(1)
+  semaphore<-struct{}{}
+  go func(email string){
+   defer wait.Done()
+   defer func(){<-semaphore}()
+   out,err:=exec.CommandContext(ctx,xrayBin,"api","statsonlineiplist","--server="+statsServer,"-email="+email).CombinedOutput()
+   if err!=nil {
+    mu.Lock();failures=append(failures,email+": "+strings.TrimSpace(string(out)));mu.Unlock()
+    return
+   }
+   user,err:=parseOnlineEmailResponse(out,email)
+   if err!=nil {
+    mu.Lock();failures=append(failures,email+": "+err.Error());mu.Unlock()
+    return
+   }
+   mu.Lock();results=append(results,user);mu.Unlock()
+  }(email)
+ }
+ wait.Wait()
+ if len(results)==0&&len(failures)>0 {
+  return nil,errors.New("per-email online statistics failed: "+strings.Join(failures,"; "))
+ }
+ if len(failures)>0 {
+  log.Printf("[Online] %d per-email online queries failed (first: %s)",len(failures),failures[0])
+ }
+ return normalizeOnlineUsers(results,time.Now().Unix()),nil
+}
+
+// queryOnlineClientsForEmails prefers the single aggregate core query. When an
+// older core rejects "-all", it falls back to per-email queries so online-IP
+// collection keeps working after a Bot update without forcing a core upgrade.
+func queryOnlineClientsForEmails(ctx context.Context, xrayBin,statsServer string, emails []string) ([]onlineUser,error) {
+ users,err:=queryOnlineClients(ctx,xrayBin,statsServer)
+ if err==nil{return users,nil}
+ if !onlineAllFlagUnsupported(err) {return nil,err}
+ return queryOnlineClientsByEmail(ctx,xrayBin,statsServer,emails)
+}
+
 func isOnlineUnsupported(err error) bool {
  if err==nil{return false}
  text:=strings.ToLower(err.Error())
- return errors.Is(err,exec.ErrNotFound)||strings.Contains(text,"unknown command")||strings.Contains(text,"unimplemented")||strings.Contains(text,"not implemented")
+ return errors.Is(err,exec.ErrNotFound)||strings.Contains(text,"unknown command")||strings.Contains(text,"unimplemented")||strings.Contains(text,"not implemented")||onlineAllFlagUnsupported(err)
 }
 func applyOnlineSnapshot(state *trafficStore,observed []onlineUser,now time.Time) bool {
  ensureTrafficMaps(state)

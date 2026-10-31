@@ -3,10 +3,23 @@ package main
 import (
  "os"
  "path/filepath"
+ "reflect"
+ "regexp"
  "strings"
  "testing"
  "unicode"
 )
+
+var localeFormatVerb = regexp.MustCompile(`%(?:%|[#+\- 0-9.]*[A-Za-z])`)
+
+func localeVerbs(message string) []string {
+ verbs:=make([]string,0)
+ for _,verb:=range localeFormatVerb.FindAllString(message,-1) {
+  if verb=="%%"{continue}
+  verbs=append(verbs,verb)
+ }
+ return verbs
+}
 
 func TestEnglishDefaultAndLanguageNormalization(t *testing.T) {
  if DefaultConfig().Language!="en"{t.Fatal("English must be default")}
@@ -22,6 +35,9 @@ func TestI18nKeyCoverage(t *testing.T){
   if strings.TrimSpace(msg)=="" {t.Errorf("empty English translation %q",key)}
   for _,r:=range msg {if unicode.Is(unicode.Han,r){t.Errorf("non-English default translation: %q",key);break}}
   if zh[key]=="" {t.Errorf("missing Chinese translation %q",key)}
+  if enVerbs,zhVerbs:=localeVerbs(msg),localeVerbs(zh[key]);!reflect.DeepEqual(enVerbs,zhVerbs){
+   t.Errorf("format verbs differ for %q: en=%v zh=%v",key,enVerbs,zhVerbs)
+  }
  }
  if got:=tr("fr","menu.users");got!=tr("en","menu.users"){t.Fatalf("unsupported locale did not fall back to English")}
 }

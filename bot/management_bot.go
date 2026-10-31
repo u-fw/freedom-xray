@@ -26,11 +26,11 @@ var pendingUserChanges = struct{
 
 func (s *BotService) offerUserChange(chatID,adminID int64,messageID int,change UserChange) {
  if !s.cfg.AllowMutations {
-  s.sendOrEdit(chatID,messageID,"🔒 Remote configuration changes are disabled. Enable allow_mutations in the VPS Telegram Bot settings. Read-only features remain available.",backToMainMarkup())
+  s.sendOrEdit(chatID,messageID,tr(s.cfg.Language,"manage.disabled"),s.backToMainMarkup())
   return
  }
  var token [8]byte
- if _,err:=rand.Read(token[:]);err!=nil {s.sendAlert(chatID,"Unable to generate a secure token: "+err.Error());return}
+ if _,err:=rand.Read(token[:]);err!=nil {s.sendAlert(chatID,tr(s.cfg.Language,"manage.tokenerror",err.Error()));return}
  key:=hex.EncodeToString(token[:])
  pendingUserChanges.Lock()
  now:=time.Now()
@@ -41,26 +41,26 @@ func (s *BotService) offerUserChange(chatID,adminID int64,messageID int,change U
  var description string
  switch change.Kind {
  case "add":
-   if change.Node=="" {description=fmt.Sprintf("Create user %s without assigning an inbound",change.User)} else {description=fmt.Sprintf("Add user %s (inbound: %s)",change.User,scopeLabel(change.Node))}
- case "rename": description=fmt.Sprintf("Rename user %s to %s",change.User,change.NewName)
- case "rotate": description=fmt.Sprintf("Rotate %s's UUID; old links will stop working immediately",change.User)
- case "delete": description=fmt.Sprintf("Delete %s from every inbound; existing links will stop working",change.User)
- case "assign": description=fmt.Sprintf("Assign %s to inbound %s",change.User,change.Node)
- case "unassign": description=fmt.Sprintf("Unassign %s from inbound %s",change.User,change.Node)
-  case "disable": description=fmt.Sprintf("Suspend user %s; existing links stop working while the UUID is kept locally",change.User)
-  case "enable": description=fmt.Sprintf("Restore user %s's original UUID and inbound assignments",change.User)
- default: s.sendAlert(chatID,"Unknown management operation");return
+   if change.Node=="" {description=tr(s.cfg.Language,"manage.add.unbound",change.User)} else {description=tr(s.cfg.Language,"manage.add.node",change.User,scopeLabel(change.Node,s.cfg.Language))}
+ case "rename": description=tr(s.cfg.Language,"manage.rename",change.User,change.NewName)
+ case "rotate": description=tr(s.cfg.Language,"manage.rotate",change.User)
+ case "delete": description=tr(s.cfg.Language,"manage.delete",change.User)
+ case "assign": description=tr(s.cfg.Language,"manage.assign",change.User,change.Node)
+ case "unassign": description=tr(s.cfg.Language,"manage.unassign",change.User,change.Node)
+  case "disable": description=tr(s.cfg.Language,"manage.disable",change.User)
+  case "enable": description=tr(s.cfg.Language,"manage.enable",change.User)
+ default: s.sendAlert(chatID,tr(s.cfg.Language,"manage.unknown"));return
  }
  markup:=tgbotapi.NewInlineKeyboardMarkup(
   tgbotapi.NewInlineKeyboardRow(
-   tgbotapi.NewInlineKeyboardButtonData("✅ Confirm change","manage_confirm:"+key),
-   tgbotapi.NewInlineKeyboardButtonData("Cancel","manage_cancel:"+key),
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"manage.confirm"),"manage_confirm:"+key),
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.cancel"),"manage_cancel:"+key),
   ),
  )
- s.sendOrEdit(chatID,messageID,"⚠️ Confirm change:\n"+description+"\n\nConfirmation expires after 3 minutes. Changes are validated before restarting Xray; failures trigger rollback.",markup)
+ s.sendOrEdit(chatID,messageID,tr(s.cfg.Language,"manage.confirmbody",description),markup)
 }
 
-func scopeLabel(node string) string {if node==""||node=="all"{return "All inbounds"};return node}
+func scopeLabel(node,lang string) string {if node==""||node=="all"{return tr(lang,"manage.scope.all")};return node}
 
 func (s *BotService) resolveUserChange(cb *tgbotapi.CallbackQuery,confirm bool) {
  if cb.Message==nil{return}
@@ -72,18 +72,18 @@ func (s *BotService) resolveUserChange(cb *tgbotapi.CallbackQuery,confirm bool) 
  if ok {delete(pendingUserChanges.items,key)}
  pendingUserChanges.Unlock()
  if !ok || request.ChatID!=chatID || request.AdminID!=cb.From.ID || time.Now().After(request.ExpiresAt) {
-  s.sendOrEdit(chatID,msgID,"The operation has expired or is invalid. Try again.",backToMainMarkup());return
+  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"manage.expired"),s.backToMainMarkup());return
  }
- if !confirm {s.sendOrEdit(chatID,msgID,"Change cancelled.",backToMainMarkup());return}
- if !s.cfg.AllowMutations {s.sendOrEdit(chatID,msgID,"Remote writes are disabled.",backToMainMarkup());return}
+ if !confirm {s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"manage.cancelled"),s.backToMainMarkup());return}
+ if !s.cfg.AllowMutations {s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"manage.writesdisabled"),s.backToMainMarkup());return}
  msg,err:=changeManagedUser(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,request.Change)
  if err!=nil {
   log.Printf("[Bot] management %s failed: %v",request.Change.Kind,err)
-  s.sendOrEdit(chatID,msgID,"❌ Change failed:\n"+err.Error(),backToMainMarkup())
+  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"manage.changefailed",err.Error()),s.backToMainMarkup())
   return
  }
  // Traffic rename is performed by changeDirectoryUser under the same config lock.
- s.sendOrEdit(chatID,msgID,"✅ Completed:\n"+msg+"\n\nIf the UUID or inbound assignment changed, import the updated client link.",backToMainMarkup())
+ s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"manage.completed",msg),s.backToMainMarkup())
 }
 
 func (s *BotService) handleUserManagementCommand(msg *tgbotapi.Message) bool {
@@ -93,24 +93,24 @@ func (s *BotService) handleUserManagementCommand(msg *tgbotapi.Message) bool {
  change:=UserChange{}
  switch cmd {
  case "adduser":
-  if len(parts)<1 || len(parts)>2 {s.sendAlert(msg.Chat.ID,"Usage: /adduser <user> [inbound-tag | all]");return true}
+  if len(parts)<1 || len(parts)>2 {s.sendAlert(msg.Chat.ID,tr(s.cfg.Language,"manage.usage.adduser"));return true}
   change=UserChange{Kind:"add",User:parts[0]}
   if len(parts)==2 {change.Node=parts[1]}
  case "renameuser":
-  if len(parts)!=2{s.sendAlert(msg.Chat.ID,"Usage: /renameuser <old-name> <new-name>");return true}
+  if len(parts)!=2{s.sendAlert(msg.Chat.ID,tr(s.cfg.Language,"manage.usage.renameuser"));return true}
   change=UserChange{Kind:"rename",User:parts[0],NewName:parts[1]}
  case "disableuser", "enableuser":
-  if len(parts)!=1 {s.sendAlert(msg.Chat.ID,"Usage: /"+cmd+" <user>");return true}
+  if len(parts)!=1 {s.sendAlert(msg.Chat.ID,tr(s.cfg.Language,"manage.usage.user",cmd));return true}
   kind:="disable";if cmd=="enableuser"{kind="enable"}
   change=UserChange{Kind:kind,User:parts[0]}
  case "rotateuser":
-  if len(parts)!=1{s.sendAlert(msg.Chat.ID,"Usage: /rotateuser <user>");return true}
+  if len(parts)!=1{s.sendAlert(msg.Chat.ID,tr(s.cfg.Language,"manage.usage.user","rotateuser"));return true}
   change=UserChange{Kind:"rotate",User:parts[0]}
  case "removeuser":
-  if len(parts)!=1{s.sendAlert(msg.Chat.ID,"Usage: /removeuser <user>");return true}
+  if len(parts)!=1{s.sendAlert(msg.Chat.ID,tr(s.cfg.Language,"manage.usage.user","removeuser"));return true}
   change=UserChange{Kind:"delete",User:parts[0]}
  case "assignuser", "unassignuser":
-  if len(parts)!=2{s.sendAlert(msg.Chat.ID,"Usage: /"+cmd+" <user> <inbound-tag>");return true}
+  if len(parts)!=2{s.sendAlert(msg.Chat.ID,tr(s.cfg.Language,"manage.usage.node",cmd));return true}
   kind:="assign";if cmd=="unassignuser"{kind="unassign"}
   change=UserChange{Kind:kind,User:parts[0],Node:parts[1]}
  }
@@ -125,9 +125,9 @@ func lookupManagedUserEmail(nodes []InboundDetails,key string) string {
 
 func (s *BotService) sendUserManageCard(chatID int64,msgID int,key string) {
  nodes,err:=LoadXrayInbounds(s.cfg.XrayConfigPath)
- if err!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"nodes.failure",err.Error()),backToMainMarkup());return}
+ if err!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"nodes.failure",err.Error()),s.backToMainMarkup());return}
  email:=lookupManagedUserByKey(s.cfg.XrayConfigPath,key)
- if email==""{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"users.empty"),backToMainMarkup());return}
+ if email==""{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"users.empty"),s.backToMainMarkup());return}
  var rows [][]tgbotapi.InlineKeyboardButton
  var content strings.Builder
  content.WriteString(tr(s.cfg.Language,"account.title",email))
@@ -190,50 +190,50 @@ func (s *BotService) handleManagedUserCallback(cb *tgbotapi.CallbackQuery) {
  parts:=strings.Split(cb.Data,":")
  if len(parts)<2{return}
  nodes,err:=LoadXrayInbounds(s.cfg.XrayConfigPath)
- if err!=nil{s.sendAlert(chatID,"Failed to load inbounds: "+err.Error());return}
+ if err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"manage.inboundsfailed",err.Error()));return}
  switch parts[0] {
  case "manage_user":
   s.sendUserManageCard(chatID,msgID,parts[1]);return
  case "manage_rotate","manage_delete","manage_disable":
   email:=lookupManagedUserByKey(s.cfg.XrayConfigPath,parts[1])
-  if email==""{s.sendAlert(chatID,"User does not exist");return}
+  if email==""{s.sendAlert(chatID,tr(s.cfg.Language,"manage.usermissing"));return}
   kind:="rotate";if parts[0]=="manage_delete"{kind="delete"};if parts[0]=="manage_disable"{kind="disable"}
   s.offerUserChange(chatID,cb.From.ID,msgID,UserChange{Kind:kind,User:email})
  case "manage_node":
   if len(parts)!=4{return}
   email:=lookupManagedUserByKey(s.cfg.XrayConfigPath,parts[2])
-  if email==""{s.sendAlert(chatID,"User does not exist");return}
+  if email==""{s.sendAlert(chatID,tr(s.cfg.Language,"manage.usermissing"));return}
   for _,node:=range nodes {
    if userCallbackKey(node.Tag)!=parts[3] {continue}
    kind:="assign";if parts[1]=="r"{kind="unassign"}else if parts[1]!="a"{return}
    s.offerUserChange(chatID,cb.From.ID,msgID,UserChange{Kind:kind,User:email,Node:node.Tag})
    return
   }
-  s.sendAlert(chatID,"Inbound no longer exists")
+  s.sendAlert(chatID,tr(s.cfg.Language,"manage.inboundmissing"))
  }
 }
 
 func (s *BotService) sendDisabledUsersCard(chatID int64,msgID int) {
  names,err:=disabledUserNames(s.cfg.XrayConfigPath)
- if err!=nil {s.sendOrEdit(chatID,msgID,"Failed to load suspended users: "+err.Error(),backToMainMarkup());return}
+ if err!=nil {s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"manage.suspended.loadfailed",err.Error()),s.backToMainMarkup());return}
  rows:=[][]tgbotapi.InlineKeyboardButton{}
  for _,name:=range names {
   rows=append(rows,tgbotapi.NewInlineKeyboardRow(
-   tgbotapi.NewInlineKeyboardButtonData("▶ Restore "+truncateLabel(name,40),"manage_enable:"+userCallbackKey(name)),
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"manage.suspended.restore",truncateLabel(name,40)),"manage_enable:"+userCallbackKey(name)),
   ))
  }
  rows=append(rows,tgbotapi.NewInlineKeyboardRow(
-  tgbotapi.NewInlineKeyboardButtonData("🔙 User management","menu_users"),
+  tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"manage.suspended.back"),"menu_users"),
  ))
- message:="⏸ Suspended users\n\nRestoring a user reinstates the original UUID and inbound assignments, then restarts Xray."
- if len(names)==0 {message="There are no suspended users."}
+ message:=tr(s.cfg.Language,"manage.suspended.title")
+ if len(names)==0 {message=tr(s.cfg.Language,"manage.suspended.empty")}
  s.sendOrEdit(chatID,msgID,message,tgbotapi.NewInlineKeyboardMarkup(rows...))
 }
 
 func (s *BotService) enableDisabledUserCallback(cb *tgbotapi.CallbackQuery) {
  if cb.Message==nil{return}
  names,err:=disabledUserNames(s.cfg.XrayConfigPath)
- if err!=nil {s.sendAlert(cb.Message.Chat.ID,"Suspended user data is corrupted");return}
+ if err!=nil {s.sendAlert(cb.Message.Chat.ID,tr(s.cfg.Language,"manage.suspended.corrupt"));return}
  key:=strings.TrimPrefix(cb.Data,"manage_enable:")
  for _,name:=range names {
   if userCallbackKey(name)==key {
@@ -241,7 +241,7 @@ func (s *BotService) enableDisabledUserCallback(cb *tgbotapi.CallbackQuery) {
    return
   }
  }
- s.sendAlert(cb.Message.Chat.ID,"Suspended user not found. Refresh the list.")
+ s.sendAlert(cb.Message.Chat.ID,tr(s.cfg.Language,"manage.suspended.notfound"))
 }
 
 func lookupManagedUserByKey(configPath,key string) string {

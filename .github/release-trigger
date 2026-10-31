@@ -1,3 +1,5 @@
-v1.3.2
-Deleted-user accounting cleanup, direct REALITY IP refresh, per-user usage
-Always list managed users with saved traffic even when no source IP was observed
+v1.3.3
+Full Chinese locale coverage for menus and confirmations, robust direct public-IP
+resolution with server_host override, and per-level online-statistics support
+Enable statsUserUplink/Downlink/Online for custom client levels, fall back to
+per-email online queries on older Xray-core, preserve bot.json fields on setup

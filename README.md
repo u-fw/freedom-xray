@@ -75,6 +75,18 @@ The bot only accepts authorized administrator messages in **private chats**. Rem
 
 `allow_core_updates` additionally requires `allow_updates`. Keep sensitive backup sending disabled unless required. Use a different Telegram Bot token for each VPS unless you have a dedicated centralized polling architecture.
 
+### Public server address in client links
+
+VLESS links that use REALITY embed the address clients dial directly. The Bot resolves it with direct IPv4 HTTP discovery (bypassing `socks5_proxy`, because a proxy reports its own egress address), falls back to a global-unicast interface address, and caches the result for 10 minutes. Behind NAT, a firewall that blocks outbound HTTP, or a relay/CDN topology where clients use a different hostname, set the address explicitly:
+
+```json
+{
+  "server_host": "vpn.example.com"
+}
+```
+
+`server_host` accepts a bare IP address (IPv4 or IPv6) or DNS hostname without a scheme, path, or port. The local configuration menu prompts for it and preserves existing keys, including `language` and `language_explicit`. If discovery fails and no override is set, REALITY exports fail with an explicit error instead of emitting `127.0.0.1`; TLS links remain addressed by certificate SNI.
+
 ### Exporting user configurations
 
 The user export menu lets you choose one assigned inbound or export all assigned links as a plain-text file. Individual links are sent without truncation; oversized links are delivered as TXT. QR generation is optional, and a failed QR does not suppress the underlying link.
@@ -154,14 +166,18 @@ Recent observed IPs are retained only for a limited period. Online presence is e
 
 When a user is deleted, their per-user traffic and recent IP records are removed from the SQLite ledger after the account change succeeds. Legacy orphaned rows are reconciled against active and suspended accounts when opening the traffic view; suspended user history and inbound totals are preserved.
 
-The `/online` page now refreshes the Xray online API immediately and displays *online* IPs separately from *recently observed* IPs (up to 30 minutes). REALITY direct nodes need no proxy-header configuration. Online tracking requires `statsUserOnline` at the user's policy level and an active authenticated session. Traffic shown beside a client is the **cumulative per-user total across all inbounds**, not per-IP consumption. To diagnose no IPs while generating active REALITY traffic:
+The `/online` page now refreshes the Xray online API immediately and displays *online* IPs separately from *recently observed* IPs (up to 30 minutes). REALITY direct nodes need no proxy-header configuration. Online tracking requires `statsUserOnline` at the user's policy level and an active authenticated session. Traffic shown beside a client is the **cumulative per-user total across all inbounds**, not per-IP consumption. The manager enables the counter flags for level `0` and for every client level referenced by an inbound, because Xray reports nothing for levels without them. Xray-core builds without the aggregate `-all` flag are queried per email automatically. To diagnose no IPs while generating active REALITY traffic:
 
 ```bash
-sudo jq '.policy.levels["0"].statsUserOnline' /usr/local/etc/xray/config.json
+sudo jq '.policy.levels' /usr/local/etc/xray/config.json
 sudo /usr/local/bin/xray api statsonlineiplist --server=127.0.0.1:10085 -all
+# Older Xray-core builds: query one user at a time instead
+sudo /usr/local/bin/xray api statsonlineiplist --server=127.0.0.1:10085 -email=USER
 sudo systemctl status freedom-stats --no-pager
 sudo journalctl -u freedom-stats -n 40 --no-pager
 ```
+
+Also confirm that the inbound's `settings.clients[].level` (or the level the client actually uses) has `statsUserUplink`, `statsUserDownlink`, and `statsUserOnline` set to `true`. A relay or CDN that terminates the connection can hide the client's real source address even when online tracking works.
 
 ## Updating and troubleshooting
 

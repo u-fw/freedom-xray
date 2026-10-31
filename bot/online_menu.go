@@ -64,7 +64,7 @@ func (s *BotService) sendOnlineCard(chatID int64,msgID int) {
  // before loading the ledger must not masquerade as an empty online list.
  if state.Users==nil{
   detail:="unknown error";if err!=nil{detail=mdEsc(err.Error())}
-  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"online.error",detail),backToMainMarkup())
+  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"online.error",detail),s.backToMainMarkup())
   return
  }
  markup:=tgbotapi.NewInlineKeyboardMarkup(

@@ -7,6 +7,8 @@ import (
  "fmt"
  "log"
  "os/signal"
+ "sort"
+ "strconv"
  "syscall"
  "os"
  "os/exec"
@@ -52,8 +54,10 @@ func runTrafficDaemon(cfg *BotConfig) error {
  }
 }
 
-// Enable Xray's official online-stats policy once, preserving all other
-// settings. Validate before the guarded, rollback-capable restart.
+// Enable Xray's official per-user statistics policy for level 0 and for every
+// client level actually referenced by an inbound. Preserving all other
+// settings and validating before the guarded, rollback-capable restart keeps
+// the operation safe on a live server.
 func ensureOnlineStatsPolicy(cfg *BotConfig) error {
  if cfg.XrayConfigPath=="" {return fmt.Errorf("empty Xray config path")}
  lock,err:=acquireConfigLock(cfg.XrayConfigPath,25*time.Second)
@@ -69,10 +73,37 @@ func ensureOnlineStatsPolicy(cfg *BotConfig) error {
  if !ok {policy=map[string]any{};root["policy"]=policy}
  levels,ok:=policy["levels"].(map[string]any)
  if !ok {levels=map[string]any{};policy["levels"]=levels}
- level,ok:=levels["0"].(map[string]any)
- if !ok {level=map[string]any{};levels["0"]=level}
- if level["statsUserOnline"]==true{return nil}
- level["statsUserOnline"]=true
+
+ wanted:=map[string]bool{"0":true}
+ if inbounds,ok:=root["inbounds"].([]any);ok {
+  for _,rawInbound:=range inbounds {
+   inbound,ok:=rawInbound.(map[string]any);if !ok{continue}
+   settings,ok:=inbound["settings"].(map[string]any);if !ok{continue}
+   clients,ok:=settings["clients"].([]any);if !ok{continue}
+   for _,rawClient:=range clients {
+    client,ok:=rawClient.(map[string]any);if !ok{continue}
+    switch level:=client["level"].(type) {
+    case float64:
+     wanted[strconv.Itoa(int(level))]=true
+    case string:
+     if level!=""{wanted[level]=true}
+    }
+   }
+  }
+ }
+
+ names:=make([]string,0,len(wanted))
+ for name:=range wanted{names=append(names,name)}
+ sort.Strings(names)
+ changed:=false
+ for _,name:=range names {
+  level,ok:=levels[name].(map[string]any)
+  if !ok {level=map[string]any{};levels[name]=level}
+  for _,flag:=range []string{"statsUserUplink","statsUserDownlink","statsUserOnline"} {
+   if level[flag]!=true {level[flag]=true;changed=true}
+  }
+ }
+ if !changed{return nil}
  next,err:=json.MarshalIndent(root,"","  ")
  if err!=nil{return err}
  next=append(next,'\n')

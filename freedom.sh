@@ -1308,6 +1308,17 @@ ensure_stats_api_scaffold() {
   if ! jq -e '.policy.levels."0".statsUserUplink == true' "$CONFIG_PATH" >/dev/null 2>&1; then need_update=1; fi
   if ! jq -e '.policy.levels."0".statsUserDownlink == true' "$CONFIG_PATH" >/dev/null 2>&1; then need_update=1; fi
   if ! jq -e '.policy.levels."0".statsUserOnline == true' "$CONFIG_PATH" >/dev/null 2>&1; then need_update=1; fi
+  # Every client level used by an inbound needs the per-user counters.
+  # Xray reports user traffic/online state only for levels with these flags,
+  # so a custom client level would otherwise stay invisible to the Bot.
+  if ! jq -e '
+    ([0] + [.inbounds[]? | .settings.clients[]? | .level? // 0] | unique | map(tostring)) as $levels
+    | [ $levels[] as $l
+        | select((.policy.levels[$l].statsUserUplink == true
+              and .policy.levels[$l].statsUserDownlink == true
+              and .policy.levels[$l].statsUserOnline == true) | not) ]
+    | length == 0
+  ' "$CONFIG_PATH" >/dev/null 2>&1; then need_update=1; fi
 
   if (( need_update == 1 )); then
     info "Xray config lacks API/traffic statistics. Updating the config scaffold..."
@@ -1333,6 +1344,14 @@ ensure_stats_api_scaffold() {
         statsUserDownlink: true,
         statsUserOnline: true
       }) |
+      ([0] + [.inbounds[]? | .settings.clients[]? | .level? // 0] | unique | map(tostring)) as $levels |
+      reduce $levels[] as $level (.;
+        .policy.levels[$level] = ((.policy.levels[$level] // {}) + {
+          statsUserUplink: true,
+          statsUserDownlink: true,
+          statsUserOnline: true
+        })
+      ) |
       (if ([.inbounds[]? | select(.tag == "api-internal")] | length) == 0 then
         .inbounds = [{
           tag: "api-internal",
@@ -3610,8 +3629,16 @@ configure_freedom_bot_interactive() {
   local cur_hours=12
   local cur_mutations=false
   local cur_updates=false cur_core_updates=false cur_sensitive_backup=false
+  local cur_server_host=""
+  local bot_base='{}'
 
   if [[ -f "$BOT_CONFIG_PATH" ]]; then
+    # Keep unknown keys (language, language_explicit, future settings) instead
+    # of replacing the whole file with the fields prompted below.
+    if ! bot_base="$(jq -c 'if type == "object" then . else {} end' "$BOT_CONFIG_PATH" 2>/dev/null)"; then
+      warn "Existing $BOT_CONFIG_PATH is not valid JSON; refusing to overwrite it. Repair or remove it first."
+      return 1
+    fi
     cur_token="$(jq -r '.token // ""' "$BOT_CONFIG_PATH" 2>/dev/null || true)"
     cur_admins="$(jq -r '(.admin_ids // []) | join(",")' "$BOT_CONFIG_PATH" 2>/dev/null || true)"
     cur_proxy="$(jq -r '.socks5_proxy // ""' "$BOT_CONFIG_PATH" 2>/dev/null || true)"
@@ -3620,6 +3647,7 @@ configure_freedom_bot_interactive() {
     cur_updates="$(jq -r '.allow_updates // false' "$BOT_CONFIG_PATH" 2>/dev/null || echo false)"
     cur_core_updates="$(jq -r '.allow_core_updates // false' "$BOT_CONFIG_PATH" 2>/dev/null || echo false)"
     cur_sensitive_backup="$(jq -r '.allow_sensitive_backup // false' "$BOT_CONFIG_PATH" 2>/dev/null || echo false)"
+    cur_server_host="$(jq -r '.server_host // ""' "$BOT_CONFIG_PATH" 2>/dev/null || true)"
   fi
 
   local cur_token_display="Not set"
@@ -3648,6 +3676,24 @@ configure_freedom_bot_interactive() {
 
   read -r -p "SOCKS5 proxy (optional; e.g., 127.0.0.1:10808) [current: ${cur_proxy:-none}]: " in_proxy || in_proxy=""
   local final_proxy="${in_proxy:-$cur_proxy}"
+
+  # REALITY links embed an address clients dial directly. Automatic discovery
+  # fails behind NAT or a proxy, so allow an explicit public IP or hostname.
+  read -r -p "Public server address for client links (IP or DNS name; '-' clears) [current: ${cur_server_host:-auto-detect}]: " in_server_host || in_server_host=""
+  local final_server_host="${in_server_host:-$cur_server_host}"
+  if [[ "$in_server_host" == "-" ]]; then final_server_host=""; fi
+  if [[ -n "$final_server_host" ]]; then
+    if [[ "$final_server_host" == *"://"* || "$final_server_host" == */* || "$final_server_host" =~ [[:space:]] ]]; then
+      warn "Public server address must be a bare IP address or DNS hostname (no scheme, path, or spaces); configuration not saved."
+      return 1
+    fi
+    local host_check="${final_server_host#[}"
+    host_check="${host_check%]}"
+    if [[ "$host_check" =~ ^[^:]+:[0-9]+$ && "$host_check" != *:*:* ]]; then
+      warn "Public server address must not include a port; configuration not saved."
+      return 1
+    fi
+  fi
 
   read -r -p "Periodic system/traffic report interval (hours, 0 disables) [current: ${cur_hours}]: " in_hours || in_hours=""
   local final_hours="${in_hours:-$cur_hours}"
@@ -3696,9 +3742,11 @@ configure_freedom_bot_interactive() {
   # Write Bot configuration atomically; never truncate bot.json on a jq failure.
   local bot_tmp="${BOT_CONFIG_PATH}.tmp.$$"
   if ! jq -n \
+    --argjson base "$bot_base" \
     --arg token "$final_token" \
     --argjson admins "$json_admins" \
     --arg proxy "$final_proxy" \
+    --arg server_host "$final_server_host" \
     --argjson hours "$final_hours" \
     --argjson mutations "$final_mutations" \
     --argjson updates "$final_updates" \
@@ -3706,7 +3754,7 @@ configure_freedom_bot_interactive() {
     --argjson sensitive_backup "$final_sensitive_backup" \
     --arg xray_cfg "$CONFIG_PATH" \
     --arg xray_bin "$BIN" \
-    '{
+    '$base + {
       token: $token,
       admin_ids: $admins,
       socks5_proxy: $proxy,
@@ -3715,6 +3763,7 @@ configure_freedom_bot_interactive() {
       allow_updates: $updates,
       allow_core_updates: $core_updates,
       allow_sensitive_backup: $sensitive_backup,
+      server_host: $server_host,
       xray_config_path: $xray_cfg,
       xray_bin_path: $xray_bin,
       stats_api_server: "127.0.0.1:10085"

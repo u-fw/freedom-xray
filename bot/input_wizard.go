@@ -1,7 +1,6 @@
 package main
 
 import (
- "fmt"
  "strings"
  "sync"
  "time"
@@ -25,16 +24,16 @@ func (s *BotService) beginUserWizard(chatID,adminID int64,msgID int,stage,user s
  managementWizards.Lock()
  managementWizards.states[chatID]=managementWizard{AdminID:adminID,Expires:time.Now().Add(5*time.Minute),Stage:stage,User:user}
  managementWizards.Unlock()
- prompt:="Enter a new username (1–48 characters: letters, digits, _, ., @, -), or send /cancel."
- if stage=="rename"{prompt=fmt.Sprintf("Enter a new name for user %s, or send /cancel.",user)}
- s.sendOrEdit(chatID,msgID,prompt,backToMainMarkup())
+ prompt:=tr(s.cfg.Language,"wizard.nameprompt")
+ if stage=="rename"{prompt=tr(s.cfg.Language,"wizard.renameprompt",user)}
+ s.sendOrEdit(chatID,msgID,prompt,s.backToMainMarkup())
 }
 
 func (s *BotService) handleWizardMessage(msg *tgbotapi.Message) bool {
  chatID:=msg.Chat.ID
  if msg.Command()=="cancel" {
   managementWizards.Lock();delete(managementWizards.states,chatID);managementWizards.Unlock()
-  s.sendAlert(chatID,"Input cancelled.")
+  s.sendAlert(chatID,tr(s.cfg.Language,"wizard.cancelled"))
   return true
  }
  managementWizards.Lock()
@@ -45,7 +44,7 @@ func (s *BotService) handleWizardMessage(msg *tgbotapi.Message) bool {
  if !ok||msg.Command()!=""{return false}
  input:=strings.TrimSpace(msg.Text)
  if !managedUserName.MatchString(input) {
-  s.sendAlert(chatID,"Invalid name: use 1–48 ASCII letters, digits, _, ., @, or -. Reopen user management.")
+  s.sendAlert(chatID,tr(s.cfg.Language,"wizard.invalidname"))
   return true
  }
  if state.Stage=="rename" {
@@ -54,10 +53,10 @@ func (s *BotService) handleWizardMessage(msg *tgbotapi.Message) bool {
  }
  if state.Stage!="name"{return true}
  nodes,err:=LoadXrayInbounds(s.cfg.XrayConfigPath)
- if err!=nil{s.sendAlert(chatID,"Failed to load inbounds: "+err.Error());return true}
+ if err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"manage.inboundsfailed",err.Error()));return true}
  var rows [][]tgbotapi.InlineKeyboardButton
- rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("Create user only (no inbound access)","manage_scope:unbound")))
- rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("Assign all inbounds (not recommended)","manage_scope:all")))
+ rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"wizard.createonly"),"manage_scope:unbound")))
+ rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"wizard.assignall"),"manage_scope:all")))
  for _,n:=range nodes {
   rows=append(rows,tgbotapi.NewInlineKeyboardRow(
    tgbotapi.NewInlineKeyboardButtonData(truncateLabel(n.Tag,48),"manage_scope:"+userCallbackKey(n.Tag)),
@@ -66,7 +65,7 @@ func (s *BotService) handleWizardMessage(msg *tgbotapi.Message) bool {
  managementWizards.Lock()
  managementWizards.states[chatID]=managementWizard{AdminID:msg.From.ID,Expires:time.Now().Add(5*time.Minute),Stage:"scope",User:input}
  managementWizards.Unlock()
- s.sendOrEdit(chatID,0,"Create independent user "+input+". Save the identity without node access and assign inbounds from user details later.",tgbotapi.NewInlineKeyboardMarkup(rows...))
+ s.sendOrEdit(chatID,0,tr(s.cfg.Language,"wizard.scopebody",input),tgbotapi.NewInlineKeyboardMarkup(rows...))
  return true
 }
 
@@ -79,16 +78,16 @@ func (s *BotService) handleWizardScope(cb *tgbotapi.CallbackQuery) {
   delete(managementWizards.states,chatID)
  }else{ok=false}
  managementWizards.Unlock()
- if !ok{s.sendOrEdit(chatID,msgID,"Operation expired. Add the user again.",backToMainMarkup());return}
+ if !ok{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"wizard.expired"),s.backToMainMarkup());return}
  key:=strings.TrimPrefix(cb.Data,"manage_scope:")
  target:=""
  if key=="all"{target="all"}
  if key!="all"&&key!="unbound" {
   nodes,err:=LoadXrayInbounds(s.cfg.XrayConfigPath)
-  if err!=nil{s.sendAlert(chatID,"Cannot read inbounds");return}
+  if err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"wizard.inboundread"));return}
   target=""
   for _,n:=range nodes {if userCallbackKey(n.Tag)==key{target=n.Tag;break}}
-  if target==""{s.sendAlert(chatID,"Selected inbound changed. Retry the operation.");return}
+  if target==""{s.sendAlert(chatID,tr(s.cfg.Language,"wizard.inboundchanged"));return}
  }
  s.offerUserChange(chatID,cb.From.ID,msgID,UserChange{Kind:"add",User:state.User,Node:target})
 }

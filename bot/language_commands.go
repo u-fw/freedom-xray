@@ -81,6 +81,9 @@ func (s *BotService) changeLanguage(msg *tgbotapi.Message) {
  }
  s.registerAdminCommands(msg.Chat.ID)
  s.sendAlert(msg.Chat.ID,tr(s.cfg.Language,"lang.updated",s.cfg.Language))
+ // Re-render the dashboard so /language behaves like the language button and
+ // the new locale is visible immediately rather than on the next navigation.
+ s.sendMainMenu(msg.Chat.ID,0)
 }
 
 // setLanguage is the dashboard-button path. It renders the menu again in the

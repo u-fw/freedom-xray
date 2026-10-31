@@ -124,17 +124,12 @@ func (s *BotService) handleUpdate(update tgbotapi.Update) {
 		log.Printf("[Bot] Unauthorized access attempt from User ID: %d", senderID)
 		if isCallback && update.CallbackQuery != nil {
 			// Stop the client-side spinner on unauthorized button presses.
-			if _, err := s.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "⛔ Access denied")); err != nil {
+			if _, err := s.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, tr(s.cfg.Language,"auth.denied"))); err != nil {
 				log.Printf("[Bot] answer unauthorized callback failed: %v", err)
 			}
 		}
 		if !isCallback && update.Message != nil && update.Message.Chat.IsPrivate() {
-			msg := tgbotapi.NewMessage(chatID, fmt.Sprintf(
-				"⛔ Unauthorized access\n\n"+
-					"Your Telegram user ID: `%d`\n"+
-					"Use the `freedom` command on the VPS to add it to the administrator allowlist.",
-				senderID,
-			))
+			msg := tgbotapi.NewMessage(chatID, fmt.Sprintf(tr(s.cfg.Language,"auth.unauthorized"), senderID))
 			msg.ParseMode = "Markdown"
 			if _, err := s.bot.Send(msg); err != nil {
 				log.Printf("[Bot] send unauthorized notice failed: %v", err)
@@ -147,7 +142,7 @@ func (s *BotService) handleUpdate(update tgbotapi.Update) {
 	// In a private Telegram chat, chat ID equals the authorized user's ID.
 	if chatID != senderID || (update.Message != nil && !update.Message.Chat.IsPrivate()) ||
 		(update.CallbackQuery != nil && update.CallbackQuery.Message != nil && !update.CallbackQuery.Message.Chat.IsPrivate()) {
-		if isCallback { _,_ = s.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Administrator private chats only")) }
+		if isCallback { _,_ = s.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, tr(s.cfg.Language,"auth.privateonly"))) }
 		return
 	}
 
@@ -200,7 +195,7 @@ func (s *BotService) handleMessage(msg *tgbotapi.Message) {
 		s.sendHelpCard(msg.Chat.ID,0)
 	default:
 		if strings.HasPrefix(text, "/") {
-			reply := tgbotapi.NewMessage(msg.Chat.ID, "Unknown command. Use /menu or /start to open the dashboard.")
+			reply := tgbotapi.NewMessage(msg.Chat.ID, tr(s.cfg.Language,"command.unknown"))
 			s.bot.Send(reply)
 		} else {
 			s.sendMainMenu(msg.Chat.ID, 0)
@@ -253,7 +248,7 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 		s.handleWizardScope(cb)
 	case strings.HasPrefix(data,"manage_rename:"):
 		email:=lookupManagedUserByKey(s.cfg.XrayConfigPath,strings.TrimPrefix(data,"manage_rename:"))
-		if email==""{s.sendAlert(chatID,"User not found or renamed; refresh the user list");return}
+		if email==""{s.sendAlert(chatID,tr(s.cfg.Language,"manage.userrenamed"));return}
 		s.beginUserWizard(chatID,cb.From.ID,msgID,"rename",email)
 	case data == "menu_restart_ask":
 		s.askRestart(chatID, msgID)
@@ -307,11 +302,11 @@ func (s *BotService) handleUserLinksCallback(chatID int64, payload string) {
 
 	_, loadErr := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if loadErr != nil {
-		s.sendAlert(chatID, "❌ Failed to read user list: "+loadErr.Error())
+		s.sendAlert(chatID, tr(s.cfg.Language,"users.linkreadfailed",loadErr.Error()))
 		return
 	}
 	emails,dirErr := allDirectoryNames(s.cfg.XrayConfigPath)
-	if dirErr!=nil {s.sendAlert(chatID,"Failed to read user directory: "+dirErr.Error());return}
+	if dirErr!=nil {s.sendAlert(chatID,tr(s.cfg.Language,"users.directoryreadfailed",dirErr.Error()));return}
 
 	// Current format: a 16-hex-character email hash, stable across refreshes.
 	if len(payload) == 16 {
@@ -322,7 +317,7 @@ func (s *BotService) handleUserLinksCallback(chatID int64, payload string) {
 					return
 				}
 			}
-			s.sendAlert(chatID, "The user list has changed. Return and select again.")
+			s.sendAlert(chatID, tr(s.cfg.Language,"users.listchanged"))
 			s.sendUsersCard(chatID, 0)
 			return
 		}
@@ -334,7 +329,7 @@ func (s *BotService) handleUserLinksCallback(chatID int64, payload string) {
 			s.sendUserLinksAndQRs(chatID, emails[idx])
 			return
 		}
-		s.sendAlert(chatID, "The user list has changed. Return and select again.")
+		s.sendAlert(chatID, tr(s.cfg.Language,"users.listchanged"))
 		s.sendUsersCard(chatID, 0)
 		return
 	}
@@ -409,7 +404,7 @@ func (s *BotService) sendMainMenu(chatID int64,msgID int) {
 func (s *BotService) sendStatusCard(chatID int64, msgID int) {
 	stats, err := GetSystemStats()
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language,"status.failure",mdEsc(err.Error())), backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language,"status.failure",mdEsc(err.Error())), s.backToMainMarkup())
 		return
 	}
 
@@ -445,13 +440,13 @@ func (s *BotService) sendTrafficCard(chatID int64, msgID int) {
  state,err:=snapshotTraffic(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer)
  if err!=nil {
   cached,readErr:=loadTrafficStore(s.cfg.XrayConfigPath)
-  if readErr!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"traffic.readerror",mdEsc(err.Error()),mdEsc(readErr.Error())),backToMainMarkup());return}
+  if readErr!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"traffic.readerror",mdEsc(err.Error()),mdEsc(readErr.Error())),s.backToMainMarkup());return}
   state=cached
  }
  // Remove orphaned entries left by previous releases, but only after
  // validating the actual managed users and suspended user records.
  clean,cleanErr:=reconcileStoredTraffic(s.cfg.XrayConfigPath)
- if cleanErr!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"traffic.directoryerror",mdEsc(cleanErr.Error())),backToMainMarkup());return}
+ if cleanErr!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"traffic.directoryerror",mdEsc(cleanErr.Error())),s.backToMainMarkup());return}
  state=clean
  traffics:=storedUserTraffic(state)
  var sb strings.Builder
@@ -502,19 +497,19 @@ func (s *BotService) askTrafficReset(chatID int64, msgID int) {
 
 func (s *BotService) doTrafficReset(chatID int64, msgID int) {
  lock,lockErr:=acquireConfigLock(s.cfg.XrayConfigPath,10*time.Second)
- if lockErr!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"traffic.lock",mdEsc(lockErr.Error())),backToMainMarkup());return}
+ if lockErr!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"traffic.lock",mdEsc(lockErr.Error())),s.backToMainMarkup());return}
  defer releaseConfigLock(lock)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	_, err := QueryTrafficStats(ctx, s.cfg.XrayBinPath, s.cfg.StatsAPIServer, true)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language,"traffic.reseterror",mdEsc(err.Error())), backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language,"traffic.reseterror",mdEsc(err.Error())), s.backToMainMarkup())
 		return
 	}
 
 	if err := resetTrafficAllUsersLocked(s.cfg.XrayConfigPath); err != nil {
-		s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"traffic.partialreset",mdEsc(err.Error())),backToMainMarkup())
+		s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"traffic.partialreset",mdEsc(err.Error())),s.backToMainMarkup())
 		return
 	}
 	text := tr(s.cfg.Language,"traffic.resetsuccess")
@@ -530,7 +525,7 @@ func (s *BotService) doTrafficReset(chatID int64, msgID int) {
 func (s *BotService) sendNodesCard(chatID int64, msgID int) {
 	nodes, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language,"nodes.failure",mdEsc(err.Error())), backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language,"nodes.failure",mdEsc(err.Error())), s.backToMainMarkup())
 		return
 	}
 
@@ -574,7 +569,7 @@ func (s *BotService) sendNodesCard(chatID int64, msgID int) {
 func (s *BotService) sendUsersCard(chatID int64, msgID int) {
 	_, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language,"users.failure",mdEsc(err.Error())), backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language,"users.failure",mdEsc(err.Error())), s.backToMainMarkup())
 		return
 	}
 
@@ -615,21 +610,21 @@ func (s *BotService) sendUserLinksAndQRs(chatID int64,email string) {
 }
 
 func (s *BotService) askRestart(chatID int64, msgID int) {
-	text := "🔄 *Restart the Xray core now?*\n\nActive client connections will disconnect and need to reconnect."
+	text := tr(s.cfg.Language,"restart.ask")
 	markup := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🟢 Confirm restart", "menu_restart_confirm"),
-			tgbotapi.NewInlineKeyboardButtonData("Cancel", "menu_main"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"restart.confirm"), "menu_restart_confirm"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.cancel"), "menu_main"),
 		),
 	)
 	s.sendOrEdit(chatID, msgID, text, markup)
 }
 
 func (s *BotService) doRestart(chatID int64, msgID int) {
-	s.sendOrEdit(chatID, msgID, "⏳ Restarting Xray...", tgbotapi.InlineKeyboardMarkup{})
+	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language,"restart.running"), tgbotapi.InlineKeyboardMarkup{})
 
 	lock,lockErr:=acquireConfigLock(s.cfg.XrayConfigPath,15*time.Second)
- if lockErr!=nil{s.sendOrEdit(chatID,msgID,"❌ Cannot acquire config lock for restart: "+mdEsc(lockErr.Error()),backToMainMarkup());return}
+ if lockErr!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"restart.lockfail",mdEsc(lockErr.Error())),s.backToMainMarkup());return}
  snapshotTrafficBestEffortLocked(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer)
  err := RestartXrayService()
  releaseConfigLock(lock)
@@ -638,30 +633,30 @@ func (s *BotService) doRestart(chatID int64, msgID int) {
 
 	var text string
 	if err != nil || status != "active" {
-		reason := "Unknown error"
+		reason := tr(s.cfg.Language,"restart.unknown")
 		if err != nil {
 			reason = err.Error()
 		}
-		text = fmt.Sprintf("❌ *Xray restart failed*\n\nCurrent status: `%s`\nError: `%s`", mdCode(status), mdCode(reason))
+		text = fmt.Sprintf(tr(s.cfg.Language,"restart.failed"), mdCode(status), mdCode(reason))
 	} else {
-		text = "✅ *Xray restarted successfully.*\n\nCurrent status: `active (running)`"
+		text = tr(s.cfg.Language,"restart.success")
 	}
 
-	s.sendOrEdit(chatID, msgID, text, backToMainMarkup())
+	s.sendOrEdit(chatID, msgID, text, s.backToMainMarkup())
 }
 
 func (s *BotService) sendBackupFile(chatID int64) {
   if !s.cfg.AllowSensitiveBackup {
-    s.sendAlert(chatID,"🔒 The full configuration contains REALITY and VLESS secrets. Sending it over Telegram is disabled unless allow_sensitive_backup is explicitly enabled on the VPS.")
+    s.sendAlert(chatID,tr(s.cfg.Language,"backup.disabled"))
     return
   }
 	if _, err := os.Stat(s.cfg.XrayConfigPath); err != nil {
-		s.sendAlert(chatID, "❌ Configuration file not found: "+s.cfg.XrayConfigPath)
+		s.sendAlert(chatID, tr(s.cfg.Language,"backup.missing",s.cfg.XrayConfigPath))
 		return
 	}
 
 	doc := tgbotapi.NewDocument(chatID, tgbotapi.FilePath(s.cfg.XrayConfigPath))
-	doc.Caption = fmt.Sprintf("💾 freedom.sh Xray configuration backup\nCreated: %s", time.Now().Format("2006-01-02 15:04:05"))
+	doc.Caption = fmt.Sprintf(tr(s.cfg.Language,"backup.caption"), time.Now().Format("2006-01-02 15:04:05"))
 	if _, err := s.bot.Send(doc); err != nil {
 		log.Printf("[Bot] send backup document failed: %v", err)
 	}
@@ -701,22 +696,20 @@ func (s *BotService) broadcastReport() {
 	cancel()
 
 	var sb strings.Builder
-	sb.WriteString("📢 *freedom.sh Periodic Health and Traffic Report*\n\n")
+	sb.WriteString(tr(s.cfg.Language,"report.title"))
 	if stats != nil {
-		sb.WriteString(fmt.Sprintf(
-			"🖥️ *Host:* `%s` | Xray: `%s`\n"+
-				"🔥 *CPU:* `%.1f%%` | 🧠 *Memory:* `%.1f%%` | 💾 *Disk:* `%.1f%%`\n\n",
+		sb.WriteString(tr(s.cfg.Language,"report.host",
 			mdCode(stats.Hostname), mdCode(stats.XrayStatus),
 			stats.CPUUsagePct, stats.MemUsagePct, stats.DiskUsagePct,
 		))
 	}
 
-	sb.WriteString("📈 *Top Users by Traffic:*\n")
+	sb.WriteString(tr(s.cfg.Language,"report.top"))
 	if len(traffics) == 0 {
-		sb.WriteString("No traffic data available.\n")
+		sb.WriteString(tr(s.cfg.Language,"report.empty"))
 	} else {
 		for _, u := range traffics {
-			sb.WriteString(fmt.Sprintf("• `%s`: ⬆️ %s | ⬇️ %s (total %s)\n",
+			sb.WriteString(tr(s.cfg.Language,"report.row",
 				mdCode(u.Email), FormatBytes(u.Uplink), FormatBytes(u.Downlink), FormatBytes(u.Total)))
 		}
 	}
@@ -731,10 +724,10 @@ func (s *BotService) broadcastReport() {
 	}
 }
 
-func backToMainMarkup() tgbotapi.InlineKeyboardMarkup {
+func (s *BotService) backToMainMarkup() tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🔙 Back to menu", "menu_main"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.back"), "menu_main"),
 		),
 	)
 }

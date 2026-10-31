@@ -4,10 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net"
-	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -56,10 +53,6 @@ type UserTraffic struct {
 }
 
 var (
-	cachedPublicIP   string
-	cachedPublicIPMu sync.RWMutex
-	cachedIPExpire   time.Time
-
 	// xrayBinPath is used by the x25519 / mldsa65 derivation helpers below.
 	xrayBinPath = "xray"
 
@@ -175,54 +168,6 @@ func deriveMLDSA65Verify(seed string) string {
 		derivationMu.Unlock()
 	}
 	return verify
-}
-
-// GetPublicIP returns public IP with caching
-func GetPublicIP() string {
-	cachedPublicIPMu.RLock()
-	if cachedPublicIP != "" && time.Now().Before(cachedIPExpire) {
-		ip := cachedPublicIP
-		cachedPublicIPMu.RUnlock()
-		return ip
-	}
-	cachedPublicIPMu.RUnlock()
-
-	client := &http.Client{Timeout: 3 * time.Second}
-	endpoints := []string{
-		"https://api.ipify.org",
-		"https://icanhazip.com",
-		"https://ifconfig.me/ip",
-	}
-
-	for _, ep := range endpoints {
-		resp, err := client.Get(ep)
-		if err != nil {
-			continue
-		}
-		if resp.StatusCode != http.StatusOK {
-			// Always close the body; a non-200 response must not leak the
-			// underlying connection across 10-minute refresh cycles.
-			resp.Body.Close()
-			continue
-		}
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 256))
-		resp.Body.Close()
-		if readErr != nil {
-			continue
-		}
-		// Public-IP endpoints are untrusted input; only accept a valid literal
-		// address so it cannot inject markup into generated URIs.
-		ip := strings.TrimSpace(string(body))
-		if net.ParseIP(ip) != nil {
-			cachedPublicIPMu.Lock()
-			cachedPublicIP = ip
-			cachedIPExpire = time.Now().Add(10 * time.Minute)
-			cachedPublicIPMu.Unlock()
-			return ip
-		}
-	}
-
-	return "127.0.0.1"
 }
 
 // LoadXrayInbounds parses /usr/local/etc/xray/config.json into InboundDetails
