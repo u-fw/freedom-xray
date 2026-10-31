@@ -1,3 +1,5 @@
-v1.3.4
-One-action manager + Bot synchronization from the CLI update menu and Telegram
-update center, content-based script version checks, and a visible script version
+v1.3.5
+User traffic quota and expiry enforcement with automatic, reversible suspension,
+admin notifications, online diagnostics with one-click policy repair, extended
+node editing (listener port, XHTTP host and padding, REALITY short ID), and a
+read-only routing view.
