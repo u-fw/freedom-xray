@@ -1876,6 +1876,8 @@ show_user_node_links() {
     port="$(echo "$ib_json" | jq -r '.port')"
     net="$(echo "$ib_json" | jq -r '.streamSettings.network // "tcp"')"
     sec="$(echo "$ib_json" | jq -r '.streamSettings.security // "none"')"
+    local share_port
+    share_port="$(public_share_port_for_inbound "$tag" "$port" "$net" "$sec")"
 
     # 该用户在此节点上的实际凭证（不同节点可能尚未同步该用户）
     local node_user_id node_flow
@@ -2523,6 +2525,8 @@ list_and_show_nodes() {
     port="$(echo "$ib_json" | jq -r '.port')"
     net="$(echo "$ib_json" | jq -r '.streamSettings.network // "tcp"')"
     sec="$(echo "$ib_json" | jq -r '.streamSettings.security // "none"')"
+    local share_port
+    share_port="$(public_share_port_for_inbound "$tag" "$port" "$net" "$sec")"
     uuid="$(echo "$ib_json" | jq -r '.settings.clients[0].id // empty')"
     email="$(echo "$ib_json" | jq -r '.settings.clients[0].email // "admin@freedom"')"
     local client_count
@@ -2530,7 +2534,7 @@ list_and_show_nodes() {
 
     echo
     echo -e "${BOLD}${CYAN}[节点序号 $((i+1))] Tag: ${tag}${NC}"
-    echo "  - 端口: ${port} | 传输层: ${net} | 安全层: ${sec} | 客户端数: ${client_count} 个"
+    echo "  - 监听端口: ${port} | 对外端口: ${share_port} | 传输层: ${net} | 安全层: ${sec} | 客户端数: ${client_count} 个"
     if [[ -z "$uuid" ]]; then
       info "节点暂未绑定任何用户。请在用户管理 → 用户详情中授权后再导出链接。"
       i=$((i+1))
@@ -2617,6 +2621,8 @@ list_and_show_nodes() {
     port="$(echo "$ib_json" | jq -r '.port')"
     net="$(echo "$ib_json" | jq -r '.streamSettings.network // "tcp"')"
     sec="$(echo "$ib_json" | jq -r '.streamSettings.security // "none"')"
+    local share_port
+    share_port="$(public_share_port_for_inbound "$tag" "$port" "$net" "$sec")"
     uuid="$(echo "$ib_json" | jq -r '.settings.clients[0].id // empty')"
     if [[ -z "$uuid" ]]; then
       warn "所选节点尚无任何用户绑定，无法生成可用二维码。请先为该节点授权用户。"
@@ -2989,6 +2995,31 @@ delete_node_interactive() {
 }
 
 # 4. 修改节点配置
+# Edit only the client-facing public-port sidecar, never Xray listening ports.
+set_node_public_port_interactive() {
+  local tag="$1" listen="$2" net="$3" sec="$4" value confirm tmp raw data
+  if [[ "$net" != "xhttp" || "$sec" != "tls" ]]; then warn "仅支持 XHTTP + TLS"; return 1; fi
+  info "当前监听端口：$listen。此设置不会创建 Cloudflare Origin Rule 或重启 Xray。"
+  read -r -p "对外 HTTPS 端口（例如 443；0 清除）: " value || return 0
+  if ! [[ "$value" =~ ^[0-9]+$ ]] || ((10#$value > 65535));then warn "端口无效";return 1;fi
+  [[ "$value" == "0" || "$value" == "$listen" ]] || info "请确保已在 Cloudflare Origin Rules 中将客户端端口 $value 回源到 $listen。"
+  read -r -p "确认更新导出元数据？[y/N]: " confirm || confirm="N"
+  case "$confirm" in y|Y|yes|YES);; *) info "已取消";return 0;; esac
+  install -d -m 755 "$CONFIG_DIR" || return 1
+  tmp="$(mktemp "$CONFIG_DIR/.freedom-public-ports.XXXXXX")" || return 1
+  if [[ -f "$PUBLIC_PORTS_PATH" ]];then
+    if ! raw="$(jq -c '.' "$PUBLIC_PORTS_PATH")";then rm -f "$tmp";warn "配置损坏，拒绝覆盖";return 1;fi
+  else raw='{"nodes":{}}';fi
+  if [[ "$value" == "0" || "$value" == "$listen" ]];then
+    data="$(jq -c --arg tag "$tag" '.nodes = (.nodes // {}) | .nodes |= del(.[$tag])' <<< "$raw")" || { rm -f "$tmp";return 1; }
+  else
+    data="$(jq -c --arg tag "$tag" --argjson listen "$listen" --argjson port "$value" '.nodes = (.nodes // {}) | .nodes[$tag]={listen_port:$listen,public_port:$port}' <<< "$raw")" || { rm -f "$tmp";return 1; }
+  fi
+  if ! printf "%s\n" "$data" > "$tmp" || ! chmod 600 "$tmp" || ! mv -f "$tmp" "$PUBLIC_PORTS_PATH";then
+    rm -f "$tmp";warn "保存失败";return 1
+  fi
+  ok "已保存：$tag 客户端端口 $(public_share_port_for_inbound "$tag" "$listen" "$net" "$sec") → 监听 $listen。Xray 未重启。"
+}
 modify_node_interactive() {
   ensure_config_scaffold
   local nodes_json
@@ -3041,10 +3072,11 @@ modify_node_interactive() {
   echo -e "  ${GREEN}2.${NC} UUID 属于用户身份；请前往「用户管理」调整"
   echo -e "  ${GREEN}3.${NC} 修改伪装域名 / SNI"
   echo -e "  ${GREEN}4.${NC} 修改 XHTTP 访问路径 (仅限 xhttp 节点)"
+  echo -e "  ${GREEN}5.${NC} 设置 CDN 对外端口（Origin Rule 兼容）"
   echo -e "  ${GREEN}0.${NC} 取消"
   echo "————————————————————————————————————————————————"
 
-  read -r -p "请选择修改项目 [0-4]: " item_sel || item_sel=""
+  read -r -p "请选择修改项目 [0-5]: " item_sel || item_sel=""
   case "$item_sel" in
     1)
       prompt_and_check_port "请输入新端口" "$cur_port" "$cur_tag"
@@ -3112,6 +3144,7 @@ modify_node_interactive() {
       validate_and_restart_service
       ok "节点 [${cur_tag}] XHTTP 路径已更新为: ${new_path}"
       ;;
+    5) set_node_public_port_interactive "$cur_tag" "$cur_port" "$cur_net" "$(echo "$current_json" | jq -r '.streamSettings.security // "none"')" ;;
     *) info "已取消修改。" ;;
   esac
   echo && read -rp "按回车键返回主菜单..." _dummy
