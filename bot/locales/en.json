@@ -21,6 +21,7 @@
   "online.truncated": "(Showing the first 25 users)\n",
   "online.polled": "\nLast successful poll: %s\n",
   "online.warning": "⚠️ CDN source IPs are not XFF-sanitized and may be spoofed; do not use them for automatic bans.",
+  "online.policyoff": "⚠️ Level %s has statsUserOnline off, so source IPs cannot be collected. Open diagnostics and run repair.",
   "online.error": "Unable to read online statistics: %s",
   "online.refresh": "🔄 Refresh",
   "online.details": "👥 User details",

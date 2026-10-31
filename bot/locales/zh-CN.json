@@ -21,6 +21,7 @@
   "online.truncated": "（仅显示前 25 名用户）\n",
   "online.polled": "\n最近成功轮询：%s\n",
   "online.warning": "⚠️ CDN 来源 IP 未经 XFF 清洗，可能被伪造，勿用于自动封禁。",
+  "online.policyoff": "⚠️ 等级 %s 未开启 statsUserOnline，无法采集来源 IP；请点「在线诊断」运行修复。",
   "online.error": "在线统计读取失败：%s",
   "online.refresh": "🔄 刷新",
   "online.details": "👥 用户详情",

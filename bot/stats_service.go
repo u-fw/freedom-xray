@@ -27,6 +27,31 @@ func trafficCollectorActive() bool {
  return exec.CommandContext(ctx,"systemctl","is-active","--quiet","freedom-stats.service").Run()==nil
 }
 
+// applyVersionProvisioning closes the gap left by the in-menu self-update,
+// which replaces the binary and restarts only the Bot service. Once per
+// installed version it enables the Xray online-statistics policy (the core
+// cannot report source IPs without it) and restarts the standalone sampler so
+// it executes the new binary. Routine startups stay read-only.
+func applyVersionProvisioning(cfg *BotConfig) {
+ if cfg==nil||cfg.XrayConfigPath=="" {return}
+ marker:=filepath.Join(filepath.Dir(cfg.XrayConfigPath),".freedom-bot-version")
+ if raw,err:=os.ReadFile(marker);err==nil&&strings.TrimSpace(string(raw))==Version {return}
+ if err:=ensureOnlineStatsPolicy(cfg);err!=nil {
+  // Do not record the version: the next start retries, for example after the
+  // operator fixes a core configuration the new policy was rejected against.
+  log.Printf("[Init] online statistics policy provisioning failed: %v",err)
+  return
+ }
+ if trafficCollectorActive() {
+  if err:=runChecked("systemctl","restart","freedom-stats.service");err!=nil {
+   log.Printf("[Init] freedom-stats restart after Bot upgrade failed: %v",err)
+  }
+ }
+ if err:=writeAtomically(marker,[]byte(Version+"\n"),0600);err!=nil {
+  log.Printf("[Init] unable to record the provisioned Bot version: %v",err)
+ }
+}
+
 // Runs independently of Telegram connectivity and authentication. The
 // existing config lock serializes it with shell CLI and Bot reset/rename.
 func runTrafficDaemon(cfg *BotConfig) error {
@@ -134,7 +159,9 @@ func ensureOnlineStatsPolicy(cfg *BotConfig) error {
 func ensureTrafficCollectorUnit(configPath string,cfg *BotConfig) error {
  if os.Geteuid()!=0{return fmt.Errorf("statistics service install requires root")}
  if _,err:=os.Stat("/run/systemd/system");err!=nil{return fmt.Errorf("systemd not active: %w",err)}
+ policyReady:=true
  if err:=ensureOnlineStatsPolicy(cfg);err!=nil{
+  policyReady=false
   log.Printf("[freedom-stats] online IP collection not enabled: %v",err)
  }
  exe,err:=os.Executable();if err!=nil{return err}
@@ -168,5 +195,15 @@ WantedBy=multi-user.target
  // Ensures a replaced binary is picked up even if the unit content is stable.
  if err=runChecked("systemctl","restart","freedom-stats.service");err!=nil{return err}
  ctx,cancel:=context.WithTimeout(context.Background(),10*time.Second);defer cancel()
- return exec.CommandContext(ctx,"systemctl","is-active","--quiet","freedom-stats.service").Run()
+ if err=exec.CommandContext(ctx,"systemctl","is-active","--quiet","freedom-stats.service").Run();err!=nil{return err}
+ // A complete install already provisioned this version, so the Bot's first
+ // start need not repeat the work. A failed policy leaves the marker absent
+ // and lets applyVersionProvisioning retry.
+ if policyReady {
+  marker:=filepath.Join(filepath.Dir(configPath),".freedom-bot-version")
+  if err=writeAtomically(marker,[]byte(Version+"\n"),0600);err!=nil{
+   log.Printf("[freedom-stats] unable to record the provisioned Bot version: %v",err)
+  }
+ }
+ return nil
 }

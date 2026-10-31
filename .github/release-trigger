@@ -1,6 +1,8 @@
-v1.3.7
-In-menu updates now run the script and Bot update directly, REALITY activity is
-inferred from traffic counter increases so last-online is recorded even when the
-core exposes no live source IP, and creating an unbound user no longer fails.
-Oversized Telegram cards are split into tracked continuation messages, the user
-list is paginated, and a per-user traffic reset can restore quota-suspended users.
+v1.3.8
+The first start after an in-menu update now provisions online source-IP
+collection: the Bot enables statsUserOnline for level 0 and every client level,
+validates the core configuration, and restarts Xray once with rollback on
+failure. This closes the upgrade gap where self-update restarted only the Bot
+service and left the online API empty. The online card now names any level that
+has clients but keeps online statistics off, the footer is shorter, and the XFF
+spoofing caveat is shown only when an address is actually displayed.

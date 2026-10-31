@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	Version   = "v1.3.7"
+	Version   = "v1.3.8"
 	Commit    = "dev"
 	BuildTime = "unknown"
 )
@@ -115,8 +115,11 @@ func main() {
 		log.Printf("[Init] Configured %d authorized admin(s)", len(cfg.AdminIDs))
 	}
 
- // Never modify Xray configuration or systemd units during routine Bot
- // startup. The explicit manager update flow installs the sampler.
+ // Routine Bot startup must not modify Xray configuration or systemd units.
+ // applyVersionProvisioning is the one exception: it runs once per installed
+ // version so an in-menu upgrade still enables the online-statistics policy
+ // and refreshes the standalone sampler.
+ applyVersionProvisioning(cfg)
  collectorReady:=trafficCollectorActive()
  if !collectorReady {
   log.Printf("[freedom-stats] dedicated collector unavailable; using Bot sampler")

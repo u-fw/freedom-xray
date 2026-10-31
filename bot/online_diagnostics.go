@@ -85,6 +85,19 @@ func inspectOnlinePolicy(configPath string) ([]onlineLevelInfo,error) {
  return result,nil
 }
 
+// missingOnlineLevels returns every policy level that has clients but does not
+// enable online statistics. Such levels cannot report source IPs at all, so
+// the online card warns instead of silently showing empty addresses.
+func missingOnlineLevels(configPath string) ([]string,error) {
+ levels,err:=inspectOnlinePolicy(configPath)
+ if err!=nil{return nil,err}
+ missing:=make([]string,0)
+ for _,item:=range levels {
+  if item.Clients>0&&!item.Enabled {missing=append(missing,item.Level)}
+ }
+ return missing,nil
+}
+
 func onlineCoreVersion(ctx context.Context,bin string) string {
  out,err:=exec.CommandContext(ctx,bin,"version").CombinedOutput()
  text:=strings.TrimSpace(string(out))

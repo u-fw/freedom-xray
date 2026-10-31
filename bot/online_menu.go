@@ -87,5 +87,11 @@ func (s *BotService) sendOnlineCard(chatID int64,msgID int) {
   tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"online.refresh"),"menu_online"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"online.doctor"),"menu_online_doctor")),
   tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"online.details"),"menu_users"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.home"),"menu_main")),
  )
- s.sendOrEdit(chatID,msgID,onlineCardTextWithError(state,time.Now(),s.cfg.Language,err),markup)
+ text:=onlineCardTextWithError(state,time.Now(),s.cfg.Language,err)
+ // An empty online list is expected when a level that owns clients never
+ // enabled statsUserOnline; say so instead of leaving the cause invisible.
+ if missing,lookupErr:=missingOnlineLevels(s.cfg.XrayConfigPath);lookupErr==nil&&len(missing)>0 {
+  text=strings.TrimRight(text,"\n")+"\n"+tr(s.cfg.Language,"online.policyoff",strings.Join(missing,", "))
+ }
+ s.sendOrEdit(chatID,msgID,text,markup)
 }

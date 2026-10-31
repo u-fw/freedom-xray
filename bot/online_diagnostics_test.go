@@ -33,6 +33,20 @@ func TestInspectOnlinePolicyRejectsMalformedConfig(t *testing.T) {
  if _,err:=inspectOnlinePolicy(filepath.Join(t.TempDir(),"missing.json"));err==nil{t.Fatal("accepted missing config")}
 }
 
+// A card warning is only useful for levels that actually own clients; enabled
+// levels and levels without clients must not be reported as missing.
+func TestMissingOnlineLevels(t *testing.T) {
+ file:=writeDiagnosticsConfig(t,`{"policy":{"levels":{"0":{"statsUserOnline":false},"1":{"statsUserOnline":true},"5":{}}},"inbounds":[{"tag":"reality","settings":{"clients":[{"email":"c"},{"email":"a","level":1},{"email":"b","level":5}]}},{"tag":"api-internal","settings":{"clients":[{"level":7}]}}]}`)
+ missing,err:=missingOnlineLevels(file)
+ if err!=nil{t.Fatal(err)}
+ if len(missing)!=2||missing[0]!="0"||missing[1]!="5"{
+  t.Fatalf("unexpected missing levels: %#v",missing)
+ }
+ if _,err=missingOnlineLevels(writeDiagnosticsConfig(t,`{"policy":`));err==nil{
+  t.Fatal("malformed config reported as complete policy")
+ }
+}
+
 func TestOnlineAggregateEmpty(t *testing.T) {
  empty:=[]string{``,`{"users":[]}`,`{"users": null}`,`{"users":[] }`}
  for _,raw:=range empty {
