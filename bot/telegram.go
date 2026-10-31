@@ -614,11 +614,26 @@ func (s *BotService) sendUserLinksAndQRs(chatID int64, email string) {
    }
    // Telegram messages permit 4096 characters; the URI is sent unchanged,
    // without ParseMode and without re-encoding its query parameters.
-   textMessage:=tgbotapi.NewMessage(chatID,label+"复制以下完整 VLESS 链接导入 v2rayN/v2rayNG：\n"+uri)
-   textMessage.DisableWebPagePreview=true
-   if _,sendErr:=s.bot.Send(textMessage);sendErr!=nil {
-    log.Printf("[Bot] plain link send failed for %s: %v",node.Tag,sendErr)
-    s.sendAlert(chatID,fmt.Sprintf("节点 %s (%d) 的文本链接发送失败：%v",node.Tag,node.Port,sendErr))
+   payload:=label+"复制以下完整 VLESS 链接导入 v2rayN/v2rayNG：\n"+uri
+   if len(payload)>3500 {
+    // Telegram text length limit is 4096 characters. Large post-quantum
+    // parameters can exceed it; a .txt document preserves every byte.
+    doc:=tgbotapi.NewDocument(chatID,tgbotapi.FileBytes{
+     Name:fmt.Sprintf("vless-%d.txt",node.Port),
+     Bytes:[]byte(uri+"\n"),
+    })
+    doc.Caption=fmt.Sprintf("节点 %s:%d · 完整 VLESS 链接（文本过长，以文件发送）",node.Tag,node.Port)
+    if _,sendErr:=s.bot.Send(doc);sendErr!=nil {
+     log.Printf("[Bot] link document failed for %s: %v",node.Tag,sendErr)
+     s.sendAlert(chatID,fmt.Sprintf("节点 %s (%d)：完整链接文件发送失败：%v，请检查 Bot 日志。",node.Tag,node.Port,sendErr))
+    }
+   }else{
+    textMessage:=tgbotapi.NewMessage(chatID,payload)
+    textMessage.DisableWebPagePreview=true
+    if _,sendErr:=s.bot.Send(textMessage);sendErr!=nil {
+     log.Printf("[Bot] plain link send failed for %s: %v",node.Tag,sendErr)
+     s.sendAlert(chatID,fmt.Sprintf("节点 %s (%d) 的文本链接发送失败：%v",node.Tag,node.Port,sendErr))
+    }
    }
    qrBytes,qrErr:=GenerateQRCodePNG(uri,512)
    if qrErr!=nil {
