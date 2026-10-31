@@ -567,13 +567,13 @@ func CreateNode(configPath,xrayBinary,statsServer string,req NodeCreateRequest)(
 }
 
 type nodeDeletionReport struct {
- Tag string
- Port int
- Clients int
- RoutingRules []int
- SuspendedUsers []string
- PublicPort int
- Found bool
+	Tag            string   `json:"tag"`
+	Port           int      `json:"port"`
+	Clients        int      `json:"clients"`
+	RoutingRules   []int    `json:"routing_rules"`
+	SuspendedUsers []string `json:"suspended_users"`
+	PublicPort     int      `json:"public_port"`
+	Found          bool     `json:"found"`
 }
 
 func inspectNodeDeletion(configPath,tag string)(nodeDeletionReport,error) {

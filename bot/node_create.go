@@ -76,23 +76,27 @@ func clearNodeCreateState(chatID int64) {
  nodeCreateStates.Unlock()
 }
 
-func (s *BotService) beginNodeCreate(chatID,adminID int64,msgID int,template NodeTemplate) {
- if !s.cfg.AllowMutations {
-  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.mutationsdisabled"),s.backToMainMarkup())
-  return
- }
- if !validNodeTemplate(template){s.sendAlert(chatID,tr(s.cfg.Language,"node.create.unknown"));return}
- state:=nodeCreateState{
-  AdminID:adminID,
-  Expires:time.Now().Add(10*time.Minute),
-  Template:template,
-  Step:"port",
-  Params:nodeCreateDefaults(template),
- }
- nodeCreateStates.Lock()
- nodeCreateStates.items[chatID]=state
- nodeCreateStates.Unlock()
- s.promptNodeCreate(chatID,msgID,state)
+func (s *BotService) beginNodeCreate(chatID, adminID int64, msgID int, template NodeTemplate) {
+	clearRoutingWizard(chatID)
+	if !s.cfg.AllowMutations {
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.mutationsdisabled"), s.backToMainMarkup())
+		return
+	}
+	if !validNodeTemplate(template) {
+		s.sendAlert(chatID, tr(s.cfg.Language, "node.create.unknown"))
+		return
+	}
+	state := nodeCreateState{
+		AdminID:  adminID,
+		Expires:  time.Now().Add(10 * time.Minute),
+		Template: template,
+		Step:     "port",
+		Params:   nodeCreateDefaults(template),
+	}
+	nodeCreateStates.Lock()
+	nodeCreateStates.items[chatID] = state
+	nodeCreateStates.Unlock()
+	s.promptNodeCreate(chatID, msgID, state)
 }
 
 func (s *BotService) promptNodeCreate(chatID int64,msgID int,state nodeCreateState) {

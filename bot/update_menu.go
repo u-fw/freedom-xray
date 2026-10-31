@@ -163,8 +163,8 @@ func (s *BotService) resolveUpdate(cb *tgbotapi.CallbackQuery,confirm bool) {
  switch pending.Component {
  case "script":result,err=checkedScriptUpdate(ctx,pending.Version)
  case "bot":result,err=checkedBotUpdate(ctx)
- case "core":result,err=checkedCoreUpdate(ctx,s.cfg.XrayBinPath,s.cfg.XrayConfigPath,pending.Version)
- case "core-rollback":result,err=checkedCoreRollback(s.cfg.XrayBinPath,s.cfg.XrayConfigPath)
+ case "core":result,err=checkedCoreUpdate(ctx,s.cfg.XrayBinPath,s.cfg.XrayConfigPath,s.cfg.StatsAPIServer,pending.Version)
+ case "core-rollback":result,err=checkedCoreRollback(s.cfg.XrayBinPath,s.cfg.XrayConfigPath,s.cfg.StatsAPIServer)
  default:err=fmt.Errorf("unknown update type")
  }
  if err!=nil {

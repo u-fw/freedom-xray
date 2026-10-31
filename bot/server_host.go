@@ -1,17 +1,19 @@
 package main
 
 import (
- "context"
- "errors"
- "fmt"
- "io"
- "log"
- "net"
- "net/http"
- "regexp"
- "strings"
- "sync"
- "time"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
 )
 
 // The public server address embedded in client links is not the same thing as
@@ -125,51 +127,76 @@ func storeCachedServerHost(host string,now time.Time) {
 // resolveServerHost returns the address that clients should dial. An explicit
 // server_host always wins; otherwise discovery is cached briefly so link
 // refreshes do not depend on outbound HTTP for every button press.
-func resolveServerHost(cfg *BotConfig) (string,error) {
- if cfg!=nil&&strings.TrimSpace(cfg.ServerHost)!="" {
-  host,err:=normalizeServerHost(cfg.ServerHost)
-  if err!=nil{return "",fmt.Errorf("invalid server_host in bot.json: %w",err)}
-  return host,nil
- }
- if host:=cachedServerHostValue(time.Now());host!=""{return host,nil}
+func resolveServerHost(cfg *BotConfig) (string, error) {
+	configured := ""
+	if cfg != nil {
+		configured = cfg.ServerHost
+	}
+	// Bot and agent changes to the public address take effect on the next export
+	// without racing a mutation of the shared in-memory BotConfig.
+	if cfg != nil && cfg.ConfigFile != "" {
+		raw, err := os.ReadFile(cfg.ConfigFile)
+		if err != nil {
+			return "", fmt.Errorf("read bot config: %w", err)
+		}
+		var saved struct {
+			ServerHost string `json:"server_host"`
+		}
+		if err = json.Unmarshal(raw, &saved); err != nil {
+			return "", fmt.Errorf("read server_host: %w", err)
+		}
+		configured = saved.ServerHost
+	}
+	if strings.TrimSpace(configured) != "" {
+		host, err := normalizeServerHost(configured)
+		if err != nil {
+			return "", fmt.Errorf("invalid server_host in bot.json: %w", err)
+		}
+		return host, nil
+	}
+	if host := cachedServerHostValue(time.Now()); host != "" {
+		return host, nil
+	}
 
- // Bind the whole discovery attempt to one deadline instead of multiplying the
- // timeout by the number of endpoints.
- ctx,cancel:=context.WithTimeout(context.Background(),10*time.Second)
- defer cancel()
- dialer:=&net.Dialer{Timeout:5*time.Second}
- client:=&http.Client{
-  Timeout:10*time.Second,
-  Transport:&http.Transport{
-   // Never inherit an outbound proxy here: it would report the proxy's
-   // address rather than this server's inbound address.
-   Proxy:nil,
-   ForceAttemptHTTP2:true,
-   DialContext:func(ctx context.Context,network,address string)(net.Conn,error){
-    return dialer.DialContext(ctx,"tcp4",address)
-   },
-  },
- }
- var failures []string
- for _,endpoint:=range serverHostDiscoveryTargets {
-  if ctx.Err()!=nil{break}
-  host,err:=fetchPublicIPv4(ctx,client,endpoint)
-  if err!=nil {
-   failures=append(failures,endpoint+": "+err.Error())
-   continue
-  }
-  storeCachedServerHost(host,time.Now())
-  return host,nil
- }
- if host:=interfacePublicHost();host!="" {
-  log.Printf("[ServerHost] public-IP endpoints unavailable; using interface address %s",host)
-  storeCachedServerHost(host,time.Now())
-  return host,nil
- }
- if len(failures)>0{
-  return "",fmt.Errorf("unable to determine the public server address (%s); set server_host in bot.json",strings.Join(failures,"; "))
- }
- return "",errors.New("unable to determine the public server address; set server_host in bot.json")
+	// Bind the whole discovery attempt to one deadline instead of multiplying the
+	// timeout by the number of endpoints.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			// Never inherit an outbound proxy here: it would report the proxy's
+			// address rather than this server's inbound address.
+			Proxy:             nil,
+			ForceAttemptHTTP2: true,
+			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+				return dialer.DialContext(ctx, "tcp4", address)
+			},
+		},
+	}
+	var failures []string
+	for _, endpoint := range serverHostDiscoveryTargets {
+		if ctx.Err() != nil {
+			break
+		}
+		host, err := fetchPublicIPv4(ctx, client, endpoint)
+		if err != nil {
+			failures = append(failures, endpoint+": "+err.Error())
+			continue
+		}
+		storeCachedServerHost(host, time.Now())
+		return host, nil
+	}
+	if host := interfacePublicHost(); host != "" {
+		log.Printf("[ServerHost] public-IP endpoints unavailable; using interface address %s", host)
+		storeCachedServerHost(host, time.Now())
+		return host, nil
+	}
+	if len(failures) > 0 {
+		return "", fmt.Errorf("unable to determine the public server address (%s); set server_host in bot.json", strings.Join(failures, "; "))
+	}
+	return "", errors.New("unable to determine the public server address; set server_host in bot.json")
 }
 
 // GetPublicIP is retained for callers that only need an address string. It

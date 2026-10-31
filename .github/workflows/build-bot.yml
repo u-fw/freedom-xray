@@ -65,7 +65,10 @@ jobs:
           COMMIT=$(git rev-parse --short=12 HEAD)
           BUILD_TIME=$(date -u +%Y-%m-%d)
           BOT_VERSION=$(awk -F'"' '/^[[:space:]]*Version[[:space:]]*=/{print $2; exit}' main.go)
-          test -n "$BOT_VERSION"
+          [[ "$BOT_VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+            echo "Bot version must be a stable vMAJOR.MINOR.PATCH" >&2
+            exit 1
+          }
           echo "bot_version=$BOT_VERSION" >> "$GITHUB_OUTPUT"
           LDFLAGS="-s -w -X main.Commit=${COMMIT} -X main.BuildTime=${BUILD_TIME}"
 
@@ -100,6 +103,28 @@ jobs:
           else
             echo "publish=false" >> "$GITHUB_OUTPUT"
             echo "Skipping stale Bot artifact release: bot source has changed."
+          fi
+      - name: Publish immutable versioned release
+        if: github.ref == 'refs/heads/main' && steps.latest.outputs.publish == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOT_VERSION: ${{ steps.build_binaries.outputs.bot_version }}
+        run: |
+          set -euo pipefail
+          tag="bot-${BOT_VERSION}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null; then
+            git fetch --quiet --depth=1 origin "refs/tags/${tag}"
+            if [[ "$(git rev-parse FETCH_HEAD:bot)" != "$(git rev-parse HEAD:bot)" ]]; then
+              echo "${tag} already exists for different Bot source; increase the version." >&2
+              exit 1
+            fi
+            gh release view "$tag" >/dev/null || { echo "Existing tag has no release; manual investigation required." >&2; exit 1; }
+            echo "Versioned release already exists for this Bot source; leaving its assets unchanged."
+          else
+            gh release create "$tag" dist/freedom-bot-linux-* \
+              --target "$GITHUB_SHA" --title "Freedom Bot ${BOT_VERSION}" --latest=false \
+              --notes "Immutable release of freedom-bot ${BOT_VERSION}. Source commit: ${GITHUB_SHA}. Verify the matching SHA-256 checksum before installing."
           fi
       - name: Publish Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2

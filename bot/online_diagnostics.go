@@ -18,10 +18,10 @@ import (
 // onlineLevelInfo is the read-only view of one policy level that participates
 // in online statistics. Clients counts users actually assigned to the level.
 type onlineLevelInfo struct {
- Level string
- Enabled bool
- TrafficEnabled bool
- Clients int
+ Level string `json:"level"`
+ Enabled bool `json:"enabled"`
+ TrafficEnabled bool `json:"traffic_enabled"`
+ Clients int `json:"clients"`
 }
 
 func clientLevelString(value any) string {
@@ -274,7 +274,7 @@ func (s *BotService) onlineDiagnosticText() string {
 }
 
 func (s *BotService) onlineDoctorMarkup() tgbotapi.InlineKeyboardMarkup {
- return tgbotapi.NewInlineKeyboardMarkup(
+ rows:=[][]tgbotapi.InlineKeyboardButton{
   tgbotapi.NewInlineKeyboardRow(
    tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"online.doctor.repair"),"online_repair_ask"),
    tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.refresh"),"menu_online_doctor"),
@@ -283,7 +283,9 @@ func (s *BotService) onlineDoctorMarkup() tgbotapi.InlineKeyboardMarkup {
    tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"online.doctor.back"),"menu_online"),
    tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.home"),"menu_main"),
   ),
- )
+ }
+ if s.cfg.AllowMutations {rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"service.collector"),"service_ask:collector")))}
+ return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
 
 func (s *BotService) sendOnlineDiagnostics(chatID int64,msgID int) {

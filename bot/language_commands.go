@@ -1,12 +1,14 @@
 package main
 
 import (
- "encoding/json"
- "log"
- "os"
- "strings"
+	"encoding/json"
+	"errors"
+	"log"
+	"os"
+	"strings"
+	"time"
 
- tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // Only patch the language fields: administrator-managed bot.json files may
@@ -17,17 +19,30 @@ func persistLanguage(path,language string) error {
 
 // Auto-detection keeps the setting provisional (explicit=false) so a later
 // Telegram locale change can still be honoured until the admin chooses one.
-func persistLanguageWithExplicit(path,language string,explicit bool) error {
- raw,err:=os.ReadFile(path)
- if err!=nil{return err}
- var doc map[string]any
- if err=json.Unmarshal(raw,&doc);err!=nil{return err}
- if doc==nil{doc=map[string]any{}}
- doc["language"]=normalizeLanguage(language)
- doc["language_explicit"]=explicit
- updated,err:=json.MarshalIndent(doc,"","  ")
- if err!=nil{return err}
- return writeAtomically(path,append(updated,'\n'),0600)
+func persistLanguageWithExplicit(path, language string, explicit bool) error {
+	lock, err := acquireConfigLock(path, 10*time.Second)
+	if err != nil {
+		return err
+	}
+	defer releaseConfigLock(lock)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var doc map[string]json.RawMessage
+	if err = json.Unmarshal(raw, &doc); err != nil {
+		return err
+	}
+	if doc == nil {
+		return errors.New("Bot configuration must be an object")
+	}
+	doc["language"], _ = json.Marshal(normalizeLanguage(language))
+	doc["language_explicit"], _ = json.Marshal(explicit)
+	updated, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeAtomically(path, append(updated, '\n'), 0600)
 }
 
 // Map Telegram's language_code to one of the bundled locales. Unsupported

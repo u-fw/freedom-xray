@@ -17,7 +17,7 @@ func (s *BotService) sendInboundTrafficCard(chatID int64,msgID int) {
  var body strings.Builder
  body.WriteString(tr(s.cfg.Language,"inbound.title"))
  if err!=nil{body.WriteString(tr(s.cfg.Language,"inbound.stale",mdEsc(err.Error())))}
- report,reportErr:=inspectStatsSwitches(s.cfg.XrayConfigPath)
+ report,reportErr:=inspectStatsSwitches(s.cfg.XrayConfigPath,s.cfg.StatsAPIServer)
  inboundOff:=reportErr==nil&&!report.SystemInbound
  var total uint64
  if len(traffic)==0 {

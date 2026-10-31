@@ -11,12 +11,15 @@ import (
 )
 
 var (
-	Version   = "v1.3.10"
+	Version   = "v1.4.0"
 	Commit    = "dev"
 	BuildTime = "unknown"
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "agent" {
+		os.Exit(runAgentCLI(os.Args[2:], os.Stdin, os.Stdout))
+	}
 	configPath := flag.String("c", "/usr/local/etc/xray/bot.json", "path to bot.json configuration file")
 	showVersion := flag.Bool("v", false, "display version and exit")
 	localAction := flag.String("local-user-action", "", "offline CLI user management action (root only)")

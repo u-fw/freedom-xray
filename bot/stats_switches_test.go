@@ -43,7 +43,7 @@ const statsSwitchFixture=`{
   "2":{"statsUserOnline":false,"statsUserUplink":true,"statsUserDownlink":false}
  }},
  "inbounds":[
-  {"tag":"api-internal","settings":{"clients":[]}},
+  {"tag":"api-internal","listen":"127.0.0.1","port":10085,"protocol":"dokodemo-door","settings":{"address":"127.0.0.1","clients":[]}},
   {"tag":"reality","settings":{"clients":[{"level":0},{"level":2}]},"streamSettings":{"network":"tcp"}},
   {"tag":"cdn","settings":{"clients":[]},"streamSettings":{"network":"xhttp","sockopt":{}}},
   {"tag":"cdn-ok","settings":{"clients":[]},"streamSettings":{"network":"xhttp","sockopt":{"trustedXForwardedFor":["CF-Connecting-IP"]}}}

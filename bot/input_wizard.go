@@ -20,13 +20,16 @@ var managementWizards = struct{
  states map[int64]managementWizard
 }{states:make(map[int64]managementWizard)}
 
-func (s *BotService) beginUserWizard(chatID,adminID int64,msgID int,stage,user string) {
- managementWizards.Lock()
- managementWizards.states[chatID]=managementWizard{AdminID:adminID,Expires:time.Now().Add(5*time.Minute),Stage:stage,User:user}
- managementWizards.Unlock()
- prompt:=tr(s.cfg.Language,"wizard.nameprompt")
- if stage=="rename"{prompt=tr(s.cfg.Language,"wizard.renameprompt",user)}
- s.sendOrEdit(chatID,msgID,prompt,s.backToMainMarkup())
+func (s *BotService) beginUserWizard(chatID, adminID int64, msgID int, stage, user string) {
+	clearRoutingWizard(chatID)
+	managementWizards.Lock()
+	managementWizards.states[chatID] = managementWizard{AdminID: adminID, Expires: time.Now().Add(5 * time.Minute), Stage: stage, User: user}
+	managementWizards.Unlock()
+	prompt := tr(s.cfg.Language, "wizard.nameprompt")
+	if stage == "rename" {
+		prompt = tr(s.cfg.Language, "wizard.renameprompt", user)
+	}
+	s.sendOrEdit(chatID, msgID, prompt, s.backToMainMarkup())
 }
 
 func (s *BotService) handleWizardMessage(msg *tgbotapi.Message) bool {

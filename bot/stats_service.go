@@ -148,6 +148,8 @@ func enableStatsPolicy(root map[string]any) bool {
     switch level:=client["level"].(type) {
     case float64:
      wanted[strconv.Itoa(int(level))]=true
+    case json.Number:
+     if level.String()!=""{wanted[level.String()]=true}
     case string:
      if level!=""{wanted[level]=true}
     }

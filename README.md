@@ -26,12 +26,13 @@ Run `sudo freedom` to open the terminal menu. The Telegram submenu can install t
 | Add, rename, remove, suspend and restore users | Yes (Go manager required) | Yes |
 | Rotate user UUIDs | Yes | Yes |
 | Per-node VLESS URI, text export and QR codes | Yes | Yes |
-| Change XHTTP path/mode, host, padding, listener port and REALITY SNI/short ID | Yes | Yes (confirmation required) |
+| Change XHTTP path/mode, host, padding, listener port/address and REALITY SNI/short ID | Yes; address via agent CLI | Yes (confirmation required) |
 | User and inbound traffic totals | Yes | Yes |
 | Per-user/per-node traffic since binding migration | Aggregate user totals | Yes |
 | Per-user traffic quota and expiry with automatic suspension and admin notices | Local metadata | Yes |
 | Online users, source IPs and last-online information | Via collector | `/online`, `/onlinedoctor` and user details |
-| Routing rules, outbounds and balancers | Config file | Read-only `/routing` |
+| Named routing rules, native outbounds and DNS | Config file or agent CLI | `/routing` (confirmation required); balancers are read-only |
+| Xray start, stop and restart; statistics repair | Yes | Status and diagnostics menus (confirmation required) |
 | Bot and manager updates; Xray upgrades and rollback | Yes | Permission-gated |
 | Public subscription service and full web dashboard | Not provided | Not provided |
 
@@ -60,7 +61,7 @@ Traffic quotas and expiry dates are stored in `freedom-user-limits.json` (mode 0
 /inboundtraffic            Persisted inbound traffic totals
 /online                    Online users and recent source IPs (v1.3.0)
 /onlinedoctor              Diagnose online statistics and repair the policy
-/routing                   Read-only routing, outbound and balancer view
+/routing                   View routing; manage named rules, outbounds and DNS
 /status                    Server status
 /version                   Installed and upstream component versions
 /update                    Update the manager and bot
@@ -69,7 +70,7 @@ Traffic quotas and expiry dates are stored in `freedom-user-limits.json` (mode 0
 /cancel                    Cancel the current input flow
 ```
 
-The bot only accepts authorized administrator messages in **private chats**. Remote configuration changes, updates, core updates and full sensitive configuration backups must each be explicitly enabled in the local `bot.json`:
+The bot only accepts authorized administrator messages in **private chats**. Remote configuration changes and Xray service control, updates, core updates and full sensitive configuration backups must each be explicitly enabled in the local `bot.json`:
 
 ```json
 {
@@ -82,6 +83,12 @@ The bot only accepts authorized administrator messages in **private chats**. Rem
 
 `allow_core_updates` additionally requires `allow_updates`. Keep sensitive backup sending disabled unless required. Use a different Telegram Bot token for each VPS unless you have a dedicated centralized polling architecture.
 
+The dashboard's **Public link address** button sets the REALITY export address without a Bot restart. `/routing` can edit named field rules and accept native Xray outbound/DNS JSON, subject to core validation and confirmation. Telegram Bot chats are not end-to-end encrypted; enter credential-bearing outbound/DNS settings through the local agent CLI instead.
+
+### Agent CLI
+
+The local `freedom-bot agent` interface supports non-interactive JSON input and output. Mutations preview by default and execute only with `--apply`; exporting links or full outbound/DNS objects requires `--include-sensitive`. For the operation list, examples, input formats and current limitations, see [Agent CLI](docs/AGENT_CLI.md).
+
 ### Public server address in client links
 
 VLESS links that use REALITY embed the address clients dial directly. The Bot resolves it with direct IPv4 HTTP discovery (bypassing `socks5_proxy`, because a proxy reports its own egress address), falls back to a global-unicast interface address, and caches the result for 10 minutes. Behind NAT, a firewall that blocks outbound HTTP, or a relay/CDN topology where clients use a different hostname, set the address explicitly:
@@ -92,7 +99,7 @@ VLESS links that use REALITY embed the address clients dial directly. The Bot re
 }
 ```
 
-`server_host` accepts a bare IP address (IPv4 or IPv6) or DNS hostname without a scheme, path, or port. The local configuration menu prompts for it and preserves existing keys, including `language` and `language_explicit`. If discovery fails and no override is set, REALITY exports fail with an explicit error instead of emitting `127.0.0.1`; TLS links remain addressed by certificate SNI.
+`server_host` accepts a bare IP address (IPv4 or IPv6) or DNS hostname without a scheme, path, or port. The local configuration menu, Bot dashboard, and agent CLI can change it while preserving other keys. If discovery fails and no override is set, REALITY exports fail with an explicit error instead of emitting `127.0.0.1`; TLS links remain addressed by certificate SNI.
 
 ### Exporting user configurations
 
@@ -217,6 +224,8 @@ Core updates may break compatibility with older Shadowrocket/v2rayN/v2rayNG REAL
 ## CI/CD
 
 GitHub Actions workflows are **manually dispatched** to avoid redundant builds and notification spam during development. Use **Source validation** to check Bash syntax and run Go tests; after validation, manually run **Build Freedom Bot** to publish the versioned Bot binary and its SHA-256 checksums. The separate `1stream.dat` builder is already manual. The build workflow never commits generated module files. Releases may also be triggered by explicitly changing `.github/release-trigger`; ordinary source commits do not publish a Bot binary.
+
+The Bot uses a separate stable `vMAJOR.MINOR.PATCH` version in `bot/main.go`: backward-compatible features increment the minor version and fixes increment the patch version. Each new Bot version receives a fixed `bot-vMAJOR.MINOR.PATCH` release with the source commit and checksummed binaries; the workflow refuses to reuse that version for different Bot source. `bot-latest` remains the rolling compatibility release used by existing installations. The terminal script keeps its independent version in `freedom.sh` and is incremented when that script changes. A fixed release identifies its original build; `bot-latest` can be rebuilt from equivalent source.
 
 The module retains Go 1.24 as its minimum language version, but release builds use the supported Go 1.26 toolchain. Use a current security-patched Go release for your own builds.
 

@@ -43,7 +43,7 @@ func TestRoutingCardText(t *testing.T) {
   },
  }
  body:=routingCardText(snapshot,"en")
- for _,wanted:=range []string{"Strategy:","Rules: 2","cn-direct","vless-in","balancer:fast","domains 1","Read-only view"}{
+ for _,wanted:=range []string{"Strategy:","Rules: 2","cn-direct","vless-in","balancer:fast","domains 1","Named field rules"}{
   if !strings.Contains(body,wanted){t.Fatalf("missing %q in routing card: %s",wanted,body)}
  }
  empty:=routingCardText(routingSnapshot{},"en")

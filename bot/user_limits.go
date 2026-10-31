@@ -329,11 +329,12 @@ var userLimitWizards=struct{
  items map[int64]userLimitWizard
 }{items:map[int64]userLimitWizard{}}
 
-func (s *BotService) beginUserLimitWizard(chatID,adminID int64,msgID int,email,kind,prompt string){
- userLimitWizards.Lock()
- userLimitWizards.items[chatID]=userLimitWizard{Email:email,Kind:kind,AdminID:adminID,Expires:time.Now().Add(5*time.Minute)}
- userLimitWizards.Unlock()
- s.sendOrEdit(chatID,msgID,prompt,s.backToMainMarkup())
+func (s *BotService) beginUserLimitWizard(chatID, adminID int64, msgID int, email, kind, prompt string) {
+	clearRoutingWizard(chatID)
+	userLimitWizards.Lock()
+	userLimitWizards.items[chatID] = userLimitWizard{Email: email, Kind: kind, AdminID: adminID, Expires: time.Now().Add(5 * time.Minute)}
+	userLimitWizards.Unlock()
+	s.sendOrEdit(chatID, msgID, prompt, s.backToMainMarkup())
 }
 
 func (s *BotService) handleUserLimitInput(msg *tgbotapi.Message)bool{

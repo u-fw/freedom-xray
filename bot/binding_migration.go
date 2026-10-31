@@ -26,14 +26,14 @@ const (
 )
 
 type bindingMigrationStats struct {
- Inbounds int
- Clients int
- Rewritten int
- AlreadyBound int
- Custom int
- SuspendedRewritten int
- SuspendedSkipped []string
- BackupPath string
+ Inbounds int `json:"inbounds"`
+ Clients int `json:"clients"`
+ Rewritten int `json:"rewritten"`
+ AlreadyBound int `json:"already_bound"`
+ Custom int `json:"custom"`
+ SuspendedRewritten int `json:"suspended_rewritten"`
+ SuspendedSkipped []string `json:"suspended_skipped"`
+ BackupPath string `json:"backup_path,omitempty"`
 }
 
 func (s bindingMigrationStats) changed() bool {

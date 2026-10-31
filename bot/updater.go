@@ -11,7 +11,6 @@ import (
  "errors"
  "fmt"
  "io"
- "log"
  "net/http"
  "os"
  "os/exec"
@@ -221,7 +220,7 @@ func extractCoreExecutable(archive []byte) ([]byte,error) {
  return nil,errors.New("Release archive does not contain an Xray executable")
 }
 
-func checkedCoreUpdate(ctx context.Context,target,configPath,tag string) (string,error) {
+func checkedCoreUpdate(ctx context.Context,target,configPath,statsServer,tag string) (string,error) {
  _,arch,err:=archNames();if err!=nil{return "",err}
  if !safeTag.MatchString(tag){return "",errors.New("Invalid version tag")}
  name:="Xray-linux-"+arch+".zip"
@@ -230,6 +229,8 @@ func checkedCoreUpdate(ctx context.Context,target,configPath,tag string) (string
  dgst,err:=downloadVerifiedHTTPS(ctx,base+".dgst",8<<10);if err!=nil{return "",err}
  if err=verifiedDigest(archive,dgst,name);err!=nil{return "",err}
  executable,err:=extractCoreExecutable(archive);if err!=nil{return "",err}
+ lock,err:=acquireConfigLock(configPath,20*time.Second);if err!=nil{return "",err}
+ defer releaseConfigLock(lock)
  previous,err:=os.ReadFile(target);if err!=nil{return "",err}
  tmp,err:=os.CreateTemp(filepath.Dir(target),".xray-check-*");if err!=nil{return "",err}
  defer os.Remove(tmp.Name())
@@ -240,22 +241,21 @@ func checkedCoreUpdate(ctx context.Context,target,configPath,tag string) (string
  if bytes.Equal(previous,executable){return "Xray is already at this version",nil}
  backup:=target+".previous"
  if err=writeAtomically(backup,previous,0755);err!=nil{return "",err}
+ snapshotTrafficBestEffortLocked(configPath,target,statsServer)
  if err=writeAtomically(target,executable,0755);err!=nil{return "",err}
- if lock,lockErr:=acquireConfigLock(configPath,15*time.Second);lockErr==nil{
-  snapshotTrafficBestEffortLocked(configPath,target,"127.0.0.1:10085")
-  releaseConfigLock(lock)
- }else{log.Printf("[Traffic] core update pre-restart snapshot skipped: %v",lockErr)}
  if err=runChecked("systemctl","restart","xray");err==nil {err=runChecked("systemctl","is-active","--quiet","xray")}
  if err!=nil {
-  _=writeAtomically(target,previous,0755)
+  binaryRestoreErr:=writeAtomically(target,previous,0755)
   restoreErr:=runChecked("systemctl","restart","xray")
-  return "",fmt.Errorf("New core failed to start and rollback was attempted (service restore: %v): %w",restoreErr,err)
+  return "",fmt.Errorf("New core failed to start and rollback was attempted (binary restore: %v; service restore: %v): %w",binaryRestoreErr,restoreErr,err)
  }
  return "Updated Xray-core to "+tag+"; previous binary: "+backup+" (verify a real client handshake)",nil
 }
 
 
-func checkedCoreRollback(target,configPath string) (string,error) {
+func checkedCoreRollback(target,configPath,statsServer string) (string,error) {
+ lock,err:=acquireConfigLock(configPath,20*time.Second);if err!=nil{return "",err}
+ defer releaseConfigLock(lock)
  previousPath:=target+".previous"
  old,err:=os.ReadFile(previousPath);if err!=nil{return "",fmt.Errorf("No previous core backup is available: %w",err)}
  current,err:=os.ReadFile(target);if err!=nil{return "",err}
@@ -265,16 +265,13 @@ func checkedCoreRollback(target,configPath string) (string,error) {
  if _,err=tmp.Write(old);err!=nil{tmp.Close();return "",err}
  if err=tmp.Close();err!=nil{return "",err}
  if err=runChecked(tmp.Name(),"run","-test","-config",configPath);err!=nil{return "",fmt.Errorf("Previous core is incompatible with the current configuration: %w",err)}
+ snapshotTrafficBestEffortLocked(configPath,target,statsServer)
  if err=writeAtomically(target,old,0755);err!=nil{return "",err}
- if lock,lockErr:=acquireConfigLock(configPath,15*time.Second);lockErr==nil{
-  snapshotTrafficBestEffortLocked(configPath,target,"127.0.0.1:10085")
-  releaseConfigLock(lock)
- }else{log.Printf("[Traffic] core rollback pre-restart snapshot skipped: %v",lockErr)}
  if err=runChecked("systemctl","restart","xray");err==nil{err=runChecked("systemctl","is-active","--quiet","xray")}
  if err!=nil {
-  _=writeAtomically(target,current,0755)
+  binaryRestoreErr:=writeAtomically(target,current,0755)
   restoreErr:=runChecked("systemctl","restart","xray")
-  return "",fmt.Errorf("Rollback failed; attempted to restore the current core (service status: %v): %w",restoreErr,err)
+  return "",fmt.Errorf("Rollback failed; attempted to restore the current core (binary restore: %v; service restore: %v): %w",binaryRestoreErr,restoreErr,err)
  }
  if err=writeAtomically(previousPath,current,0755);err!=nil{return "Core rolled back, but could not update the previous-version backup: "+err.Error(),nil}
  return "Previous Xray-core version restored; perform rollback again to return to the newer version.",nil

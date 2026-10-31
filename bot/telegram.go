@@ -178,13 +178,26 @@ func (s *BotService) handleUpdate(update tgbotapi.Update) {
 
 func (s *BotService) handleMessage(msg *tgbotapi.Message) {
 	s.maybeAutoDetectLanguage(msg)
-	if s.handleNodeCreateInput(msg) { return }
-	if s.handleNodePathInput(msg) { return }
-	if s.handleUserLimitInput(msg) { return }
-	if s.handleWizardMessage(msg) { return }
+	if s.handleNodeCreateInput(msg) {
+		return
+	}
+	if s.handleNodePathInput(msg) {
+		return
+	}
+	if s.handleUserLimitInput(msg) {
+		return
+	}
+	if s.handleRoutingInput(msg) {
+		return
+	}
+	if s.handleWizardMessage(msg) {
+		return
+	}
 	text := strings.TrimSpace(msg.Text)
 	cmd := msg.Command()
-	if s.handleUserManagementCommand(msg) { return }
+	if s.handleUserManagementCommand(msg) {
+		return
+	}
 
 	switch cmd {
 	case "start", "menu":
@@ -193,19 +206,19 @@ func (s *BotService) handleMessage(msg *tgbotapi.Message) {
 	case "status":
 		s.sendStatusCard(msg.Chat.ID, 0)
 	case "language", "lang":
-  s.changeLanguage(msg)
- case "online":
-  s.sendOnlineCard(msg.Chat.ID,0)
- case "onlinedoctor","onlinediag":
-  s.sendOnlineDiagnostics(msg.Chat.ID,0)
- case "stats","switches":
-  s.sendStatsSwitches(msg.Chat.ID,0)
- case "routing":
-  s.sendRoutingCard(msg.Chat.ID,0)
- case "traffic", "usage":
+		s.changeLanguage(msg)
+	case "online":
+		s.sendOnlineCard(msg.Chat.ID, 0)
+	case "onlinedoctor", "onlinediag":
+		s.sendOnlineDiagnostics(msg.Chat.ID, 0)
+	case "stats", "switches":
+		s.sendStatsSwitches(msg.Chat.ID, 0)
+	case "routing":
+		s.sendRoutingCard(msg.Chat.ID, 0)
+	case "traffic", "usage":
 		s.sendTrafficCard(msg.Chat.ID, 0)
 	case "inboundtraffic":
-		s.sendInboundTrafficCard(msg.Chat.ID,0)
+		s.sendInboundTrafficCard(msg.Chat.ID, 0)
 	case "nodes", "inbounds":
 		s.sendNodesCard(msg.Chat.ID, 0)
 	case "users", "link":
@@ -215,14 +228,14 @@ func (s *BotService) handleMessage(msg *tgbotapi.Message) {
 	case "backup":
 		s.sendBackupFile(msg.Chat.ID)
 	case "update":
-		s.runSafeUpdates(msg.Chat.ID,0,[]string{"script","bot"})
+		s.runSafeUpdates(msg.Chat.ID, 0, []string{"script", "bot"})
 	case "version", "versions":
-		s.sendVersionCard(msg.Chat.ID,0)
+		s.sendVersionCard(msg.Chat.ID, 0)
 	case "help":
-		s.sendHelpCard(msg.Chat.ID,0)
+		s.sendHelpCard(msg.Chat.ID, 0)
 	default:
 		if strings.HasPrefix(text, "/") {
-			reply := tgbotapi.NewMessage(msg.Chat.ID, tr(s.cfg.Language,"command.unknown"))
+			reply := tgbotapi.NewMessage(msg.Chat.ID, tr(s.cfg.Language, "command.unknown"))
 			s.bot.Send(reply)
 		} else {
 			s.sendMainMenu(msg.Chat.ID, 0)
@@ -246,72 +259,91 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 
 	switch {
 	case data == "menu_main":
+		clearRoutingWizard(chatID)
 		s.sendMainMenu(chatID, msgID)
 	case data == "menu_status":
 		s.sendStatusCard(chatID, msgID)
+	case data == "service_ask:start":
+		s.askServiceAction(cb, "start")
+	case data == "service_ask:stop":
+		s.askServiceAction(cb, "stop")
+	case data == "service_ask:collector":
+		s.askServiceAction(cb, "collector")
+	case strings.HasPrefix(data, "service_confirm:"):
+		s.resolveServiceAction(cb)
 	case data == "menu_online":
-  s.sendOnlineCard(chatID,msgID)
- case data == "menu_online_doctor":
-  s.sendOnlineDiagnostics(chatID,msgID)
- case data == "online_repair_ask":
-  s.askOnlineRepair(chatID,msgID)
- case data == "online_repair_confirm":
-  s.doOnlineRepair(chatID,msgID)
- case data == "online_repair_cancel":
-  s.sendOnlineDiagnostics(chatID,msgID)
- case data == "menu_stats":
-  s.sendStatsSwitches(chatID,msgID)
- case data == "stats_repair_ask":
-  s.askStatsRepair(chatID,msgID)
- case data == "stats_repair_confirm":
-  s.doStatsRepair(chatID,msgID)
- case data == "menu_routing":
-  s.sendRoutingCard(chatID,msgID)
- case data == "menu_traffic":
+		s.sendOnlineCard(chatID, msgID)
+	case data == "menu_online_doctor":
+		s.sendOnlineDiagnostics(chatID, msgID)
+	case data == "online_repair_ask":
+		s.askOnlineRepair(chatID, msgID)
+	case data == "online_repair_confirm":
+		s.doOnlineRepair(chatID, msgID)
+	case data == "online_repair_cancel":
+		s.sendOnlineDiagnostics(chatID, msgID)
+	case data == "menu_stats":
+		s.sendStatsSwitches(chatID, msgID)
+	case data == "stats_repair_ask":
+		s.askStatsRepair(chatID, msgID)
+	case data == "stats_repair_confirm":
+		s.doStatsRepair(chatID, msgID)
+	case data == "menu_routing":
+		clearRoutingWizard(chatID)
+		s.sendRoutingCard(chatID, msgID)
+	case strings.HasPrefix(data, "routing_manage:"):
+		s.beginRoutingWizard(cb)
+	case strings.HasPrefix(data, "routing_confirm:"):
+		s.resolveRoutingChange(cb, true)
+	case strings.HasPrefix(data, "routing_cancel:"):
+		s.resolveRoutingChange(cb, false)
+	case data == "menu_traffic":
 		s.sendTrafficCard(chatID, msgID)
 	case data == "menu_inbound_traffic":
-		s.sendInboundTrafficCard(chatID,msgID)
+		s.sendInboundTrafficCard(chatID, msgID)
 	case data == "menu_nodes":
 		clearNodeCreateState(chatID)
 		s.sendNodesCard(chatID, msgID)
 	case data == "node_new_menu":
-		s.sendNodeTemplatePicker(chatID,msgID)
-	case strings.HasPrefix(data,"node_new:"):
-		s.beginNodeCreate(chatID,cb.From.ID,msgID,NodeTemplate(strings.TrimPrefix(data,"node_new:")))
-	case strings.HasPrefix(data,"node_cert_source:"):
+		s.sendNodeTemplatePicker(chatID, msgID)
+	case strings.HasPrefix(data, "node_new:"):
+		s.beginNodeCreate(chatID, cb.From.ID, msgID, NodeTemplate(strings.TrimPrefix(data, "node_new:")))
+	case strings.HasPrefix(data, "node_cert_source:"):
 		s.handleNodeCertSource(cb)
-	case strings.HasPrefix(data,"node_create_confirm:"):
-		s.confirmNodeCreate(cb,true)
-	case strings.HasPrefix(data,"node_create_cancel:"):
-		s.confirmNodeCreate(cb,false)
-	case strings.HasPrefix(data,"node_delete_confirm:"):
+	case strings.HasPrefix(data, "node_create_confirm:"):
+		s.confirmNodeCreate(cb, true)
+	case strings.HasPrefix(data, "node_create_cancel:"):
+		s.confirmNodeCreate(cb, false)
+	case strings.HasPrefix(data, "node_delete_confirm:"):
 		s.confirmNodeDelete(cb)
-	case strings.HasPrefix(data,"node_delete:"):
-		s.showNodeDeleteConfirm(chatID,msgID,strings.TrimPrefix(data,"node_delete:"))
-	case strings.HasPrefix(data,"node_detail:") || strings.HasPrefix(data,"node_mode:") || strings.HasPrefix(data,"node_path:") || strings.HasPrefix(data,"node_public_port:") || strings.HasPrefix(data,"node_sni:") || strings.HasPrefix(data,"node_short_id:") || strings.HasPrefix(data,"node_xhttp_host:") || strings.HasPrefix(data,"node_xhttp_padding:") || strings.HasPrefix(data,"node_listen_port:") || strings.HasPrefix(data,"node_dest:") || strings.HasPrefix(data,"node_target:") || strings.HasPrefix(data,"node_reality_key:") || strings.HasPrefix(data,"node_mldsa:") || strings.HasPrefix(data,"node_decryption:") || strings.HasPrefix(data,"node_cert_pair:") || strings.HasPrefix(data,"node_alpn:"):
+	case strings.HasPrefix(data, "node_delete:"):
+		s.showNodeDeleteConfirm(chatID, msgID, strings.TrimPrefix(data, "node_delete:"))
+	case strings.HasPrefix(data, "node_detail:") || strings.HasPrefix(data, "node_mode:") || strings.HasPrefix(data, "node_path:") || strings.HasPrefix(data, "node_public_port:") || strings.HasPrefix(data, "node_sni:") || strings.HasPrefix(data, "node_short_id:") || strings.HasPrefix(data, "node_xhttp_host:") || strings.HasPrefix(data, "node_xhttp_padding:") || strings.HasPrefix(data, "node_listen_port:") || strings.HasPrefix(data, "node_listen_address:") || strings.HasPrefix(data, "node_dest:") || strings.HasPrefix(data, "node_target:") || strings.HasPrefix(data, "node_reality_key:") || strings.HasPrefix(data, "node_mldsa:") || strings.HasPrefix(data, "node_decryption:") || strings.HasPrefix(data, "node_cert_pair:") || strings.HasPrefix(data, "node_alpn:"):
 		s.handleNodeCallback(cb)
-	case strings.HasPrefix(data,"node_confirm:"):
-		s.confirmNodeChange(cb,true)
-	case strings.HasPrefix(data,"node_cancel:"):
-		s.confirmNodeChange(cb,false)
+	case strings.HasPrefix(data, "node_confirm:"):
+		s.confirmNodeChange(cb, true)
+	case strings.HasPrefix(data, "node_cancel:"):
+		s.confirmNodeChange(cb, false)
 	case data == "menu_users":
 		s.sendUsersCard(chatID, msgID)
-	case strings.HasPrefix(data,"users_page:"):
-		if offset,err:=strconv.Atoi(strings.TrimPrefix(data,"users_page:"));err==nil {
-			s.sendUsersCardPage(chatID,msgID,offset)
+	case strings.HasPrefix(data, "users_page:"):
+		if offset, err := strconv.Atoi(strings.TrimPrefix(data, "users_page:")); err == nil {
+			s.sendUsersCardPage(chatID, msgID, offset)
 		}
 	case data == "menu_disabled_users":
-		s.sendDisabledUsersCard(chatID,msgID)
-	case strings.HasPrefix(data,"manage_enable:"):
+		s.sendDisabledUsersCard(chatID, msgID)
+	case strings.HasPrefix(data, "manage_enable:"):
 		s.enableDisabledUserCallback(cb)
 	case data == "manage_add":
-		s.beginUserWizard(chatID,cb.From.ID,msgID,"name","")
-	case strings.HasPrefix(data,"manage_scope:"):
+		s.beginUserWizard(chatID, cb.From.ID, msgID, "name", "")
+	case strings.HasPrefix(data, "manage_scope:"):
 		s.handleWizardScope(cb)
-	case strings.HasPrefix(data,"manage_rename:"):
-		email:=lookupManagedUserByKey(s.cfg.XrayConfigPath,strings.TrimPrefix(data,"manage_rename:"))
-		if email==""{s.sendAlert(chatID,tr(s.cfg.Language,"manage.userrenamed"));return}
-		s.beginUserWizard(chatID,cb.From.ID,msgID,"rename",email)
+	case strings.HasPrefix(data, "manage_rename:"):
+		email := lookupManagedUserByKey(s.cfg.XrayConfigPath, strings.TrimPrefix(data, "manage_rename:"))
+		if email == "" {
+			s.sendAlert(chatID, tr(s.cfg.Language, "manage.userrenamed"))
+			return
+		}
+		s.beginUserWizard(chatID, cb.From.ID, msgID, "rename", email)
 	case data == "menu_restart_ask":
 		s.askRestart(chatID, msgID)
 	case data == "menu_restart_confirm":
@@ -319,35 +351,35 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 	case data == "menu_backup":
 		s.sendBackupFile(chatID)
 	case data == "menu_update":
-		s.runSafeUpdates(chatID,msgID,[]string{"script","bot"})
+		s.runSafeUpdates(chatID, msgID, []string{"script", "bot"})
 	case data == "menu_update_center":
-		s.showUpdatesMenu(chatID,msgID)
+		s.showUpdatesMenu(chatID, msgID)
 	case data == "menu_version":
-		s.sendVersionCard(chatID,msgID)
-			case data == "menu_help":
-				s.sendHelpCard(chatID,msgID)
-			case strings.HasPrefix(data,"lang_set:"):
-				s.setLanguage(chatID,msgID,strings.TrimPrefix(data,"lang_set:"))
+		s.sendVersionCard(chatID, msgID)
+	case data == "menu_help":
+		s.sendHelpCard(chatID, msgID)
+	case strings.HasPrefix(data, "lang_set:"):
+		s.setLanguage(chatID, msgID, strings.TrimPrefix(data, "lang_set:"))
 	case data == "update_all":
-		s.runSafeUpdates(chatID,msgID,[]string{"script","bot"})
-	case strings.HasPrefix(data,"update_ask:"):
-		s.askUpdate(cb,strings.TrimPrefix(data,"update_ask:"))
-	case strings.HasPrefix(data,"update_confirm:"):
-		s.resolveUpdate(cb,true)
-	case strings.HasPrefix(data,"update_cancel:"):
-		s.resolveUpdate(cb,false)
+		s.runSafeUpdates(chatID, msgID, []string{"script", "bot"})
+	case strings.HasPrefix(data, "update_ask:"):
+		s.askUpdate(cb, strings.TrimPrefix(data, "update_ask:"))
+	case strings.HasPrefix(data, "update_confirm:"):
+		s.resolveUpdate(cb, true)
+	case strings.HasPrefix(data, "update_cancel:"):
+		s.resolveUpdate(cb, false)
 	case data == "traffic_reset_ask":
 		s.askTrafficReset(chatID, msgID)
 	case data == "traffic_reset_confirm":
 		s.doTrafficReset(chatID, msgID)
 	case strings.HasPrefix(data, "user_links:"):
 		s.handleUserLinksCallback(chatID, strings.TrimPrefix(data, "user_links:"))
-	case strings.HasPrefix(data,"user_export_one:"):
-		s.handleUserExportCallback(cb,"one")
-	case strings.HasPrefix(data,"user_export_all:"):
-		s.handleUserExportCallback(cb,"all")
-	case strings.HasPrefix(data,"user_export_qrs:"):
-		s.handleUserExportCallback(cb,"qrs")
+	case strings.HasPrefix(data, "user_export_one:"):
+		s.handleUserExportCallback(cb, "one")
+	case strings.HasPrefix(data, "user_export_all:"):
+		s.handleUserExportCallback(cb, "all")
+	case strings.HasPrefix(data, "user_export_qrs:"):
+		s.handleUserExportCallback(cb, "qrs")
 	case strings.HasPrefix(data, "manage_confirm:"):
 		s.resolveUserChange(cb, true)
 	case strings.HasPrefix(data, "manage_cancel:"):
@@ -602,31 +634,43 @@ func (s *BotService) sendOrEdit(chatID int64, msgID int, text string, markup tgb
 	s.sendChunkTail(chatID, sent.MessageID, chunks[1:])
 }
 
-func (s *BotService) sendMainMenu(chatID int64,msgID int) {
- nodes,_:=LoadXrayInbounds(s.cfg.XrayConfigPath)
- names,dirErr:=allDirectoryNames(s.cfg.XrayConfigPath)
- userCount:=len(sortedEmails(nodes));if dirErr==nil{userCount=len(names)}
- hostname,_:=os.Hostname()
- if hostname==""{hostname="unknown"}
- status:=CheckXrayServiceStatus()
- state:="🔴";if status=="active"{state="🟢"}
- updateState:=tr(s.cfg.Language,"menu.updates.disabled");if s.cfg.AllowUpdates{updateState=tr(s.cfg.Language,"menu.updates.enabled")}
- content:=fmt.Sprintf(tr(s.cfg.Language,"menu.dashboard"),mdCode(hostname),state,mdCode(status),len(nodes),userCount,mdCode(Version),updateState)
- keyboard:=tgbotapi.NewInlineKeyboardMarkup(
-  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.users"),"menu_users"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.nodes"),"menu_nodes"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.routing"),"menu_routing")),
-  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.traffic"),"menu_traffic"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.online"),"menu_online"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.status"),"menu_status")),
-  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.stats"),"menu_stats"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.onlinedoctor"),"menu_online_doctor")),
-  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.update"),"menu_update"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.version"),"menu_version")),
-  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.restart"),"menu_restart_ask"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.backup"),"menu_backup")),
-  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.help"),"menu_help"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.refresh"),"menu_main")),
-  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(languageButtonLabel("en",s.cfg.Language),"lang_set:en"),tgbotapi.NewInlineKeyboardButtonData(languageButtonLabel("zh-CN",s.cfg.Language),"lang_set:zh-CN")),
- )
- s.sendOrEdit(chatID,msgID,content,keyboard)
+func (s *BotService) sendMainMenu(chatID int64, msgID int) {
+	nodes, _ := LoadXrayInbounds(s.cfg.XrayConfigPath)
+	names, dirErr := allDirectoryNames(s.cfg.XrayConfigPath)
+	userCount := len(sortedEmails(nodes))
+	if dirErr == nil {
+		userCount = len(names)
+	}
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "unknown"
+	}
+	status := CheckXrayServiceStatus()
+	state := "🔴"
+	if status == "active" {
+		state = "🟢"
+	}
+	updateState := tr(s.cfg.Language, "menu.updates.disabled")
+	if s.cfg.AllowUpdates {
+		updateState = tr(s.cfg.Language, "menu.updates.enabled")
+	}
+	content := fmt.Sprintf(tr(s.cfg.Language, "menu.dashboard"), mdCode(hostname), state, mdCode(status), len(nodes), userCount, mdCode(Version), updateState)
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.users"), "menu_users"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.nodes"), "menu_nodes"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.routing"), "menu_routing")),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.traffic"), "menu_traffic"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.online"), "menu_online"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.status"), "menu_status")),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.stats"), "menu_stats"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.onlinedoctor"), "menu_online_doctor")),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "serverhost.button"), "routing_manage:server_host")),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.update"), "menu_update"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.version"), "menu_version")),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.restart"), "menu_restart_ask"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.backup"), "menu_backup")),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.help"), "menu_help"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.refresh"), "menu_main")),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(languageButtonLabel("en", s.cfg.Language), "lang_set:en"), tgbotapi.NewInlineKeyboardButtonData(languageButtonLabel("zh-CN", s.cfg.Language), "lang_set:zh-CN")),
+	)
+	s.sendOrEdit(chatID, msgID, content, keyboard)
 }
 func (s *BotService) sendStatusCard(chatID int64, msgID int) {
 	stats, err := GetSystemStats()
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language,"status.failure",mdEsc(err.Error())), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "status.failure", mdEsc(err.Error())), s.backToMainMarkup())
 		return
 	}
 
@@ -637,7 +681,7 @@ func (s *BotService) sendStatusCard(chatID int64, msgID int) {
 	}
 
 	text := fmt.Sprintf(
-  tr(s.cfg.Language,"status.summary"),
+		tr(s.cfg.Language, "status.summary"),
 		mdCode(stats.Hostname), mdEsc(stats.Platform),
 		mdCode(stats.UptimeStr),
 		statusIcon, mdCode(xrayStatus),
@@ -650,71 +694,84 @@ func (s *BotService) sendStatusCard(chatID int64, msgID int) {
 
 	markup := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.refresh"), "menu_status"),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.back"), "menu_main"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.refresh"), "menu_status"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.back"), "menu_main"),
 		),
 	)
+	if s.cfg.AllowMutations {
+		markup.InlineKeyboard = append([][]tgbotapi.InlineKeyboardButton{tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "service.start"), "service_ask:start"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "service.stop"), "service_ask:stop"))}, markup.InlineKeyboard...)
+	}
 
 	s.sendOrEdit(chatID, msgID, text, markup)
 }
 
 func (s *BotService) sendTrafficCard(chatID int64, msgID int) {
- state,err:=snapshotTraffic(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer)
- if err!=nil {
-  cached,readErr:=loadTrafficStore(s.cfg.XrayConfigPath)
-  if readErr!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"traffic.readerror",mdEsc(err.Error()),mdEsc(readErr.Error())),s.backToMainMarkup());return}
-  state=cached
- }
- // Remove orphaned entries left by previous releases, but only after
- // validating the actual managed users and suspended user records.
- clean,cleanErr:=reconcileStoredTraffic(s.cfg.XrayConfigPath)
- if cleanErr!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"traffic.directoryerror",mdEsc(cleanErr.Error())),s.backToMainMarkup());return}
- state=clean
- traffics:=storedUserTraffic(state)
- var sb strings.Builder
- sb.WriteString(tr(s.cfg.Language,"traffic.title"))
- if err!=nil {sb.WriteString(tr(s.cfg.Language,"traffic.stale",mdEsc(err.Error())))}
+	state, err := snapshotTraffic(s.cfg.XrayConfigPath, s.cfg.XrayBinPath, s.cfg.StatsAPIServer)
+	if err != nil {
+		cached, readErr := loadTrafficStore(s.cfg.XrayConfigPath)
+		if readErr != nil {
+			s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "traffic.readerror", mdEsc(err.Error()), mdEsc(readErr.Error())), s.backToMainMarkup())
+			return
+		}
+		state = cached
+	}
+	// Remove orphaned entries left by previous releases, but only after
+	// validating the actual managed users and suspended user records.
+	clean, cleanErr := reconcileStoredTraffic(s.cfg.XrayConfigPath)
+	if cleanErr != nil {
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "traffic.directoryerror", mdEsc(cleanErr.Error())), s.backToMainMarkup())
+		return
+	}
+	state = clean
+	traffics := storedUserTraffic(state)
+	var sb strings.Builder
+	sb.WriteString(tr(s.cfg.Language, "traffic.title"))
+	if err != nil {
+		sb.WriteString(tr(s.cfg.Language, "traffic.stale", mdEsc(err.Error())))
+	}
 
 	if len(traffics) == 0 {
-		sb.WriteString(tr(s.cfg.Language,"traffic.empty"))
+		sb.WriteString(tr(s.cfg.Language, "traffic.empty"))
 	} else {
 		var totalAll uint64
 		for _, u := range traffics {
 			totalAll += u.Total
-			sb.WriteString(fmt.Sprintf(tr(s.cfg.Language,"traffic.row"),
+			sb.WriteString(fmt.Sprintf(tr(s.cfg.Language, "traffic.row"),
 				mdEsc(u.Email),
 				FormatBytes(u.Uplink),
 				FormatBytes(u.Downlink),
 				FormatBytes(u.Total),
 			))
 		}
-		sb.WriteString(tr(s.cfg.Language,"traffic.total",FormatBytes(totalAll)))
+		sb.WriteString(tr(s.cfg.Language, "traffic.total", FormatBytes(totalAll)))
 	}
 
- sb.WriteString(tr(s.cfg.Language,"traffic.note"))
- trafficMissing:=[]string{}
- if report,reportErr:=inspectStatsSwitches(s.cfg.XrayConfigPath);reportErr==nil {
-  trafficMissing=report.MissingTrafficLevels
-  if len(trafficMissing)>0 {
-   sb.WriteString(tr(s.cfg.Language,"stats.traffic.off",mdCode(strings.Join(trafficMissing,", "))))
-  }
- }
- trafficActions:=[]tgbotapi.InlineKeyboardButton{
-  tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.refresh"), "menu_traffic"),
- }
- if s.cfg.AllowMutations {
-  trafficActions=append(trafficActions,tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"traffic.reset"), "traffic_reset_ask"))
- }
- rows:=[][]tgbotapi.InlineKeyboardButton{
-  tgbotapi.NewInlineKeyboardRow(trafficActions...),
-  tgbotapi.NewInlineKeyboardRow(
-   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"traffic.inbounds"), "menu_inbound_traffic"),
-   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.back"), "menu_main"),
-  ),
- }
- if len(trafficMissing)>0 {
-  rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"stats.open"),"menu_stats")))
- }
+	sb.WriteString(tr(s.cfg.Language, "traffic.note"))
+	trafficMissing := []string{}
+	if report, reportErr := inspectStatsSwitches(s.cfg.XrayConfigPath,s.cfg.StatsAPIServer); reportErr == nil {
+		trafficMissing = report.MissingTrafficLevels
+		if len(trafficMissing) > 0 {
+			sb.WriteString(tr(s.cfg.Language, "stats.traffic.off", mdCode(strings.Join(trafficMissing, ", "))))
+		}
+	}
+	trafficActions := []tgbotapi.InlineKeyboardButton{
+		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.refresh"), "menu_traffic"),
+	}
+	if s.cfg.AllowMutations {
+		trafficActions = append(trafficActions, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "traffic.reset"), "traffic_reset_ask"))
+	}
+	rows := [][]tgbotapi.InlineKeyboardButton{
+		tgbotapi.NewInlineKeyboardRow(trafficActions...),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "traffic.inbounds"), "menu_inbound_traffic"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.back"), "menu_main"),
+		),
+	}
+	if len(trafficMissing) > 0 {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "stats.open"), "menu_stats")))
+	}
 	markup := tgbotapi.NewInlineKeyboardMarkup(rows...)
 
 	s.sendOrEdit(chatID, msgID, sb.String(), markup)
@@ -886,36 +943,47 @@ func (s *BotService) sendUserLinksAndQRs(chatID int64,email string) {
 }
 
 func (s *BotService) askRestart(chatID int64, msgID int) {
-	text := tr(s.cfg.Language,"restart.ask")
+	if !s.cfg.AllowMutations {
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
+		return
+	}
+	text := tr(s.cfg.Language, "restart.ask")
 	markup := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"restart.confirm"), "menu_restart_confirm"),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.cancel"), "menu_main"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "restart.confirm"), "menu_restart_confirm"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.cancel"), "menu_main"),
 		),
 	)
 	s.sendOrEdit(chatID, msgID, text, markup)
 }
 
 func (s *BotService) doRestart(chatID int64, msgID int) {
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language,"restart.running"), tgbotapi.InlineKeyboardMarkup{})
+	if !s.cfg.AllowMutations {
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
+		return
+	}
+	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "restart.running"), tgbotapi.InlineKeyboardMarkup{})
 
-	lock,lockErr:=acquireConfigLock(s.cfg.XrayConfigPath,15*time.Second)
- if lockErr!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"restart.lockfail",mdEsc(lockErr.Error())),s.backToMainMarkup());return}
- snapshotTrafficBestEffortLocked(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer)
- err := RestartXrayService()
- releaseConfigLock(lock)
+	lock, lockErr := acquireConfigLock(s.cfg.XrayConfigPath, 15*time.Second)
+	if lockErr != nil {
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "restart.lockfail", mdEsc(lockErr.Error())), s.backToMainMarkup())
+		return
+	}
+	snapshotTrafficBestEffortLocked(s.cfg.XrayConfigPath, s.cfg.XrayBinPath, s.cfg.StatsAPIServer)
+	err := RestartXrayService()
+	releaseConfigLock(lock)
 	time.Sleep(1 * time.Second)
 	status := CheckXrayServiceStatus()
 
 	var text string
 	if err != nil || status != "active" {
-		reason := tr(s.cfg.Language,"restart.unknown")
+		reason := tr(s.cfg.Language, "restart.unknown")
 		if err != nil {
 			reason = err.Error()
 		}
-		text = fmt.Sprintf(tr(s.cfg.Language,"restart.failed"), mdCode(status), mdCode(reason))
+		text = fmt.Sprintf(tr(s.cfg.Language, "restart.failed"), mdCode(status), mdCode(reason))
 	} else {
-		text = tr(s.cfg.Language,"restart.success")
+		text = tr(s.cfg.Language, "restart.success")
 	}
 
 	s.sendOrEdit(chatID, msgID, text, s.backToMainMarkup())

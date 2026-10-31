@@ -11,26 +11,26 @@ import (
 )
 
 type routingRule struct {
- Index int
- RuleTag string
- InboundTags []string
- OutboundTag string
- BalancerTag string
- Domains []string
- IPs []string
- Ports []string
- Networks []string
- Protocols []string
- SourceIPs []string
- SourcePorts []string
- UserEmails []string
+	Index       int      `json:"index"`
+	RuleTag     string   `json:"rule_tag,omitempty"`
+	InboundTags []string `json:"inbound_tags,omitempty"`
+	OutboundTag string   `json:"outbound_tag,omitempty"`
+	BalancerTag string   `json:"balancer_tag,omitempty"`
+	Domains     []string `json:"domains,omitempty"`
+	IPs         []string `json:"ips,omitempty"`
+	Ports       []string `json:"ports,omitempty"`
+	Networks    []string `json:"networks,omitempty"`
+	Protocols   []string `json:"protocols,omitempty"`
+	SourceIPs   []string `json:"source_ips,omitempty"`
+	SourcePorts []string `json:"source_ports,omitempty"`
+	UserEmails  []string `json:"user_emails,omitempty"`
 }
 
 type routingSnapshot struct {
- Rules []routingRule
- Outbounds []string
- Balancers []string
- DomainStrategy string
+	Rules          []routingRule `json:"rules"`
+	Outbounds      []string      `json:"outbounds"`
+	Balancers      []string      `json:"balancers"`
+	DomainStrategy string        `json:"domain_strategy"`
 }
 
 func stringList(value any) []string {
@@ -52,46 +52,57 @@ func stringList(value any) []string {
 // LoadRouting reads the routing section without modifying it. The Bot keeps
 // custom rules, outbounds and balancers visible even when it did not create
 // them; management remains a separate, validated operation.
-func LoadRouting(configPath string) (routingSnapshot,error) {
- data,err:=os.ReadFile(configPath)
- if err!=nil{return routingSnapshot{},err}
- var root struct {
-  Routing struct {
-   DomainStrategy string `json:"domainStrategy"`
-   Rules []map[string]any `json:"rules"`
-   Balancers []map[string]any `json:"balancers"`
-  } `json:"routing"`
-  Outbounds []map[string]any `json:"outbounds"`
- }
- if err=json.Unmarshal(data,&root);err!=nil{return routingSnapshot{},err}
+func LoadRouting(configPath string) (routingSnapshot, error) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return routingSnapshot{}, err
+	}
+	var root struct {
+		Routing struct {
+			DomainStrategy string           `json:"domainStrategy"`
+			Rules          []map[string]any `json:"rules"`
+			Balancers      []map[string]any `json:"balancers"`
+		} `json:"routing"`
+		Outbounds []map[string]any `json:"outbounds"`
+	}
+	if err = json.Unmarshal(data, &root); err != nil {
+		return routingSnapshot{}, err
+	}
 
- snapshot:=routingSnapshot{DomainStrategy:root.Routing.DomainStrategy}
- for _,outbound:=range root.Outbounds {
-  if tag,ok:=outbound["tag"].(string);ok&&tag!=""{snapshot.Outbounds=append(snapshot.Outbounds,tag)}
- }
- sort.Strings(snapshot.Outbounds)
- for _,balancer:=range root.Routing.Balancers {
-  if tag,ok:=balancer["tag"].(string);ok&&tag!=""{snapshot.Balancers=append(snapshot.Balancers,tag)}
- }
- sort.Strings(snapshot.Balancers)
+	snapshot := routingSnapshot{DomainStrategy: root.Routing.DomainStrategy}
+	for _, outbound := range root.Outbounds {
+		if tag, ok := outbound["tag"].(string); ok && tag != "" {
+			snapshot.Outbounds = append(snapshot.Outbounds, tag)
+		}
+	}
+	sort.Strings(snapshot.Outbounds)
+	for _, balancer := range root.Routing.Balancers {
+		if tag, ok := balancer["tag"].(string); ok && tag != "" {
+			snapshot.Balancers = append(snapshot.Balancers, tag)
+		}
+	}
+	sort.Strings(snapshot.Balancers)
 
- for i,rule:=range root.Routing.Rules {
-  item:=routingRule{Index:i+1}
-  item.RuleTag,_=rule["ruleTag"].(string)
-  item.InboundTags=stringList(rule["inboundTag"])
-  item.OutboundTag,_=rule["outboundTag"].(string)
-  item.BalancerTag,_=rule["balancerTag"].(string)
-  item.Domains=stringList(rule["domain"])
-  item.IPs=stringList(rule["ip"])
-  item.Ports=stringList(rule["port"])
-  item.Networks=stringList(rule["network"])
-  item.Protocols=stringList(rule["protocol"])
-  item.SourceIPs=stringList(rule["source"])
-  item.SourcePorts=stringList(rule["sourcePort"])
-  item.UserEmails=stringList(rule["user"])
-  snapshot.Rules=append(snapshot.Rules,item)
- }
- return snapshot,nil
+	for i, rule := range root.Routing.Rules {
+		item := routingRule{Index: i + 1}
+		item.RuleTag, _ = rule["ruleTag"].(string)
+		item.InboundTags = stringList(rule["inboundTag"])
+		item.OutboundTag, _ = rule["outboundTag"].(string)
+		item.BalancerTag, _ = rule["balancerTag"].(string)
+		item.Domains = stringList(rule["domain"])
+		item.IPs = stringList(rule["ip"])
+		item.Ports = stringList(rule["port"])
+		item.Networks = stringList(rule["network"])
+		item.Protocols = stringList(rule["protocol"])
+		item.SourceIPs = stringList(rule["source"])
+		if len(item.SourceIPs) == 0 {
+			item.SourceIPs = stringList(rule["sourceIP"])
+		}
+		item.SourcePorts = stringList(rule["sourcePort"])
+		item.UserEmails = stringList(rule["user"])
+		snapshot.Rules = append(snapshot.Rules, item)
+	}
+	return snapshot, nil
 }
 
 func joinOrEmpty(values []string,empty string) string {
@@ -130,17 +141,26 @@ func routingCardText(snapshot routingSnapshot,lang string) string {
  return out.String()
 }
 
-func (s *BotService) sendRoutingCard(chatID int64,msgID int) {
- snapshot,err:=LoadRouting(s.cfg.XrayConfigPath)
- if err!=nil {
-  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"routing.error",mdEsc(err.Error())),s.backToMainMarkup())
-  return
- }
- markup:=tgbotapi.NewInlineKeyboardMarkup(
-  tgbotapi.NewInlineKeyboardRow(
-   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.refresh"),"menu_routing"),
-   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.home"),"menu_main"),
-  ),
- )
- s.sendOrEdit(chatID,msgID,routingCardText(snapshot,s.cfg.Language),markup)
+func (s *BotService) sendRoutingCard(chatID int64, msgID int) {
+	snapshot, err := LoadRouting(s.cfg.XrayConfigPath)
+	if err != nil {
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.error", mdEsc(err.Error())), s.backToMainMarkup())
+		return
+	}
+	rows := [][]tgbotapi.InlineKeyboardButton{}
+	if s.cfg.AllowMutations {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.edit.add"), "routing_manage:add"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.edit.update"), "routing_manage:update"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.edit.delete"), "routing_manage:delete")))
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "network.outbound.put"), "routing_manage:outbound_put"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "network.outbound.delete"), "routing_manage:outbound_delete"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "network.dns.put"), "routing_manage:dns_put")))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.refresh"), "menu_routing"),
+		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.home"), "menu_main")))
+	markup := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	s.sendOrEdit(chatID, msgID, routingCardText(snapshot, s.cfg.Language), markup)
 }

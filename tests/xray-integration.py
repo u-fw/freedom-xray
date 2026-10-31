@@ -147,8 +147,28 @@ def main():
                 return subprocess.run([BOT, "-c", str(bot_config), *args], check=True,
                                       capture_output=True, text=True, timeout=40).stdout
 
+            def agent(operation, input_data=None, *flags):
+                result = subprocess.run(
+                    [BOT, "agent", operation, "--config", str(bot_config), *flags],
+                    input=None if input_data is None else json.dumps(input_data),
+                    check=True, capture_output=True, text=True, timeout=40,
+                )
+                envelope = json.loads(result.stdout)
+                assert envelope["ok"] and envelope["schema_version"] == 1, envelope
+                return envelope["data"]
+
+            original_config = (directory / "config.json").read_bytes()
+            preview = agent("users.add", {"user": "preview-user", "node": "raw"})
+            assert preview["applied"] is False, preview
+            assert (directory / "config.json").read_bytes() == original_config
+            assert {node["tag"] for node in agent("nodes.list")} == {"raw", "cdn"}
+            users = agent("users.list")
+            assert {user["user"] for user in users} == {"alice", "bob"}, users
+            assert ALICE_ID not in json.dumps(users) and BOB_ID not in json.dumps(users)
+
             bot("-local-traffic-snapshot")
             before = json.loads(bot("-local-traffic-read"))
+            assert agent("traffic.read")["users"]["alice"]["total_down"] >= 2 * 65536
             assert before["users"]["alice"]["total_down"] >= 2 * 65536, before
             assert before["users"]["bob"]["total_down"] >= 65536, before
             for binding in ("alice+cmF3", "alice+Y2Ru"):
