@@ -167,11 +167,28 @@ Flow 必须与用户在对应入站的配置一致。CLI 与 Bot 导出器均不
 
 - 客户端 encryption 和服务端 decryption 必须成对；只有用户实际启用 Vision 才导出 flow。
 - XHTTP Host 默认留空，不强制复制 TLS SNI；必要时可以针对反代自定义。
-- XHTTP 分享链接同时携带 `mode=auto`（或相应模式）与 `extra={"mode":"auto","xPaddingBytes":"100-1000"}`，与 3x-ui 导出兼容；Padding 以服务端入站实际 `xPaddingBytes` 配置为准，缺省时使用 `100-1000`。
+- XHTTP 分享链接使用独立 `mode=auto`（或配置的其他模式），`extra={"xPaddingBytes":"100-1000"}` **不重复写入 mode**，遵循 Xray-core 官方 XHTTP 配置结构。Padding 优先使用入站实际 `xPaddingBytes`，未配置时使用内核默认值 `100-1000`。
 - XHTTP + TLS/CDN 链接默认包含 `ech=cloudflare-ech.com%2Bhttps%3A%2F%2Fdns.alidns.com%2Fdns-query`，供 v2rayN/v2rayNG 导入。此参数是**客户端设置**，不改动服务器的 TLS、Cloudflare 或 DNS 配置。仅在目标 CDN 提供可用 ECH、DNS 查询正常且客户端内核支持时生效；如果导入后无法连接，应先从客户端清除 `EchConfigList` 后重测。不要把 ECH 视为全部流量特征消失或域名零泄露的保证。
 - CDN 方案推荐有效源站证书 + Cloudflare Full (strict)，不要把 Full + 自签名证书误认为同等级验证。
 - 不保证 XHTTP 比 RAW 延迟更低，也不保证迁移裸核能解除被封锁 IP。
 
+### Cloudflare Origin Rule / 端口 Rewrite 兼容
+
+如果客户端连接 `cdn.example.com:443`，Cloudflare Origin Rule 将请求回源到 `VPS:55555`，则 **Xray 的实际 `inbounds[].port` 保持 `55555`**。在 `freedom` 终端「节点管理 → 修改节点 → 设置 CDN 对外端口」或 Telegram「节点管理 → XHTTP+TLS 节点详情 → 对外端口」设置 `443`。此后 CLI、Bot 单节点链接/批量 TXT/二维码都会导出 `cdn.example.com:443`。
+
+映射单独存储在 `/usr/local/etc/xray/freedom-public-ports.json`，示例：
+
+```json
+{
+  "nodes": {
+    "XHTTP-TLS-CDN-55555": { "listen_port": 55555, "public_port": 443 }
+  }
+}
+```
+
+此文件只保存元数据，不进入 Xray-core `config.json`；修改它**不会**改变 Xray 监听、UFW、防火墙、证书、CDN Origin Rules，也不需要重启 Xray。仅允许 XHTTP+TLS 节点配置，设置 `0` 清除。若实际监听端口变化，旧端口覆盖会被忽略，以防导出错误端口。
+
+**Cloudflare 配置前提：** 将 DNS 记录设为 Proxied（橙云）；在 *Rules → Origin Rules → Destination Port* 为对应 hostname/path 设置源站目的端口 `55555`。**不要混淆 URL Rewrite Rules 和 Origin Rules**。确保源站 `55555` 能被 Cloudflare 访问、使用有效 TLS 证书，建议 `Full (strict)`。可以在防火墙限制仅 Cloudflare IP 段可访问该源站端口，避免直接绕过 CDN。无正确转发规则时导出 `443` 不代表连接会成功。
 ## 安全和性能
 
 - StatsService 保持 127.0.0.1 监听；管理建议优先通过 Tailscale。
