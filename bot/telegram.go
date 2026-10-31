@@ -536,7 +536,7 @@ func (s *BotService) sendNodesCard(chatID int64, msgID int) {
 					"  • 协议: `%s` | 传输: `%s`\n"+
 					"  • 安全层: `%s` | 伪装/SNI: `%s`\n"+
 					"  • 绑定用户数: `%d` 个\n\n",
-				i+1, mdEsc(n.Tag), n.Port,
+				i+1, mdEsc(n.Tag), n.SharePort(),
 				mdCode(strings.ToUpper(n.Protocol)), mdCode(strings.ToUpper(n.Network)),
 				mdCode(strings.ToUpper(n.Security)), mdCode(sni),
 				len(n.Clients),
