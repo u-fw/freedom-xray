@@ -40,6 +40,7 @@ func readPublicPorts(configPath string)(publicPortConfig,error){
 func applyPublicPortOverrides(nodes []InboundDetails,overrides publicPortConfig) {
  for i:=range nodes{
   n:=&nodes[i]
+  n.PublicPort=0 // invalid or stale overrides must never survive a reload
   entry,ok:=overrides.Nodes[n.Tag]
   if !ok{continue}
   if entry.ListenPort!=n.Port {
