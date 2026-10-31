@@ -1,7 +1,6 @@
-v1.3.6
-Online source-IP reliability and visibility: per-email fallback now triggers when
-the aggregate statistics RPC fails or returns malformed data, probes up to 128
-users, parses both Xray response shapes, and reads online session counts.
-Recent IP history is retained for seven days (64 addresses per user), the online
-view and user details show last-online timestamps, and /onlinedoctor reports
-per-user session and observed-IP counts with a loopback-relay hint.
+v1.3.7
+In-menu updates now run the script and Bot update directly, REALITY activity is
+inferred from traffic counter increases so last-online is recorded even when the
+core exposes no live source IP, and creating an unbound user no longer fails.
+Oversized Telegram cards are split into tracked continuation messages, the user
+list is paginated, and a per-user traffic reset can restore quota-suspended users.
