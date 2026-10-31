@@ -103,7 +103,9 @@ func snapshotTrafficLocked(configPath,xrayBinary,statsServer string) (trafficSto
  changed:=applyTrafficSnapshot(&state,users,inbounds,epoch)
  // Collect online IPs independently of traffic accounting. Unsupported
  // APIs must not stop the durable traffic sampler.
- if observed,onlineErr:=queryOnlineClients(ctx,xrayBinary,statsServer);onlineErr==nil {
+ onlineCtx,onlineCancel:=context.WithTimeout(context.Background(),5*time.Second)
+ defer onlineCancel()
+ if observed,onlineErr:=queryOnlineClients(onlineCtx,xrayBinary,statsServer);onlineErr==nil {
   if applyOnlineSnapshot(&state,observed,time.Now()){changed=true}
  }else if !isOnlineUnsupported(onlineErr){
   log.Printf("[Online] optional poll failed: %v",onlineErr)
@@ -153,6 +155,75 @@ func editTrafficStore(configPath string,edit func(*trafficStore)error)error{
  state,err:=loadTrafficStore(configPath);if err!=nil{return err}
  if err=edit(&state);err!=nil{return err}
  return saveTrafficStore(configPath,state)
+}
+
+// Remove per-user accounting and IP history, preserving inbound totals.
+func discardTrafficUser(state *trafficStore,name string) bool {
+ changed:=false
+ if _,ok:=state.Users[name];ok{delete(state.Users,name);changed=true}
+ if _,ok:=state.LastOnline[name];ok{delete(state.LastOnline,name);changed=true}
+ if _,ok:=state.OnlineIPs[name];ok{delete(state.OnlineIPs,name);changed=true}
+ if _,ok:=state.LiveIPs[name];ok{delete(state.LiveIPs,name);changed=true}
+ return changed
+}
+
+// Must be called after a committed deletion under the config lock.
+func purgeTrafficUserLocked(configPath,name string) error {
+ state,err:=loadTrafficStore(configPath);if err!=nil{return err}
+ if !discardTrafficUser(&state,name){return nil}
+ return saveTrafficStore(configPath,state)
+}
+
+// Reconcile legacy deleted users only after loading authoritative config.
+// Keep suspended users' historical totals and never touch inbound totals.
+func reconcileTrafficUsersLocked(configPath string,state *trafficStore)(bool,error) {
+ names,err:=allDirectoryNames(configPath);if err!=nil{return false,err}
+ suspended,err:=disabledUserNames(configPath);if err!=nil{return false,err}
+ allowed:=make(map[string]bool,len(names)+len(suspended))
+ for _,name:=range names{allowed[name]=true}
+ for _,name:=range suspended{allowed[name]=true}
+ changed:=false
+ for name:=range state.Users {if !allowed[name]&&discardTrafficUser(state,name){changed=true}}
+ for name:=range state.LiveIPs {if !allowed[name]&&discardTrafficUser(state,name){changed=true}}
+ for name:=range state.OnlineIPs {if !allowed[name]&&discardTrafficUser(state,name){changed=true}}
+ for name:=range state.LastOnline {if !allowed[name]&&discardTrafficUser(state,name){changed=true}}
+ return changed,nil
+}
+
+func reconcileStoredTraffic(configPath string)(trafficStore,error){
+ lock,err:=acquireConfigLock(configPath,8*time.Second);if err!=nil{return trafficStore{},err}
+ defer releaseConfigLock(lock)
+ state,err:=loadTrafficStore(configPath);if err!=nil{return state,err}
+ changed,err:=reconcileTrafficUsersLocked(configPath,&state);if err!=nil{return state,err}
+ if changed {err=saveTrafficStore(configPath,state)}
+ return state,err
+}
+
+// Telegram /online explicitly queries live Xray rather than only reading
+// the asynchronous 5-second collector snapshot.
+func refreshOnlineTraffic(configPath,xrayBinary,statsServer string)(trafficStore,error) {
+ lock,err:=acquireConfigLock(configPath,8*time.Second);if err!=nil{return trafficStore{},err}
+ defer releaseConfigLock(lock)
+ state,err:=loadTrafficStore(configPath);if err!=nil{return state,err}
+ reconciled,err:=reconcileTrafficUsersLocked(configPath,&state);if err!=nil{return state,err}
+ ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second);defer cancel()
+ online,queryErr:=queryOnlineClients(ctx,xrayBinary,statsServer)
+ changed:=reconciled
+ if queryErr==nil {
+  active,err:=activeTrafficUserSet(configPath);if err!=nil{return state,err}
+  filtered:=online[:0]
+  for _,user:=range online{if active[user.Email]{filtered=append(filtered,user)}}
+  if applyOnlineSnapshot(&state,filtered,time.Now()){changed=true}
+ }
+ if changed {if err=saveTrafficStore(configPath,state);err!=nil{return state,err}}
+ return state,queryErr
+}
+
+func activeTrafficUserSet(configPath string)(map[string]bool,error){
+ names,err:=allDirectoryNames(configPath);if err!=nil{return nil,err}
+ allowed:=make(map[string]bool,len(names))
+ for _,name:=range names{allowed[name]=true}
+ return allowed,nil
 }
 
 func renameTrafficStoreLocked(configPath,oldName,newName string)error{

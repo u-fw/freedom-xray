@@ -150,6 +150,19 @@ Committed historical totals survive ordinary service reboots. Abrupt crashes or 
 
 Recent observed IPs are retained only for a limited period. Online presence is ephemeral: stale polls must be shown as **unknown**, not as connected. CDN source IPs have the unvalidated-XFF caveat above. Full access logging is not required for the online-stats API.
 
+### Deleted users and live client IP diagnostics
+
+When a user is deleted, their per-user traffic and recent IP records are removed from the SQLite ledger after the account change succeeds. Legacy orphaned rows are reconciled against active and suspended accounts when opening the traffic view; suspended user history and inbound totals are preserved.
+
+The `/online` page now refreshes the Xray online API immediately and displays *online* IPs separately from *recently observed* IPs (up to 30 minutes). REALITY direct nodes need no proxy-header configuration. Online tracking requires `statsUserOnline` at the user's policy level and an active authenticated session. Traffic shown beside a client is the **cumulative per-user total across all inbounds**, not per-IP consumption. To diagnose no IPs while generating active REALITY traffic:
+
+```bash
+sudo jq '.policy.levels["0"].statsUserOnline' /usr/local/etc/xray/config.json
+sudo /usr/local/bin/xray api statsonlineiplist --server=127.0.0.1:10085 -all
+sudo systemctl status freedom-stats --no-pager
+sudo journalctl -u freedom-stats -n 40 --no-pager
+```
+
 ## Updating and troubleshooting
 
 Download and inspect the current manager, then start its menu:

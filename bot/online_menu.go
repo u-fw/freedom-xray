@@ -1,6 +1,7 @@
 package main
 
 import (
+ "sort"
  "strings"
  "time"
 
@@ -8,34 +9,65 @@ import (
 )
 
 func onlineCardText(state trafficStore, now time.Time, lang string) string {
+ return onlineCardTextWithError(state,now,lang,nil)
+}
+
+func onlineCardTextWithError(state trafficStore,now time.Time,lang string,queryErr error) string {
  var out strings.Builder
  out.WriteString(tr(lang,"online.title"))
- if state.OnlinePollAt<=0 || now.Unix()-state.OnlinePollAt>20 {
-  out.WriteString(tr(lang,"online.unavailable"))
+ if queryErr!=nil {out.WriteString(tr(lang,"online.queryFailure",mdEsc(queryErr.Error())))}
+ fresh:=state.OnlinePollAt>0 && now.Unix()-state.OnlinePollAt<=20 && state.OnlinePollAt<=now.Unix()+5
+ if !fresh{out.WriteString(tr(lang,"online.stale"))}
+ nameSet:=map[string]bool{}
+ for name,ips:=range state.LiveIPs{if len(ips)>0{nameSet[name]=true}}
+ for name,ips:=range state.OnlineIPs{if len(ips)>0{nameSet[name]=true}}
+ names:=make([]string,0,len(nameSet))
+ for name:=range nameSet{names=append(names,name)}
+ sort.Slice(names,func(i,j int)bool{
+  iLive:=fresh && len(state.LiveIPs[names[i]])>0
+  jLive:=fresh && len(state.LiveIPs[names[j]])>0
+  if iLive!=jLive{return iLive}
+  return names[i]<names[j]
+ })
+ if len(names)==0{
+  out.WriteString(tr(lang,"online.noObservation"))
  }else{
-  count:=0
-  for name,ips:=range state.LiveIPs {
-   if len(ips)==0{continue}
-   count++
-   if count>40{break}
-   out.WriteString(tr(lang,"online.client",mdEsc(name),len(ips)))
-   for _,ip:=range ips{
-    out.WriteString("  • "+mdCode(ip.IP)+"\n")
+  max:=len(names);if max>25{max=25}
+  for _,name:=range names[:max]{
+   current:=state.LiveIPs[name]
+   live:=fresh&&len(current)>0
+   status:=tr(lang,"online.recent")
+   ips:=state.OnlineIPs[name]
+   if live{status=tr(lang,"online.live");ips=current}
+   out.WriteString("👤 *"+mdEsc(name)+"* — "+status+"\n")
+   limit:=len(ips);if limit>3{limit=3}
+   for _,ip:=range ips[:limit]{
+    out.WriteString(tr(lang,"online.ip",mdCode(ip.IP),time.Unix(ip.LastSeen,0).Format("2006-01-02 15:04:05")))
    }
+   usage:=state.Users[name]
+   out.WriteString(tr(lang,"online.traffic",FormatBytes(usage.TotalUp),FormatBytes(usage.TotalDown),FormatBytes(usage.TotalUp+usage.TotalDown)))
+   out.WriteString("\n")
   }
-  if count==0 {out.WriteString(tr(lang,"online.empty"))}
-  if count>40 {out.WriteString(tr(lang,"online.truncated"))}
-  out.WriteString(tr(lang,"online.polled",time.Unix(state.OnlinePollAt,0).Format("2006-01-02 15:04:05")))
+  if len(names)>max{out.WriteString(tr(lang,"online.truncated"))}
  }
+ if fresh{out.WriteString(tr(lang,"online.polled",time.Unix(state.OnlinePollAt,0).Format("2006-01-02 15:04:05")))}
+ out.WriteString(tr(lang,"online.totalScope"))
  out.WriteString(tr(lang,"online.warning"))
  return out.String()
 }
+
 func (s *BotService) sendOnlineCard(chatID int64,msgID int) {
- state,err:=loadTrafficStore(s.cfg.XrayConfigPath)
- if err!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"online.error",mdEsc(err.Error())),backToMainMarkup());return}
+ state,err:=refreshOnlineTraffic(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer)
+ // A failed live query can still show last stored observations. Errors
+ // before loading the ledger must not masquerade as an empty online list.
+ if state.Users==nil{
+  detail:="unknown error";if err!=nil{detail=mdEsc(err.Error())}
+  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"online.error",detail),backToMainMarkup())
+  return
+ }
  markup:=tgbotapi.NewInlineKeyboardMarkup(
   tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"online.refresh"),"menu_online"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"online.details"),"menu_users")),
   tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"menu.home"),"menu_main")),
  )
- s.sendOrEdit(chatID,msgID,onlineCardText(state,time.Now(),s.cfg.Language),markup)
+ s.sendOrEdit(chatID,msgID,onlineCardTextWithError(state,time.Now(),s.cfg.Language,err),markup)
 }

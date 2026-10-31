@@ -105,3 +105,34 @@ func TestTrafficCollectorEndToEnd(t *testing.T) {
   t.Fatalf("restart lost counters: %+v",restarted)
  }
 }
+
+func TestDeleteUserAccountingWithoutTouchingInboundTotals(t *testing.T){
+ state:=trafficStore{
+  Users:map[string]trafficCounter{"alice":{TotalUp:10},"bob":{TotalUp:20}},
+  Inbounds:map[string]trafficCounter{"reality":{TotalUp:30}},
+  LastOnline:map[string]int64{"alice":123,"bob":456},
+  OnlineIPs:map[string][]onlineClientIP{"alice":{{IP:"203.0.113.1",LastSeen:123}}},
+  LiveIPs:map[string][]onlineClientIP{"alice":{{IP:"203.0.113.1",LastSeen:123}}},
+ }
+ if !discardTrafficUser(&state,"alice"){t.Fatal("expected change")}
+ if discardTrafficUser(&state,"alice"){t.Fatal("second purge must be idempotent")}
+ if _,ok:=state.Users["alice"];ok{t.Fatal("deleted user retains traffic")}
+ if _,ok:=state.LastOnline["alice"];ok{t.Fatal("deleted user retains online time")}
+ if _,ok:=state.OnlineIPs["alice"];ok{t.Fatal("deleted user retains IP history")}
+ if _,ok:=state.LiveIPs["alice"];ok{t.Fatal("deleted user retains live IP")}
+ if state.Users["bob"].TotalUp!=20||state.Inbounds["reality"].TotalUp!=30{t.Fatal("unrelated statistics changed")}
+}
+
+func TestReconcileOrphanedTrafficAndPreserveActiveUsers(t *testing.T) {
+ config:=filepath.Join(t.TempDir(),"config.json")
+ raw:=`{"inbounds":[{"tag":"reality","protocol":"vless","settings":{"clients":[{"email":"alice","id":"99999999-9999-4999-8999-999999999999"}]}}]}`
+ if err:=os.WriteFile(config,[]byte(raw),0600);err!=nil{t.Fatal(err)}
+ state:=trafficStore{Users:map[string]trafficCounter{
+  "alice":{TotalUp:12},"removed":{TotalUp:20},
+ },Inbounds:map[string]trafficCounter{"reality":{TotalUp:32}}}
+ changed,err:=reconcileTrafficUsersLocked(config,&state);if err!=nil{t.Fatal(err)}
+ if !changed{t.Fatal("expected deletion of orphaned row")}
+ if _,exists:=state.Users["removed"];exists{t.Fatal("deleted user remains")}
+ if state.Users["alice"].TotalUp!=12||state.Inbounds["reality"].TotalUp!=32{t.Fatal("valid statistics removed")}
+ if changed,err=reconcileTrafficUsersLocked(config,&state);err!=nil||changed{t.Fatalf("unexpected second reconciliation: %v %v",changed,err)}
+}

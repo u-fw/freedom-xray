@@ -17,7 +17,7 @@
   "online.unavailable": "⚠️ Online status is stale or unavailable. Check freedom-stats.service, the Xray version and statsUserOnline.\n",
   "online.client": "👤 *%s* (%d IPs)\n",
   "online.empty": "No online clients observed.\n",
-  "online.truncated": "(Showing the first 40 users only)\n",
+  "online.truncated": "(Showing the first 25 users with IP observations)\n",
   "online.polled": "\nLast successful poll: %s\n",
   "online.warning": "\n⚠️ CDN XFF is not sanitized. Displayed source IPs may be spoofed; do not use them for automatic bans.",
   "online.error": "Unable to read online statistics: %s",
@@ -103,5 +103,14 @@
   "account.suspend": "⏸ Suspend user",
   "account.delete": "🗑 Delete user",
   "account.list": "🔙 User list",
-  "account.footer": "\nUser identity is stored independently; this page only changes node access."
+  "account.footer": "\nUser identity is stored independently; this page only changes node access.",
+  "traffic.directoryerror": "Unable to verify managed users or remove deleted accounts from statistics: %s",
+  "online.queryFailure": "⚠️ Live IP query failed: %s\nDisplaying previously saved observations when available.\n\n",
+  "online.live": "🟢 Online",
+  "online.recent": "⚪ Recently observed (not online)",
+  "online.traffic": "  ⬆️ %s  ⬇️ %s  Total: %s\n",
+  "online.ip": "  • %s (last seen %s)\n",
+  "online.noObservation": "No source IP observed yet. Keep a REALITY client actively transferring data and refresh. Verify `statsUserOnline` is enabled for the client's policy level.\n",
+  "online.totalScope": "\nUsage totals are *per user* across assigned inbounds, not per-IP counters.\n",
+  "online.stale": "⚠️ Online data is stale. Check the Xray StatsService, `statsUserOnline` and freedom-stats logs.\n"
 }

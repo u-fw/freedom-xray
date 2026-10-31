@@ -232,6 +232,11 @@ func changeDirectoryUser(configPath,xrayBinary string,change UserChange)(string,
    return "",fmt.Errorf("Xray failed startup verification; rolled back:%w",failure)
   }
  }
+ if change.Kind=="delete"{
+  if err=purgeTrafficUserLocked(configPath,change.User);err!=nil{
+   return message,fmt.Errorf("User removed, but deleting its historical statistics failed: %w",err)
+  }
+ }
  if change.Kind=="rename"{
   if err=renameTrafficStoreLocked(configPath,change.User,change.NewName);err!=nil{
    return message,fmt.Errorf("The account was renamed, but migrating historical traffic failed:%w",err)

@@ -444,6 +444,11 @@ func (s *BotService) sendTrafficCard(chatID int64, msgID int) {
   if readErr!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"traffic.readerror",mdEsc(err.Error()),mdEsc(readErr.Error())),backToMainMarkup());return}
   state=cached
  }
+ // Remove orphaned entries left by previous releases, but only after
+ // validating the actual managed users and suspended user records.
+ clean,cleanErr:=reconcileStoredTraffic(s.cfg.XrayConfigPath)
+ if cleanErr!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"traffic.directoryerror",mdEsc(cleanErr.Error())),backToMainMarkup());return}
+ state=clean
  traffics:=storedUserTraffic(state)
  var sb strings.Builder
  sb.WriteString(tr(s.cfg.Language,"traffic.title"))

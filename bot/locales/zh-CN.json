@@ -17,7 +17,7 @@
   "online.unavailable": "⚠️ 当前没有新鲜的在线状态。请检查 freedom-stats.service、Xray 版本与 statsUserOnline 配置。\n",
   "online.client": "👤 *%s*（%d IP）\n",
   "online.empty": "当前未观测到在线用户。\n",
-  "online.truncated": "（只显示前 40 名用户）\n",
+  "online.truncated": "（仅显示前 25 名有 IP 记录的用户）\n",
   "online.polled": "\n最近成功轮询：%s\n",
   "online.warning": "\n⚠️ CDN 节点尚未清洗 XFF；显示的来源 IP 可能被伪造，不得直接用于自动封禁。",
   "online.error": "在线统计读取失败：%s",
@@ -103,5 +103,14 @@
   "account.suspend": "⏸ 停用用户",
   "account.delete": "🗑 删除用户",
   "account.list": "🔙 用户列表",
-  "account.footer": "\n账号身份独立保存；此处只调整节点访问授权。"
+  "account.footer": "\n账号身份独立保存；此处只调整节点访问授权。",
+  "traffic.directoryerror": "无法确认当前用户或清理已删除账号的流量记录：%s",
+  "online.queryFailure": "⚠️ 实时 IP 查询失败：%s\n以下仅显示此前成功保存的 IP 记录（如有）。\n\n",
+  "online.live": "🟢 在线",
+  "online.recent": "⚪ 最近观测（目前不在线）",
+  "online.traffic": "  ⬆️ %s  ⬇️ %s  累计：%s\n",
+  "online.ip": "  • %s（最近活动 %s）\n",
+  "online.noObservation": "尚未观测到来源 IP。保持 REALITY 客户端持续传输数据后刷新，并确认用户的 Xray 策略级别启用了 `statsUserOnline`。\n",
+  "online.totalScope": "\n以上为该用户所有授权入站的*累计用量*，不是单个 IP 的用量。\n",
+  "online.stale": "⚠️ 在线数据不新鲜，请检查 Xray StatsService、`statsUserOnline` 和 freedom-stats 日志。\n"
 }
