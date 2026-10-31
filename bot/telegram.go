@@ -264,6 +264,8 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 				s.sendHelpCard(chatID,msgID)
 			case strings.HasPrefix(data,"lang_set:"):
 				s.setLanguage(chatID,msgID,strings.TrimPrefix(data,"lang_set:"))
+	case data == "update_all":
+		s.runSafeUpdates(chatID,msgID,[]string{"script","bot"})
 	case strings.HasPrefix(data,"update_ask:"):
 		s.askUpdate(cb,strings.TrimPrefix(data,"update_ask:"))
 	case strings.HasPrefix(data,"update_confirm:"):

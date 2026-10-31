@@ -184,6 +184,7 @@
   "update.row.commit": "%s: %s / commit %s\n",
   "update.row.upstream": "%s: %s / upstream %s\n",
   "update.update.now": "Update now: %s",
+  "update.update.both": "Update manager + Telegram Bot",
   "update.rollback": "↩ Roll back Xray-core",
   "update.note": "\nManager/Bot updates run upon selection after validation; core upgrades and rollbacks require confirmation. Bot updates are verified by an independent health check.",
   "update.unauthorized": "This update is not authorized on the VPS.",

@@ -1,5 +1,3 @@
-v1.3.3
-Full Chinese locale coverage for menus and confirmations, robust direct public-IP
-resolution with server_host override, and per-level online-statistics support
-Enable statsUserUplink/Downlink/Online for custom client levels, fall back to
-per-email online queries on older Xray-core, preserve bot.json fields on setup
+v1.3.4
+One-action manager + Bot synchronization from the CLI update menu and Telegram
+update center, content-based script version checks, and a visible script version

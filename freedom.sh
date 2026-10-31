@@ -28,7 +28,7 @@ NC='\033[0m'
 
 export PATH="$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
 
-SCRIPT_VERSION="v13.5.0"
+SCRIPT_VERSION="v13.5.1"
 # Optional client-side ECH configuration for XHTTP/TLS links; does not modify origin TLS.
 XHTTP_CDN_ECH_CONFIG="cloudflare-ech.com+https://dns.alidns.com/dns-query"
 DEFAULT_SNI="www.nvidia.com"
@@ -2476,6 +2476,15 @@ get_remote_script_version() {
   echo "$ver"
 }
 
+# Hash the official main script so the version check reports whether the
+# installed file matches GitHub, not only whether SCRIPT_VERSION was bumped.
+get_remote_script_digest() {
+  local digest
+  digest="$(curl --proto "=https" -fsSL --connect-timeout 6 --max-time 40 "$RAW_SCRIPT_URL" 2>/dev/null | sha256sum | awk '{print $1}')" || return 1
+  [[ "$digest" =~ ^[0-9a-fA-F]{64}$ ]] || return 1
+  printf "%s\n" "$digest"
+}
+
 get_remote_xray_version() {
   local ver
   ver="$(curl -fsSL --connect-timeout 5 "https://api.github.com/repos/XTLS/Xray-core/releases/latest" 2>/dev/null | grep -Po '"tag_name":\s*"\K[^"]*' || true)"
@@ -2483,6 +2492,36 @@ get_remote_xray_version() {
     ver="$(curl -fsSL --connect-timeout 5 "https://api.github.com/repos/XTLS/Xray-core/tags" 2>/dev/null | grep -Po '"name":\s*"\K[^"]*' | head -n1 || true)"
   fi
   echo "$ver"
+}
+
+# Persist the installed manager revision so the startup hook does not offer
+# the same Bot synchronization twice.
+record_bot_sync_stamp() {
+  local script="${1:-/usr/local/bin/freedom}"
+  local stamp="$CONFIG_DIR/.freedom-bot-sync-script.sha256"
+  local script_hash
+  script_hash="$(sha256sum "$script" 2>/dev/null | awk '{print $1}')" || return 1
+  [[ "$script_hash" =~ ^[a-fA-F0-9]{64}$ ]] || return 1
+  if ! (umask 077; printf "%s\n" "$script_hash" > "${stamp}.next" && mv -f "${stamp}.next" "$stamp"); then
+    return 1
+  fi
+}
+
+# Option 1 is an explicit request to update the manager and an installed Bot
+# together. A Bot failure must neither undo nor block the manager update.
+sync_installed_bot_after_manager_update() {
+  local script="${1:-/usr/local/bin/freedom}"
+  if [[ ! -x "$BOT_BIN_PATH" || ! -f "$BOT_CONFIG_PATH" ]]; then
+    info "Telegram Bot is not installed or not configured; skipping Bot synchronization."
+    return 0
+  fi
+  info "Updating the installed Telegram Bot together with the manager..."
+  if ! install_or_update_freedom_bot; then
+    warn "Bot update failed; the manager script is already updated. Retry with Online Updates -> 5."
+    record_bot_sync_stamp "$script" || true
+    return 1
+  fi
+  record_bot_sync_stamp "$script" || warn "Unable to record the Bot synchronization marker."
 }
 
 # Only the script and an already installed Bot are eligible for combined updates.
@@ -2506,8 +2545,8 @@ update_freedom_script() {
   if [[ -f "$target" ]] && cmp -s "$tmp_file" "$target"; then
     rm -f "$tmp_file"
     ok "Manager script matches GitHub main."
-    maybe_offer_bot_refresh --force
-    return $?
+    sync_installed_bot_after_manager_update "$target" || return 1
+    return 0
   fi
   if [[ -f "$target" ]]; then
     if ! cp -a "$target" "${target}.previous"; then
@@ -2523,7 +2562,8 @@ update_freedom_script() {
   fi
   rm -f "$tmp_file"
   ok "Latest freedom.sh installed. Previous backup: ${target}.previous"
-  info "Restart the manager to receive the Bot sync prompt. Xray-core will not be upgraded automatically."
+  sync_installed_bot_after_manager_update "$target" || true
+  info "Opening the updated manager. Xray-core will not be upgraded automatically."
   exec "$target"
 }
 
@@ -2712,15 +2752,31 @@ system_update_center_menu() {
         ;;
       4)
         info "Fetching upstream versions from GitHub..."
-        local r_sc r_xr
+        local r_sc r_xr installed_digest remote_digest script_state
         r_sc="$(get_remote_script_version)"
         r_xr="$(get_remote_xray_version)"
+        installed_digest=""
+        remote_digest=""
+        if [[ -f /usr/local/bin/freedom ]]; then
+          installed_digest="$(sha256sum /usr/local/bin/freedom 2>/dev/null | awk '{print $1}')"
+        fi
+        remote_digest="$(get_remote_script_digest || true)"
+        if [[ -z "$installed_digest" ]]; then
+          script_state="not installed at /usr/local/bin/freedom"
+        elif [[ -n "$remote_digest" && "$installed_digest" == "$remote_digest" ]]; then
+          script_state="installed content matches GitHub main"
+        elif [[ -n "$remote_digest" ]]; then
+          script_state="installed content differs from GitHub main; run option 1"
+        else
+          script_state="content comparison unavailable (official download failed)"
+        fi
         echo
         echo -e "Component           Installed version        GitHub latest"
         echo "─────────────────────────────────────────────────────────────────"
         printf "%-18s %-22s %-20s\n" "freedom.sh" "$SCRIPT_VERSION" "${r_sc:-Check failed}"
         printf "%-18s %-22s %-20s\n" "Xray-core" "$cur_core" "${r_xr:-Check failed}"
         echo "─────────────────────────────────────────────────────────────────"
+        info "freedom.sh: $script_state."
         echo && read -rp "Press Enter to continue..." _dummy
         ;;
       0) return 0 ;;
@@ -3530,25 +3586,29 @@ maybe_offer_bot_refresh() {
   local script_hash stamp="$CONFIG_DIR/.freedom-bot-sync-script.sha256"
   script_hash="$(sha256sum "$installed_script" | awk '{print $1}')"
   [[ "$script_hash" =~ ^[a-fA-F0-9]{64}$ ]] || return 1
-  if [[ "${1:-}" != "--force" && -r "$stamp" && "$(cat "$stamp")" == "$script_hash" ]]; then
+  if [[ -r "$stamp" && "$(cat "$stamp")" == "$script_hash" ]]; then
     return 0
   fi
   echo
   info "An installed Telegram Bot was detected. The latest binary can be synchronized from the official GitHub Release."
-  local ans
-  read -r -p "Synchronize the Telegram Bot update? [y/N] (Xray-core will not be changed): " ans || ans="N"
-  case "$ans" in
-    y|Y|yes|YES)
+  local ans="Y"
+  if ! read -r -p "Synchronize the Telegram Bot update? [Y/n] (Xray-core will not be changed): " ans; then
+    # Non-interactive invocation must never trigger an unattended update.
+    ans="N"
+  fi
+  case "${ans:-Y}" in
+    ""|y|Y|yes|YES)
       if ! install_or_update_freedom_bot; then
         warn "Bot update failed; the old binary was retained or rollback attempted. Retry from the manager."
         return 1
       fi
       ;;
-    *) info "Skipped Bot synchronization; use Online Updates to upgrade later.";;
+    *)
+      info "Skipped Bot synchronization; use Online Updates to upgrade later."
+      ;;
   esac
-  if ! (umask 077; printf "%s\n" "$script_hash" > "${stamp}.next" && mv -f "${stamp}.next" "$stamp"); then
+  record_bot_sync_stamp "$installed_script" || \
     warn "Unable to persist Bot update check marker; the installed version is unaffected."
-  fi
 }
 install_or_update_freedom_bot() {
   echo

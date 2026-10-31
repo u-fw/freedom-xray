@@ -184,6 +184,7 @@
   "update.row.commit": "%s：%s / 提交 %s\n",
   "update.row.upstream": "%s：%s / 上游 %s\n",
   "update.update.now": "立即更新：%s",
+  "update.update.both": "更新管理器 + Telegram Bot",
   "update.rollback": "↩ 回滚 Xray-core",
   "update.note": "\n选择管理脚本或 Bot 后将先校验再更新；核心升级和回滚需要单独确认。Bot 更新由独立健康检查验证。",
   "update.unauthorized": "该更新未在 VPS 上获得授权。",

@@ -191,7 +191,7 @@ sudo install -m 755 /tmp/freedom-latest.sh /usr/local/bin/freedom
 sudo freedom
 ```
 
-Use the update menu to update the manager and Bot together, or install/update the Bot separately. Remote `/update` requires `allow_updates`; Xray-core upgrade and rollback require separate authorization and confirmation. Bot binaries are downloaded from this repository's GitHub Release and verified with published SHA-256 checksums. An updated GitHub source tree does **not** mean the VPS is running the latest process.
+Use CLI update option 1 ("Update manager and installed Bot") to update the manager and an installed Bot in one action. The Telegram update center offers the same combined action plus separate component buttons; remote updates require `allow_updates`, and Xray-core upgrade and rollback require separate authorization and confirmation. Bot binaries are downloaded from this repository's GitHub Release and verified with published SHA-256 checksums. An updated GitHub source tree does **not** mean the VPS is running the latest process.
 
 ```bash
 sudo /usr/local/bin/freedom-bot -v

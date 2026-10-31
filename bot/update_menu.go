@@ -86,6 +86,7 @@ func (s *BotService) showUpdatesMenu(chatID int64,msgID int) {
   if comp=="script"&&len(remote)>12{out.WriteString(tr(s.cfg.Language,"update.row.commit",label,current,remote[:12]))}else{out.WriteString(tr(s.cfg.Language,"update.row.upstream",label,current,remote))}
   rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"update.update.now",label),"update_ask:"+comp)))
  }
+ rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"update.update.both"),"update_all")))
  if s.cfg.AllowCoreUpdates {
   rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"update.rollback"),"update_ask:core-rollback")))
  }
