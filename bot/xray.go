@@ -41,6 +41,7 @@ type InboundDetails struct {
 	XHTTPPath     string
 	XHTTPHost     string
 	XHTTPMode     string
+	XHTTPPaddingBytes string
 	ClientEncrypt string
 	Clients       []XrayClient
 }
@@ -328,6 +329,7 @@ func LoadXrayInbounds(configPath string) ([]InboundDetails, error) {
 				node.XHTTPPath, _ = xhttp["path"].(string)
 				node.XHTTPHost, _ = xhttp["host"].(string)
 				node.XHTTPMode, _ = xhttp["mode"].(string)
+				node.XHTTPPaddingBytes, _ = xhttp["xPaddingBytes"].(string)
 			}
 		}
 
@@ -388,6 +390,20 @@ func formatHost(host string) string {
 		return "[" + host + "]"
 	}
 	return host
+}
+
+// Xray's ECH client can query HTTPS RR for cloudflare-ech.com through this DoH.
+// Emit it only for TLS + XHTTP links, not for REALITY transports.
+const defaultXHTTPECHConfig = "cloudflare-ech.com+https://dns.alidns.com/dns-query"
+
+func (node *InboundDetails) xhttpShareExtra(mode string) string {
+ padding := node.XHTTPPaddingBytes
+ if padding == "" { padding = "100-1000" }
+ extra, _ := json.Marshal(struct {
+  Mode string `json:"mode"`
+  XPaddingBytes string `json:"xPaddingBytes"`
+ }{Mode:mode, XPaddingBytes:padding})
+ return string(extra)
 }
 
 // GenerateVlessURI builds a standard vless:// URI for the given client.
@@ -471,7 +487,7 @@ func (node *InboundDetails) GenerateVlessURI(client XrayClient, serverHost strin
 				mode = "auto"
 			}
 			q.Set("mode", mode)
-			q.Set("extra", `{"xPaddingBytes":"100-1000"}`)
+			q.Set("extra", node.xhttpShareExtra(mode))
 		}
 	case "tls":
 		// CDN-friendly: address the node through its certificate domain
@@ -484,6 +500,9 @@ func (node *InboundDetails) GenerateVlessURI(client XrayClient, serverHost strin
 		q.Set("fp", "chrome")
 		q.Set("sni", domain)
 		q.Set("alpn", "h2")
+		if node.Network == "xhttp" {
+			q.Set("ech", defaultXHTTPECHConfig)
+		}
 		if node.XHTTPHost != "" {
 			q.Set("host", node.XHTTPHost)
 		}
@@ -496,7 +515,7 @@ func (node *InboundDetails) GenerateVlessURI(client XrayClient, serverHost strin
 				mode = "auto"
 			}
 			q.Set("mode", mode)
-			q.Set("extra", `{"xPaddingBytes":"100-1000"}`)
+			q.Set("extra", node.xhttpShareExtra(mode))
 		}
 	default:
 		if node.SNI != "" {
