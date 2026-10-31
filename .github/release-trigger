@@ -1,5 +1,7 @@
-v1.3.5
-User traffic quota and expiry enforcement with automatic, reversible suspension,
-admin notifications, online diagnostics with one-click policy repair, extended
-node editing (listener port, XHTTP host and padding, REALITY short ID), and a
-read-only routing view.
+v1.3.6
+Online source-IP reliability and visibility: per-email fallback now triggers when
+the aggregate statistics RPC fails or returns malformed data, probes up to 128
+users, parses both Xray response shapes, and reads online session counts.
+Recent IP history is retained for seven days (64 addresses per user), the online
+view and user details show last-online timestamps, and /onlinedoctor reports
+per-user session and observed-IP counts with a loopback-relay hint.
