@@ -123,6 +123,14 @@ func TestDeleteUserAccountingWithoutTouchingInboundTotals(t *testing.T){
  if state.Users["bob"].TotalUp!=20||state.Inbounds["reality"].TotalUp!=30{t.Fatal("unrelated statistics changed")}
 }
 
+// The Telegram per-user reset must reject a name that is not a valid managed
+// user before it touches the lock or the ledger.
+func TestResetUserTrafficRejectsUnsafeName(t *testing.T){
+ if err:=resetUserTraffic(filepath.Join(t.TempDir(),"config.json"),"xray","127.0.0.1:10085","bad>>>name");err==nil{
+  t.Fatal("unsafe user name was accepted")
+ }
+}
+
 func TestReconcileOrphanedTrafficAndPreserveActiveUsers(t *testing.T) {
  config:=filepath.Join(t.TempDir(),"config.json")
  raw:=`{"inbounds":[{"tag":"reality","protocol":"vless","settings":{"clients":[{"email":"alice","id":"99999999-9999-4999-8999-999999999999"}]}}]}`

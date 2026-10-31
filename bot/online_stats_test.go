@@ -49,6 +49,31 @@ func TestOnlineCardKeepsUserWithoutObservedIP(t *testing.T){
  }
 }
 
+// REALITY sessions often close between two polls. A counter increase must
+// still be recorded as last-online activity, and the card must say so without
+// claiming a source IP.
+func TestTrafficIncreaseMarksActivityWithoutOnlineIP(t *testing.T){
+ now:=time.Now()
+ state:=trafficStore{
+  Users:map[string]trafficCounter{"reality-user":{TotalUp:10,TotalDown:20}},
+  LastOnline:map[string]int64{},LastActive:map[string]int64{},
+  OnlineIPs:map[string][]onlineClientIP{},LiveIPs:map[string][]onlineClientIP{},
+ }
+ previous:=map[string]trafficCounter{"reality-user":{TotalUp:10,TotalDown:20}}
+ if inferOnlineFromTraffic(&state,previous,now){t.Fatal("unchanged traffic must not mark activity")}
+ if state.LastOnline["reality-user"]!=0{t.Fatalf("unexpected last-online: %+v",state.LastOnline)}
+ state.Users["reality-user"]=trafficCounter{TotalUp:10,TotalDown:4096}
+ if !inferOnlineFromTraffic(&state,previous,now){t.Fatal("traffic increase must be persisted")}
+ if state.LastOnline["reality-user"]!=now.Unix(){t.Fatalf("last-online not updated: %+v",state.LastOnline)}
+ if state.LastActive["reality-user"]!=now.Unix(){t.Fatalf("last-active not updated: %+v",state.LastActive)}
+ body:=onlineCardText(state,now,"en")
+ if !strings.Contains(body,"Active traffic")||!strings.Contains(body,"Last online"){t.Fatalf("activity status missing: %s",body)}
+ // The activity window is bounded: stale activity falls back to the normal label.
+ if !strings.Contains(onlineCardText(state,now.Add(2*onlineActivityWindow),"en"),"Source IP not observed"){
+  t.Fatalf("stale activity must not claim live state: %s",onlineCardText(state,now.Add(2*onlineActivityWindow),"en"))
+ }
+}
+
 // Older Xray-core releases implement statsonlineiplist for one email but do
 // not support the aggregate -all flag. The Bot must keep collecting online IPs
 // through the per-email compatibility path instead of logging an unsupported

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -254,6 +255,10 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 		s.confirmNodeChange(cb,false)
 	case data == "menu_users":
 		s.sendUsersCard(chatID, msgID)
+	case strings.HasPrefix(data,"users_page:"):
+		if offset,err:=strconv.Atoi(strings.TrimPrefix(data,"users_page:"));err==nil {
+			s.sendUsersCardPage(chatID,msgID,offset)
+		}
 	case data == "menu_disabled_users":
 		s.sendDisabledUsersCard(chatID,msgID)
 	case strings.HasPrefix(data,"manage_enable:"):
@@ -273,6 +278,8 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 	case data == "menu_backup":
 		s.sendBackupFile(chatID)
 	case data == "menu_update":
+		s.runSafeUpdates(chatID,msgID,[]string{"script","bot"})
+	case data == "menu_update_center":
 		s.showUpdatesMenu(chatID,msgID)
 	case data == "menu_version":
 		s.sendVersionCard(chatID,msgID)
@@ -304,9 +311,14 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 		s.resolveUserChange(cb, true)
 	case strings.HasPrefix(data, "manage_cancel:"):
 		s.resolveUserChange(cb, false)
+	case strings.HasPrefix(data, "manage_traffic_confirm:"):
+		s.resolveUserTrafficReset(cb, true)
+	case strings.HasPrefix(data, "manage_traffic_cancel:"):
+		s.resolveUserTrafficReset(cb, false)
 	case strings.HasPrefix(data, "manage_user:") || strings.HasPrefix(data, "manage_rotate:") ||
 		strings.HasPrefix(data, "manage_delete:") || strings.HasPrefix(data, "manage_disable:") || strings.HasPrefix(data, "manage_node:") ||
-		strings.HasPrefix(data, "manage_quota:") || strings.HasPrefix(data, "manage_expiry:") || strings.HasPrefix(data, "manage_limitclear:"):
+		strings.HasPrefix(data, "manage_quota:") || strings.HasPrefix(data, "manage_expiry:") || strings.HasPrefix(data, "manage_limitclear:") ||
+		strings.HasPrefix(data, "manage_traffic:"):
 		s.handleManagedUserCallback(cb)
 	}
 }
@@ -357,12 +369,159 @@ func (s *BotService) handleUserLinksCallback(chatID int64, payload string) {
 	s.sendUserLinksAndQRs(chatID, payload)
 }
 
-// sendOrEdit edits an existing message if msgID > 0, otherwise sends a new one
+// Telegram rejects a message body longer than 4096 characters. Cards are built
+// from user lists, so a larger deployment can exceed that limit and lose the
+// whole page. Keep headroom for Markdown escapes and split at line boundaries;
+// continuation messages belong to the card and are replaced on refresh.
+const telegramChunkLimit = 3500
+const maxChunkAnchors = 512
+
+type chunkAnchor struct {
+	ChatID int64
+	MsgID  int64
+}
+
+var chunkTails = struct {
+	sync.Mutex
+	items map[chunkAnchor][]int
+	added map[chunkAnchor]time.Time
+}{items: map[chunkAnchor][]int{}, added: map[chunkAnchor]time.Time{}}
+
+func takeChunkTail(chatID int64, msgID int) []int {
+	key := chunkAnchor{ChatID: chatID, MsgID: int64(msgID)}
+	chunkTails.Lock()
+	defer chunkTails.Unlock()
+	ids := chunkTails.items[key]
+	if len(ids) > 0 {
+		delete(chunkTails.items, key)
+		delete(chunkTails.added, key)
+	}
+	return ids
+}
+
+func storeChunkTail(chatID int64, msgID int, ids []int) {
+	if len(ids) == 0 {
+		return
+	}
+	key := chunkAnchor{ChatID: chatID, MsgID: int64(msgID)}
+	chunkTails.Lock()
+	defer chunkTails.Unlock()
+	if len(chunkTails.items) >= maxChunkAnchors {
+		cutoff := time.Now().Add(-time.Hour)
+		for anchor, at := range chunkTails.added {
+			if at.Before(cutoff) {
+				delete(chunkTails.added, anchor)
+				delete(chunkTails.items, anchor)
+			}
+		}
+		if len(chunkTails.items) >= maxChunkAnchors {
+			chunkTails.items = map[chunkAnchor][]int{}
+			chunkTails.added = map[chunkAnchor]time.Time{}
+		}
+	}
+	chunkTails.items[key] = ids
+	chunkTails.added[key] = time.Now()
+}
+
+// splitTelegramText cuts text into pieces of at most limit bytes, preferring
+// newline boundaries so inline Markdown entities stay intact. A single line
+// longer than the limit is hard-split on a UTF-8 boundary.
+func splitTelegramText(text string, limit int) []string {
+	if limit < 64 {
+		limit = 64
+	}
+	if len(text) <= limit {
+		return []string{text}
+	}
+	chunks := make([]string, 0, len(text)/limit+1)
+	var current strings.Builder
+	flush := func() {
+		if current.Len() > 0 {
+			chunks = append(chunks, current.String())
+			current.Reset()
+		}
+	}
+	for _, line := range strings.SplitAfter(text, "\n") {
+		if current.Len() > 0 && current.Len()+len(line) > limit {
+			flush()
+		}
+		for len(line) > limit {
+			cut := limit
+			for cut > 0 && !utf8.RuneStart(line[cut]) {
+				cut--
+			}
+			if cut == 0 {
+				cut = limit
+			}
+			chunks = append(chunks, line[:cut])
+			line = line[cut:]
+		}
+		current.WriteString(line)
+		if current.Len() >= limit {
+			flush()
+		}
+	}
+	flush()
+	return chunks
+}
+
+func (s *BotService) deleteChunkTail(chatID int64, msgID int) {
+	for _, id := range takeChunkTail(chatID, msgID) {
+		if _, err := s.bot.Send(tgbotapi.NewDeleteMessage(chatID, id)); err != nil {
+			log.Printf("[Bot] delete continuation message failed: %v", err)
+		}
+	}
+}
+
+// sendChunkTail delivers the parts after the anchor. The anchor keeps the
+// keyboard so a refresh edits the same card and replaces these messages.
+func (s *BotService) sendChunkTail(chatID int64, anchor int, chunks []string) {
+	if len(chunks) == 0 {
+		return
+	}
+	ids := make([]int, 0, len(chunks))
+	for _, chunk := range chunks {
+		msg := tgbotapi.NewMessage(chatID, chunk)
+		msg.ParseMode = "Markdown"
+		sent, err := s.bot.Send(msg)
+		if err != nil {
+			plain := tgbotapi.NewMessage(chatID, chunk)
+			if sent, err = s.bot.Send(plain); err != nil {
+				log.Printf("[Bot] send continuation failed: %v", err)
+				continue
+			}
+		}
+		ids = append(ids, sent.MessageID)
+	}
+	storeChunkTail(chatID, anchor, ids)
+}
+
+// sendTextChunks sends a long, button-less message such as the periodic report.
+func (s *BotService) sendTextChunks(chatID int64, text string) {
+	for _, chunk := range splitTelegramText(text, telegramChunkLimit) {
+		msg := tgbotapi.NewMessage(chatID, chunk)
+		msg.ParseMode = "Markdown"
+		if _, err := s.bot.Send(msg); err == nil {
+			continue
+		}
+		plain := tgbotapi.NewMessage(chatID, chunk)
+		if _, err := s.bot.Send(plain); err != nil {
+			log.Printf("[Bot] send message chunk failed: %v", err)
+		}
+	}
+}
+
+// sendOrEdit edits an existing message if msgID > 0, otherwise sends a new one.
+// Bodies longer than one Telegram message are split; the first part stays in
+// the edited/sent message and the remainder are tracked continuations.
 func (s *BotService) sendOrEdit(chatID int64, msgID int, text string, markup tgbotapi.InlineKeyboardMarkup) {
+	chunks := splitTelegramText(text, telegramChunkLimit)
 	if msgID > 0 {
-		edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, msgID, text, markup)
+		edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, msgID, chunks[0], markup)
 		edit.ParseMode = "Markdown"
 		if _, err := s.bot.Send(edit); err == nil {
+			s.deleteChunkTail(chatID, msgID)
+			s.sendChunkTail(chatID, msgID, chunks[1:])
 			return
 		} else if strings.Contains(err.Error(), "message is not modified") {
 			// User pressed the same refresh button twice; the card is already
@@ -374,30 +533,32 @@ func (s *BotService) sendOrEdit(chatID int64, msgID int, text string, markup tgb
 
 		// Malformed Markdown must not duplicate the card; retry the same
 		// message as plain text before falling back to a new message.
-		plainEdit := tgbotapi.NewEditMessageTextAndMarkup(chatID, msgID, text, markup)
+		plainEdit := tgbotapi.NewEditMessageTextAndMarkup(chatID, msgID, chunks[0], markup)
 		if _, err := s.bot.Send(plainEdit); err == nil {
+			s.deleteChunkTail(chatID, msgID)
+			s.sendChunkTail(chatID, msgID, chunks[1:])
 			return
 		} else {
 			log.Printf("[Bot] plain-text edit failed: %v", err)
 		}
 	}
 
-	msg := tgbotapi.NewMessage(chatID, text)
+	msg := tgbotapi.NewMessage(chatID, chunks[0])
 	msg.ParseMode = "Markdown"
 	msg.ReplyMarkup = markup
-	if _, err := s.bot.Send(msg); err == nil {
-		return
-	} else {
+	sent, err := s.bot.Send(msg)
+	if err != nil {
 		log.Printf("[Bot] send message failed: %v", err)
+		// A malformed Markdown entity must not swallow the whole card; resend
+		// as plain text without parse mode.
+		plain := tgbotapi.NewMessage(chatID, chunks[0])
+		plain.ReplyMarkup = markup
+		if sent, err = s.bot.Send(plain); err != nil {
+			log.Printf("[Bot] plain-text fallback failed: %v", err)
+			return
+		}
 	}
-
-	// A malformed Markdown entity must not swallow the whole card; resend as
-	// plain text without parse mode.
-	plain := tgbotapi.NewMessage(chatID, text)
-	plain.ReplyMarkup = markup
-	if _, err := s.bot.Send(plain); err != nil {
-		log.Printf("[Bot] plain-text fallback failed: %v", err)
-	}
+	s.sendChunkTail(chatID, sent.MessageID, chunks[1:])
 }
 
 func (s *BotService) sendMainMenu(chatID int64,msgID int) {
@@ -586,6 +747,14 @@ func (s *BotService) sendNodesCard(chatID int64, msgID int) {
 }
 
 func (s *BotService) sendUsersCard(chatID int64, msgID int) {
+	s.sendUsersCardPage(chatID, msgID, 0)
+}
+
+// usersPerPage keeps the button count under Telegram's 100-button limit even
+// with two buttons per user.
+const usersPerPage = 20
+
+func (s *BotService) sendUsersCardPage(chatID int64, msgID, offset int) {
 	_, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if err != nil {
 		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language,"users.failure",mdEsc(err.Error())), s.backToMainMarkup())
@@ -595,8 +764,14 @@ func (s *BotService) sendUsersCard(chatID int64, msgID int) {
 	emails,dirErr := allDirectoryNames(s.cfg.XrayConfigPath)
 	if dirErr!=nil {s.sendAlert(chatID,tr(s.cfg.Language,"users.directoryerror",dirErr.Error()));return}
 
+	total:=len(emails)
+	if offset<0 {offset=0}
+	if total==0 {offset=0} else if offset>=total {offset=((total-1)/usersPerPage)*usersPerPage}
+	end:=offset+usersPerPage
+	if end>total {end=total}
+
 	var rows [][]tgbotapi.InlineKeyboardButton
-	for _, email := range emails {
+	for _, email := range emails[offset:end] {
 		key := userCallbackKey(email)
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(truncateLabel("👤 "+email, 40),"manage_user:"+key),
@@ -606,13 +781,28 @@ func (s *BotService) sendUsersCard(chatID int64, msgID int) {
 	rows = append([][]tgbotapi.InlineKeyboardButton{
 		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"users.add"),"manage_add"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"users.suspended"),"menu_disabled_users")),
 	}, rows...)
+	if total > usersPerPage {
+		var nav []tgbotapi.InlineKeyboardButton
+		if offset>0 {
+			previous:=offset-usersPerPage
+			if previous<0 {previous=0}
+			nav=append(nav,tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.prev"),"users_page:"+strconv.Itoa(previous)))
+		}
+		if end<total {
+			nav=append(nav,tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.next"),"users_page:"+strconv.Itoa(end)))
+		}
+		if len(nav)>0 {rows=append(rows,tgbotapi.NewInlineKeyboardRow(nav...))}
+	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.back"), "menu_main"),
 	))
 
 	text := tr(s.cfg.Language,"users.title")
-	if len(emails) == 0 {
+	if total == 0 {
 		text = tr(s.cfg.Language,"users.empty")
+	} else if total > usersPerPage {
+		pages:=(total+usersPerPage-1)/usersPerPage
+		text += tr(s.cfg.Language,"users.page",offset/usersPerPage+1,pages,total)
 	}
 
 	markup := tgbotapi.NewInlineKeyboardMarkup(rows...)
@@ -707,12 +897,9 @@ func (s *BotService) runPeriodicReport() {
 
 func (s *BotService) broadcastReport() {
 	stats, _ := GetSystemStats()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	_ = ctx
  state,err:=snapshotTraffic(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer)
  if err!=nil {state,_=loadTrafficStore(s.cfg.XrayConfigPath)}
  traffics:=storedUserTraffic(state)
-	cancel()
 
 	var sb strings.Builder
 	sb.WriteString(tr(s.cfg.Language,"report.title"))
@@ -735,11 +922,7 @@ func (s *BotService) broadcastReport() {
 
 	reportText := sb.String()
 	for _, adminID := range s.cfg.AdminIDs {
-		msg := tgbotapi.NewMessage(adminID, reportText)
-		msg.ParseMode = "Markdown"
-		if _, err := s.bot.Send(msg); err != nil {
-			log.Printf("[Bot] send periodic report to %d failed: %v", adminID, err)
-		}
+		s.sendTextChunks(adminID, reportText)
 	}
 }
 

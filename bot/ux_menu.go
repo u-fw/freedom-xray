@@ -26,7 +26,7 @@ func (s *BotService) sendVersionCard(chatID int64,msgID int){
  if s.cfg.AllowCoreUpdates&&s.cfg.AllowUpdates{body.WriteString(tr(s.cfg.Language,"version.core.allowed"))}else{body.WriteString(tr(s.cfg.Language,"version.core.disabled"))}
  body.WriteString(tr(s.cfg.Language,"version.note"))
  keyboard:=tgbotapi.NewInlineKeyboardMarkup(
-  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"version.updatecenter"),"menu_update")),
+  tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"version.updatecenter"),"menu_update_center")),
   tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"version.refresh"),"menu_version"),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"version.mainmenu"),"menu_main")),
  )
  s.sendOrEdit(chatID,msgID,body.String(),keyboard)

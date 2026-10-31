@@ -146,6 +146,8 @@ func (s *BotService) sendUserManageCard(chatID int64,msgID int,key string) {
   }else if len(ips)>0{
    content.WriteString(tr(s.cfg.Language,"account.online",len(ips)))
    for _,ip:=range ips{content.WriteString("  • "+ip.IP+"\n")}
+  }else if stamp:=state.LastActive[email];stamp>0&&time.Now().Unix()-stamp<=int64(onlineActivityWindow/time.Second){
+   content.WriteString(tr(s.cfg.Language,"account.active"))
   }else{content.WriteString(tr(s.cfg.Language,"account.offline"))}
   if stamp:=state.LastOnline[email];stamp>0 {
    content.WriteString(tr(s.cfg.Language,"account.last",time.Unix(stamp,0).Format("2006-01-02 15:04:05")))
@@ -207,6 +209,9 @@ func (s *BotService) sendUserManageCard(chatID int64,msgID int,key string) {
   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"account.limitsclear"),"manage_limitclear:"+key),
  ))
  rows=append(rows,tgbotapi.NewInlineKeyboardRow(
+  tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"account.trafficreset"),"manage_traffic:"+key),
+ ))
+ rows=append(rows,tgbotapi.NewInlineKeyboardRow(
   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"account.delete"),"manage_delete:"+key),
   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"account.list"),"menu_users"),
  ))
@@ -243,6 +248,8 @@ func (s *BotService) handleManagedUserCallback(cb *tgbotapi.CallbackQuery) {
   }else{
    s.beginUserLimitWizard(chatID,cb.From.ID,msgID,email,"expiry",tr(s.cfg.Language,"limit.expiryprompt",mdCode(expiryLabel(limit,s.cfg.Language))))
   }
+ case "manage_traffic":
+  s.askUserTrafficReset(cb)
  case "manage_node":
   if len(parts)!=4{return}
   email:=lookupManagedUserByKey(s.cfg.XrayConfigPath,parts[2])
@@ -255,6 +262,43 @@ func (s *BotService) handleManagedUserCallback(cb *tgbotapi.CallbackQuery) {
   }
   s.sendAlert(chatID,tr(s.cfg.Language,"manage.inboundmissing"))
  }
+}
+
+// askUserTrafficReset confirms a per-user traffic reset. The shell menu has
+// always supported this; without it a quota-suspended user could only be
+// restored after clearing the quota entirely.
+func (s *BotService) askUserTrafficReset(cb *tgbotapi.CallbackQuery) {
+ if cb.Message==nil{return}
+ chatID:=cb.Message.Chat.ID;msgID:=cb.Message.MessageID
+ key:=strings.TrimPrefix(cb.Data,"manage_traffic:")
+ email:=lookupManagedUserByKey(s.cfg.XrayConfigPath,key)
+ if email==""{s.sendAlert(chatID,tr(s.cfg.Language,"manage.usermissing"));return}
+ if !s.cfg.AllowMutations{s.sendAlert(chatID,tr(s.cfg.Language,"manage.disabled"));return}
+ markup:=tgbotapi.NewInlineKeyboardMarkup(
+  tgbotapi.NewInlineKeyboardRow(
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.confirm"),"manage_traffic_confirm:"+key),
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.cancel"),"manage_traffic_cancel:"+key),
+  ),
+ )
+ s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"traffic.userreset.confirm",mdCode(email)),markup)
+}
+
+func (s *BotService) resolveUserTrafficReset(cb *tgbotapi.CallbackQuery,confirm bool) {
+ if cb.Message==nil{return}
+ chatID:=cb.Message.Chat.ID;msgID:=cb.Message.MessageID
+ key:=strings.TrimPrefix(strings.TrimPrefix(cb.Data,"manage_traffic_confirm:"),"manage_traffic_cancel:")
+ email:=lookupManagedUserByKey(s.cfg.XrayConfigPath,key)
+ if email==""{s.sendAlert(chatID,tr(s.cfg.Language,"manage.usermissing"));return}
+ if !confirm{s.sendUserManageCard(chatID,msgID,key);return}
+ if !s.cfg.AllowMutations{s.sendAlert(chatID,tr(s.cfg.Language,"manage.disabled"));return}
+ if err:=resetUserTraffic(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer,email);err!=nil{
+  log.Printf("[Bot] user traffic reset for %s failed: %v",email,err)
+  s.sendAlert(chatID,tr(s.cfg.Language,"traffic.userreset.failed",err.Error()))
+  s.sendUserManageCard(chatID,msgID,key)
+  return
+ }
+ s.sendAlert(chatID,tr(s.cfg.Language,"traffic.userreset.done",email))
+ s.sendUserManageCard(chatID,msgID,key)
 }
 
 func (s *BotService) sendDisabledUsersCard(chatID int64,msgID int) {

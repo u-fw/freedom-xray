@@ -151,16 +151,13 @@ func changeUserSuspension(configPath,xrayBinary string,change UserChange) (strin
 }
 
 // Keep the existing management interface and route only suspend/resume to
-// the two-file transaction. No client UUID is exposed to untrusted callers.
+// the two-file transaction. Every other operation, including creating an
+// unbound user, goes through the directory transaction: it persists
+// freedom-users.json and rejects names held by suspended accounts. Routing
+// add through commitManagedConfig instead skipped the sidecar and failed with
+// "No configuration changes" whenever no inbound was selected.
 func changeManagedUser(configPath,xrayBinary string,change UserChange)(string,error){
  if change.Kind=="disable"||change.Kind=="enable"{return changeUserSuspension(configPath,xrayBinary,change)}
- if change.Kind=="add" {
-  return commitManagedConfig(configPath,xrayBinary,func(root map[string]any)(string,error){
-   store,_,err:=readSuspendedStore(configPath);if err!=nil{return "",err}
-   if _,exists:=store.Users[change.User];exists{return "",errors.New("This name is used by a suspended user; restore it or choose another name")}
-   return applyManagedUserChange(root,change)
-  })
- }
  return ChangeUserConfig(configPath,xrayBinary,change)
 }
 

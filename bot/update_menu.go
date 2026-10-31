@@ -47,7 +47,7 @@ func (s *BotService) runSafeUpdates(chatID int64,msgID int,components []string) 
   }
  }
  rows:=tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-  tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"update.opencenter"),"menu_update"),
+  tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"update.opencenter"),"menu_update_center"),
   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.main"),"menu_main")))
  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"update.result",strings.Join(results,"\n\n")),rows)
 }

@@ -33,6 +33,9 @@ type onlineUser struct {
 const maxOnlineIPsPerUser=64
 const onlineHistoryRetention=7*24*time.Hour
 const maxOnlineProbeEmails=128
+// Traffic seen within this window is treated as a live session for protocols
+// whose connections close between polls (REALITY).
+const onlineActivityWindow=60*time.Second
 
 func parseOnlineTimestamp(raw json.RawMessage, fallback int64) int64 {
  if len(raw)==0{return fallback}
@@ -387,4 +390,22 @@ func applyOnlineSnapshot(state *trafficStore,observed []onlineUser,now time.Time
 func recentOnline(state trafficStore,email string,now time.Time) (ips []onlineClientIP,known bool) {
  if state.OnlinePollAt<=0||now.Unix()-state.OnlinePollAt>20||state.OnlinePollAt>now.Unix()+5{return nil,false}
  return state.LiveIPs[email],true
+}
+
+// REALITY clients open short-lived TLS connections that frequently close
+// between two sampler ticks, so the core's live online map can be empty even
+// while the user is actively transferring. A counter increase proves activity
+// inside the sample window, so record it as a last-online observation even
+// when no source address could be captured.
+func inferOnlineFromTraffic(state *trafficStore,previous map[string]trafficCounter,now time.Time) bool {
+ ensureTrafficMaps(state)
+ changed:=false
+ stamp:=now.Unix()
+ for email,current:=range state.Users {
+  old:=previous[email]
+  if current.TotalUp+current.TotalDown<=old.TotalUp+old.TotalDown {continue}
+  if stamp>state.LastActive[email] {state.LastActive[email]=stamp;changed=true}
+  if stamp>state.LastOnline[email] {state.LastOnline[email]=stamp;changed=true}
+ }
+ return changed
 }

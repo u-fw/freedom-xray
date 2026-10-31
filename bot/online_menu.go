@@ -41,12 +41,16 @@ func onlineCardTextWithError(state trafficStore,now time.Time,lang string,queryE
   for _,name:=range names[:max]{
    current:=state.LiveIPs[name]
    live:=fresh&&len(current)>0
+   stamp:=state.LastOnline[name]
+   activeAt:=state.LastActive[name]
+   active:=activeAt>0&&now.Unix()-activeAt<=int64(onlineActivityWindow/time.Second)
    status:=tr(lang,"online.recent")
    ips:=state.OnlineIPs[name]
    if len(ips)==0 {status=tr(lang,"online.notObserved")}
+   if active&&!live {status=tr(lang,"online.active")}
    if live{status=tr(lang,"online.live");ips=current}
    out.WriteString("👤 *"+mdEsc(name)+"* — "+status+"\n")
-   if stamp:=state.LastOnline[name];stamp>0{
+   if stamp>0{
     out.WriteString(tr(lang,"online.lastSeen",time.Unix(stamp,0).Format("2006-01-02 15:04:05")))
    }else{
     out.WriteString(tr(lang,"online.lastNever"))

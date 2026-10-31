@@ -25,6 +25,7 @@ type trafficStore struct {
  Inbounds map[string]trafficCounter `json:"inbounds,omitempty"`
  UpdatedAt string `json:"updated_at,omitempty"`
  LastOnline map[string]int64 `json:"last_online,omitempty"`
+ LastActive map[string]int64 `json:"last_active,omitempty"`
  OnlineIPs map[string][]onlineClientIP `json:"online_ips,omitempty"`
  LiveIPs map[string][]onlineClientIP `json:"live_ips,omitempty"`
  OnlinePollAt int64 `json:"online_poll_at,omitempty"`
@@ -100,6 +101,8 @@ func snapshotTrafficLocked(configPath,xrayBinary,statsServer string) (trafficSto
  }
  epoch:=after
  if epoch==""{epoch=before}
+ previous:=make(map[string]trafficCounter,len(state.Users))
+ for name,counter:=range state.Users{previous[name]=counter}
  changed:=applyTrafficSnapshot(&state,users,inbounds,epoch)
  // Collect online IPs independently of traffic accounting. Unsupported
  // APIs must not stop the durable traffic sampler.
@@ -110,6 +113,7 @@ func snapshotTrafficLocked(configPath,xrayBinary,statsServer string) (trafficSto
  }else if !isOnlineUnsupported(onlineErr){
   log.Printf("[Online] optional poll failed: %v",onlineErr)
  }
+ if inferOnlineFromTraffic(&state,previous,time.Now()){changed=true}
  if changed {
   state.UpdatedAt=time.Now().UTC().Format(time.RFC3339)
   if err=saveTrafficStore(configPath,state);err!=nil{return state,fmt.Errorf("Failed to persist traffic counters: %w",err)}
@@ -178,6 +182,7 @@ func discardTrafficUser(state *trafficStore,name string) bool {
  changed:=false
  if _,ok:=state.Users[name];ok{delete(state.Users,name);changed=true}
  if _,ok:=state.LastOnline[name];ok{delete(state.LastOnline,name);changed=true}
+ if _,ok:=state.LastActive[name];ok{delete(state.LastActive,name);changed=true}
  if _,ok:=state.OnlineIPs[name];ok{delete(state.OnlineIPs,name);changed=true}
  if _,ok:=state.LiveIPs[name];ok{delete(state.LiveIPs,name);changed=true}
  return changed
@@ -203,6 +208,7 @@ func reconcileTrafficUsersLocked(configPath string,state *trafficStore)(bool,err
  for name:=range state.LiveIPs {if !allowed[name]&&discardTrafficUser(state,name){changed=true}}
  for name:=range state.OnlineIPs {if !allowed[name]&&discardTrafficUser(state,name){changed=true}}
  for name:=range state.LastOnline {if !allowed[name]&&discardTrafficUser(state,name){changed=true}}
+ for name:=range state.LastActive {if !allowed[name]&&discardTrafficUser(state,name){changed=true}}
  return changed,nil
 }
 
@@ -256,6 +262,7 @@ func renameTrafficStoreLocked(configPath,oldName,newName string)error{
  state.Users[newName]=item
  delete(state.Users,oldName)
  if at,ok:=state.LastOnline[oldName];ok{state.LastOnline[newName]=at;delete(state.LastOnline,oldName)}
+ if at,ok:=state.LastActive[oldName];ok{state.LastActive[newName]=at;delete(state.LastActive,oldName)}
  if ips,ok:=state.OnlineIPs[oldName];ok{state.OnlineIPs[newName]=ips;delete(state.OnlineIPs,oldName)}
  if ips,ok:=state.LiveIPs[oldName];ok{state.LiveIPs[newName]=ips;delete(state.LiveIPs,oldName)}
  return saveTrafficStore(configPath,state)
@@ -278,6 +285,21 @@ func resetTrafficUserLocked(configPath,name string)error {
  state,err:=loadTrafficStore(configPath);if err!=nil{return err}
  state.Users[name]=trafficCounter{}
  return saveTrafficStore(configPath,state)
+}
+
+// resetUserTraffic clears the live Xray counter and then the persisted ledger
+// entry for one user. The runtime reset must succeed first: zeroing only the
+// ledger would add the still-live counter back on the next sample.
+func resetUserTraffic(configPath,xrayBinary,statsServer,email string)error{
+ if !managedUserName.MatchString(email){return errors.New("Invalid user identifier")}
+ lock,err:=acquireConfigLock(configPath,10*time.Second)
+ if err!=nil{return err}
+ defer releaseConfigLock(lock)
+ ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second)
+ defer cancel()
+ out,err:=exec.CommandContext(ctx,xrayBinary,"api","statsquery","--server="+statsServer,"-pattern=user>>>"+email+">>>","-reset=true").CombinedOutput()
+ if err!=nil{return fmt.Errorf("Xray counter reset failed: %w: %s",err,strings.TrimSpace(string(out)))}
+ return resetTrafficUserLocked(configPath,email)
 }
 
 func resetTrafficAllUsersLocked(configPath string)error {

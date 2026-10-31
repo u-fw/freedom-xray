@@ -19,7 +19,7 @@ func trafficDBPath(configPath string) string {
  return filepath.Join(filepath.Dir(configPath), "freedom-stats.db")
 }
 func readLegacyTraffic(configPath string) (trafficStore, error) {
- state:=trafficStore{Users:map[string]trafficCounter{},Inbounds:map[string]trafficCounter{},LastOnline:map[string]int64{},OnlineIPs:map[string][]onlineClientIP{},LiveIPs:map[string][]onlineClientIP{}}
+ state:=trafficStore{Users:map[string]trafficCounter{},Inbounds:map[string]trafficCounter{},LastOnline:map[string]int64{},LastActive:map[string]int64{},OnlineIPs:map[string][]onlineClientIP{},LiveIPs:map[string][]onlineClientIP{}}
  b,err:=os.ReadFile(trafficStorePath(configPath))
  if errors.Is(err,os.ErrNotExist) {return state,nil}
  if err!=nil{return state,err}
@@ -42,6 +42,7 @@ func ensureTrafficMaps(state *trafficStore) {
  if state.Users==nil {state.Users=map[string]trafficCounter{}}
  if state.Inbounds==nil {state.Inbounds=map[string]trafficCounter{}}
  if state.LastOnline==nil {state.LastOnline=map[string]int64{}}
+ if state.LastActive==nil {state.LastActive=map[string]int64{}}
  if state.OnlineIPs==nil {state.OnlineIPs=map[string][]onlineClientIP{}}
  if state.LiveIPs==nil {state.LiveIPs=map[string][]onlineClientIP{}}
 }
@@ -58,6 +59,7 @@ func openTrafficDB(configPath string) (*sql.DB,error) {
   "PRAGMA synchronous=FULL",
   "CREATE TABLE IF NOT EXISTS counters (kind TEXT NOT NULL, name TEXT NOT NULL, total_up INTEGER NOT NULL, total_down INTEGER NOT NULL, last_up INTEGER NOT NULL, last_down INTEGER NOT NULL, epoch TEXT NOT NULL DEFAULT '', PRIMARY KEY(kind,name))",
   "CREATE TABLE IF NOT EXISTS last_online (email TEXT PRIMARY KEY, at INTEGER NOT NULL)",
+  "CREATE TABLE IF NOT EXISTS last_active (email TEXT PRIMARY KEY, at INTEGER NOT NULL)",
   "CREATE TABLE IF NOT EXISTS live_online (email TEXT NOT NULL, ip TEXT NOT NULL, last_seen INTEGER NOT NULL, PRIMARY KEY(email,ip))",
   "CREATE TABLE IF NOT EXISTS online_ips (email TEXT NOT NULL, ip TEXT NOT NULL, last_seen INTEGER NOT NULL, PRIMARY KEY(email,ip))",
   "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
@@ -93,6 +95,11 @@ func writeTrafficTx(tx *sql.Tx, state trafficStore, migrate bool) error {
  for name,at:=range state.LastOnline {
   statement:="INSERT INTO last_online(email,at) VALUES(?,?)"
   if migrate {statement="INSERT OR IGNORE INTO last_online(email,at) VALUES(?,?)"}
+  if _,err:=tx.Exec(statement,name,at);err!=nil{return err}
+ }
+ for name,at:=range state.LastActive {
+  statement:="INSERT INTO last_active(email,at) VALUES(?,?)"
+  if migrate {statement="INSERT OR IGNORE INTO last_active(email,at) VALUES(?,?)"}
   if _,err:=tx.Exec(statement,name,at);err!=nil{return err}
  }
  for name,ips:=range state.OnlineIPs {
@@ -134,6 +141,11 @@ func loadTrafficStore(configPath string) (trafficStore,error) {
  for online.Next(){var name string;var at int64;if err=online.Scan(&name,&at);err!=nil{break};state.LastOnline[name]=at}
  if e:=online.Err();err==nil{err=e}
  online.Close();if err!=nil{return state,err}
+ active,err:=db.Query("SELECT email,at FROM last_active")
+ if err!=nil{return state,err}
+ for active.Next(){var name string;var at int64;if err=active.Scan(&name,&at);err!=nil{break};state.LastActive[name]=at}
+ if e:=active.Err();err==nil{err=e}
+ active.Close();if err!=nil{return state,err}
  ips,err:=db.Query("SELECT email,ip,last_seen FROM online_ips")
  if err!=nil{return state,err}
  for ips.Next(){var name,ip string;var at int64;if err=ips.Scan(&name,&ip,&at);err!=nil{break};state.OnlineIPs[name]=append(state.OnlineIPs[name],onlineClientIP{IP:ip,LastSeen:at})}
@@ -152,7 +164,7 @@ func saveTrafficStore(configPath string,state trafficStore) error {
  db,err:=openTrafficDB(configPath);if err!=nil{return err}
  defer db.Close()
  tx,err:=db.Begin();if err!=nil{return err}
- for _,query:=range []string{"DELETE FROM counters","DELETE FROM last_online","DELETE FROM online_ips","DELETE FROM live_online"} {
+ for _,query:=range []string{"DELETE FROM counters","DELETE FROM last_online","DELETE FROM last_active","DELETE FROM online_ips","DELETE FROM live_online"} {
   if _,err=tx.Exec(query);err!=nil{tx.Rollback();return err}
  }
  if err=writeTrafficTx(tx,state,false);err!=nil{tx.Rollback();return err}
