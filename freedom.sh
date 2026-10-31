@@ -2538,8 +2538,9 @@ list_and_show_nodes() {
 
       if [[ "$net" == "tcp" ]]; then
         flow="$(echo "$ib_json" | jq -r '.settings.clients[0].flow // ""')"
-        [[ -n "$flow" ]] || flow="xtls-rprx-vision"
-        link="vless://${uuid}@${host_for_link}:${port}?type=tcp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F&flow=${flow}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
+        local flow_param=""
+        [[ -n "$flow" ]] && flow_param="&flow=${flow}"
+        link="vless://${uuid}@${host_for_link}:${port}?type=tcp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
         echo "  - 伪装 SNI: ${sni} | shortId: ${sid} | 流控: ${flow}"
       elif [[ "$net" == "xhttp" ]]; then
         path="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.path // "/"')"
@@ -2621,8 +2622,9 @@ list_and_show_nodes() {
       fi
       flow="$(echo "$ib_json" | jq -r '.settings.clients[0].flow // empty')"
       if [[ "$net" == "tcp" ]]; then
-        [[ -n "$flow" ]] || flow="xtls-rprx-vision"
-        target_link="vless://${uuid}@${host_for_link}:${port}?type=tcp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F&flow=${flow}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
+        local flow_param=""
+        [[ -n "$flow" ]] && flow_param="&flow=${flow}"
+        target_link="vless://${uuid}@${host_for_link}:${port}?type=tcp&security=reality&pbk=${pbk}${mldsa_pqv}&fp=chrome&sni=${sni}&sid=${sid}&spx=%2F${flow_param}&encryption=$(url_encode "$enc_param")#$(url_encode "$tag")"
       else
         path="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.path // "/"')"
         mode="$(echo "$ib_json" | jq -r '.streamSettings.xhttpSettings.mode // "auto"')"
