@@ -2118,55 +2118,6 @@ manage_single_user_interactive() {
   done
 }
 
-\n'
-  done < <(list_independent_user_names)
-  if [[ -z "$users" ]]; then warn "当前没有可管理的用户。"; return 0; fi
-
-  local entries=() email uuid idx=0
-  echo
-  echo -e "  ${BOLD}选择要管理的用户${NC}"
-  while IFS='|' read -r email uuid; do
-    [[ -z "$email" || -z "$uuid" ]] && continue
-    entries+=("${email}|${uuid}")
-    echo "  $((++idx))) ${email} | ${uuid}"
-  done <<< "$users"
-  echo "  0) 返回"
-
-  local pick
-  read -r -p "用户序号 [1-${idx}]: " pick || pick=""
-  [[ -z "$pick" || "$pick" == "0" ]] && return 0
-  if ! [[ "$pick" =~ ^[0-9]+$ ]] || ((10#$pick < 1 || 10#$pick > idx)); then
-    warn "无效用户序号。"
-    return 1
-  fi
-  local selected="${entries[$((10#$pick-1))]}"
-  local selected_email="${selected%%|*}" selected_uuid="${selected##*|}"
-
-  while true; do
-    echo
-    echo -e "  ${BOLD}用户: ${selected_email}${NC}"
-    echo "  UUID: ${selected_uuid}"
-    echo "  1) 查看该用户所有节点链接 / 二维码"
-    echo "  2) 修改该用户标识名称"
-    echo "  3) 为该用户重新生成 UUID（所有关联入站）"
-    echo "  0) 返回用户列表"
-    local action
-    read -r -p "请选择 [0-3]: " action || action="0"
-    case "$action" in
-      1) show_user_node_links "$selected_email" "$selected_uuid" ;;
-      2)
-        rename_managed_user "$selected_email" "$selected_uuid" || true
-        return 0
-        ;;
-      3)
-        rotate_managed_user_uuid "$selected_email" "$selected_uuid" || true
-        return 0
-        ;;
-      0|"") return 0 ;;
-      *) warn "无效选项。" ;;
-    esac
-  done
-}
 
 manage_user_node_binding_interactive() {
   ensure_user_manager_binary || return 1
