@@ -81,7 +81,7 @@ func TestGenerateVlessURITLS(t *testing.T) {
 		t.Errorf("host/sni = %q/%q", q.Get("host"), q.Get("sni"))
 	}
 	if q.Get("alpn") != "h2" { t.Errorf("alpn = %q", q.Get("alpn")) }
-	if q.Get("extra") != `{"mode":"packet-up","xPaddingBytes":"100-1000"}` { t.Errorf("extra = %q", q.Get("extra")) }
+	if q.Get("extra") != `{"xPaddingBytes":"100-1000"}` { t.Errorf("extra = %q", q.Get("extra")) }
  if q.Get("ech") != defaultXHTTPECHConfig { t.Errorf("ech = %q",q.Get("ech")) }
  if !strings.Contains(uri,"ech=cloudflare-ech.com%2Bhttps%3A%2F%2Fdns.alidns.com%2Fdns-query") {t.Errorf("ECH + / URI encoding incorrect: %s",uri)}
 	if q.Get("path") != "/stream" || q.Get("mode") != "packet-up" {
@@ -107,7 +107,7 @@ func TestGenerateVlessURICustomXHTTPPaddingAndRealityExclusion(t *testing.T) {
  uri := node.GenerateVlessURI(XrayClient{ID:"33333333-3333-3333-3333-333333333333"}, "203.0.113.2")
  u,err:=url.Parse(uri);if err!=nil {t.Fatal(err)}
  q:=u.Query()
- if q.Get("extra")!=`{"mode":"stream-up","xPaddingBytes":"200-900"}` {t.Errorf("wrong extra: %q",q.Get("extra"))}
+ if q.Get("extra")!=`{"xPaddingBytes":"200-900"}` {t.Errorf("wrong extra: %q",q.Get("extra"))}
  if q.Get("mode")!="stream-up" {t.Errorf("lost flat mode: %q",q.Get("mode"))}
  if q.Get("ech")!="" {t.Errorf("ECH must not be injected into REALITY: %q",q.Get("ech"))}
 }
