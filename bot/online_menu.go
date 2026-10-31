@@ -21,6 +21,7 @@ func onlineCardTextWithError(state trafficStore,now time.Time,lang string,queryE
  nameSet:=map[string]bool{}
  for name,ips:=range state.LiveIPs{if len(ips)>0{nameSet[name]=true}}
  for name,ips:=range state.OnlineIPs{if len(ips)>0{nameSet[name]=true}}
+ for name:=range state.Users{nameSet[name]=true}
  names:=make([]string,0,len(nameSet))
  for name:=range nameSet{names=append(names,name)}
  sort.Slice(names,func(i,j int)bool{
@@ -38,6 +39,7 @@ func onlineCardTextWithError(state trafficStore,now time.Time,lang string,queryE
    live:=fresh&&len(current)>0
    status:=tr(lang,"online.recent")
    ips:=state.OnlineIPs[name]
+   if len(ips)==0 {status=tr(lang,"online.notObserved")}
    if live{status=tr(lang,"online.live");ips=current}
    out.WriteString("👤 *"+mdEsc(name)+"* — "+status+"\n")
    limit:=len(ips);if limit>3{limit=3}

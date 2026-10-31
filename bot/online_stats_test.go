@@ -39,3 +39,11 @@ func TestOnlineCardShowsSourceAndCumulativeUserTraffic(t *testing.T){
  body=onlineCardText(state,now,"en")
  if !strings.Contains(body,"Recently observed (not online)"){t.Fatalf("recent IP was lost or mislabeled: %s",body)}
 }
+
+func TestOnlineCardKeepsUserWithoutObservedIP(t *testing.T){
+ state:=trafficStore{Users:map[string]trafficCounter{"reality-user":{TotalDown:1024}},OnlinePollAt:time.Now().Unix()}
+ message:=onlineCardText(state,time.Now(),"en")
+ if !strings.Contains(message,"reality-user")||!strings.Contains(message,"Source IP not observed")||!strings.Contains(message,"Total:"){
+  t.Fatalf("user with traffic must remain visible without a captured IP: %s",message)
+ }
+}
