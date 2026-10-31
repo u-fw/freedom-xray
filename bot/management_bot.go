@@ -46,7 +46,7 @@ func (s *BotService) offerUserChange(chatID,adminID int64,messageID int,change U
  case "rotate": description=fmt.Sprintf("Rotate %s's UUID; old links will stop working immediately",change.User)
  case "delete": description=fmt.Sprintf("Delete %s from every inbound; existing links will stop working",change.User)
  case "assign": description=fmt.Sprintf("Assign %s to inbound %s",change.User,change.Node)
- case "unassign": description=fmt.Sprintf("Unassign %s from inbound %s",change.Node,change.User)
+ case "unassign": description=fmt.Sprintf("Unassign %s from inbound %s",change.User,change.Node)
   case "disable": description=fmt.Sprintf("Suspend user %s; existing links stop working while the UUID is kept locally",change.User)
   case "enable": description=fmt.Sprintf("Restore user %s's original UUID and inbound assignments",change.User)
  default: s.sendAlert(chatID,"Unknown management operation");return

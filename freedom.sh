@@ -2270,8 +2270,7 @@ show_inbound_traffic() {
   fi
   local data
   if ! data="$("$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-traffic-read 2>/dev/null)"; then
-    warn "Unable to read the persistent traffic ledger. Check freedom-bot and freedom-stats."
-    return 1
+    data="$(cat "$STATS_STORE_PATH" 2>/dev/null || true)"
   fi
   if ! jq -e '(.inbounds // {}) | type == "object"' <<<"$data" >/dev/null 2>&1; then
     warn "The persistent traffic ledger is unreadable or has no inbound counters."
@@ -2300,6 +2299,43 @@ show_inbound_traffic() {
   done < <(jq -r '(.inbounds // {}) | to_entries | sort_by(.key)[] | [.key, (.value.total_up // 0), (.value.total_down // 0)] | @tsv' <<<"$data")
   echo "—————————————————————————————————————————————————————————————————————"
   info "Totals are persisted SQLite counters; user-level totals are shown in the user table."
+  echo && read -rp "Press Enter to continue..." _dummy
+}
+
+show_online_users() {
+  if [[ -z "${BIN:-}" || ! -x "$BIN" ]]; then
+    warn "Xray binary is unavailable; cannot query online sessions."
+    return 1
+  fi
+  local out
+  if ! out="$("$BIN" api statsonlineiplist --server=127.0.0.1:10085 -all 2>/dev/null)"; then
+    warn "Online-stats API is unavailable. Ensure Xray is running and policy.levels.0.statsUserOnline is true."
+    return 1
+  fi
+  if ! jq -e '.users | type == "array"' <<<"$out" >/dev/null 2>&1; then
+    # The API returns {} when no user currently has an online session.
+    info "No online users are currently reported by Xray."
+    return 0
+  fi
+  local count
+  count="$(jq '.users | length' <<<"$out")"
+  if (( count == 0 )); then
+    info "No online users are currently reported by Xray."
+    return 0
+  fi
+
+  echo
+  echo -e "  ${BOLD}Online users (live Xray sessions)${NC}"
+  echo "—————————————————————————————————————————————————————————————————————"
+  printf "%-24s %s\n" "User" "Source IPs"
+  echo "—————————————————————————————————————————————————————————————————————"
+  local email ips
+  while IFS=$'\t' read -r email ips; do
+    [[ -z "$email" ]] && continue
+    printf "%-24s %s\n" "$email" "${ips:-unknown}"
+  done < <(jq -r '.users[]? | [.email, (((.ips // []) | map(.ip) | join(", ")) // "")] | @tsv' <<<"$out")
+  echo "—————————————————————————————————————————————————————————————————————"
+  info "Live sessions only; recent-IP history and last-online data are maintained by freedom-bot's collector."
   echo && read -rp "Press Enter to continue..." _dummy
 }
 
@@ -2387,10 +2423,11 @@ user_management_menu() {
     echo -e "  ${GREEN}6.${NC} Manage a selected user (links / rename / UUID)"
     echo -e "  ${GREEN}7.${NC} Suspend / restore users (requires freedom-bot)"
     echo -e "  ${GREEN}8.${NC} View inbound traffic totals (requires freedom-bot)"
+    echo -e "  ${GREEN}9.${NC} View online users (live Xray sessions)"
     echo -e "  ${GREEN}0.${NC} Back to main menu"
     echo "—————————————————————————————————————————————————————————————————————————————————————"
 
-    read -r -p "Choose action [0-8]: " u_sel || u_sel="0"
+    read -r -p "Choose action [0-9]: " u_sel || u_sel="0"
     case "${u_sel:-0}" in
       1) show_user_node_links || true ;;
       2) add_new_user_interactive || true ;;
@@ -2400,6 +2437,7 @@ user_management_menu() {
       6) manage_single_user_interactive || true ;;
       7) toggle_user_status_interactive || true ;;
       8) show_inbound_traffic || true ;;
+      9) show_online_users || true ;;
       0) return 0 ;;
       *) warn "Invalid option; try again." ;;
     esac
@@ -2490,8 +2528,9 @@ upgrade_xray_core_official() {
 
   info "Running official Xray-core installer..."
   # Preserve the current binary so the terminal rollback path can restore it.
-  if [[ -n "${BIN:-}" && -x "$BIN" ]]; then
-    if ! cp -a "$BIN" "${BIN}.previous"; then
+  local old_bin="${BIN:-}"
+  if [[ -n "$old_bin" && -x "$old_bin" ]]; then
+    if ! cp -a "$old_bin" "${old_bin}.previous"; then
       warn "Unable to back up the current Xray binary; rollback may be unavailable after this upgrade."
     fi
   fi
@@ -2505,13 +2544,14 @@ upgrade_xray_core_official() {
     warn "Official Xray installer failed; check logs and network connectivity."
     return 1
   fi
-  local new_bin
-  new_bin="$(command -v xray || true)"
-  if [[ -z "$new_bin" || ! -x "$new_bin" ]]; then
+  BIN="$(command -v xray || true)"
+  if [[ -z "$BIN" || ! -x "$BIN" ]]; then
     warn "No Xray executable found after upgrade; inspect installation."
     return 1
   fi
-  BIN="$new_bin"
+  if [[ -n "$old_bin" && "$BIN" != "$old_bin" && -x "${old_bin}.previous" && ! -e "${BIN}.previous" ]]; then
+    cp -a "${old_bin}.previous" "${BIN}.previous" 2>/dev/null || warn "Unable to carry the previous-core backup to ${BIN}.previous."
+  fi
   CORE_VERSION_CACHE=""
   ensure_xray_systemd_service
   validate_and_restart_service
