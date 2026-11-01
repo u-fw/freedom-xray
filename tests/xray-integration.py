@@ -91,6 +91,7 @@ def main():
             "log": {"loglevel": "info"},
             "stats": {},
             "api": {"tag": "api", "services": ["StatsService", "RoutingService"]},
+            "dns": {"servers": ["localhost"], "hosts": {"freedom-integration.test": "127.0.0.1"}},
             "policy": {
                 "levels": {"0": {"statsUserUplink": True, "statsUserDownlink": True}},
                 "system": {"statsInboundUplink": True, "statsInboundDownlink": True},
@@ -102,7 +103,7 @@ def main():
                                           {"id": BOB_ID, "email": "bob+cmF3"}]),
                 inbound("cdn", cdn_port, [{"id": ALICE_ID, "email": "alice+Y2Ru"}]),
             ],
-            "outbounds": [{"protocol": "freedom", "tag": tag, "settings": {
+            "outbounds": [{"protocol": "freedom", "tag": tag, "settings": {"domainStrategy": "UseIP",
                 "finalRules": [{"action": "allow", "network": "tcp", "ip": ["127.0.0.1/32"]}],
             }} for tag in ("direct", "direct2")] + [{"protocol": "vless", "tag": "proxy", "settings": {
                 "address": "127.0.0.1", "port": raw_port, "id": ALICE_ID, "encryption": "none",
@@ -143,6 +144,11 @@ def main():
                     "--socks5-hostname", f"127.0.0.1:{socks_port}",
                     f"http://127.0.0.1:{httpd.server_port}/", "-o", os.devnull,
                 ], check=True)
+            subprocess.run([
+                "curl", "-fsS", "--max-time", "10", "--noproxy", "",
+                "--socks5-hostname", f"127.0.0.1:{alice_raw}",
+                f"http://freedom-integration.test:{httpd.server_port}/", "-o", os.devnull,
+            ], check=True)
 
             bot_config = directory / "bot.json"
             bot_config.write_text(json.dumps({
@@ -196,9 +202,15 @@ def main():
             assert outbound_preview["applied"] is False, outbound_preview
             assert (directory / "config.json").read_bytes() == original_config
             dns = agent("dns.view")
-            assert dns["configured"] is False and dns["servers"] == [], dns
+            assert dns["configured"] is True and dns["servers"][0]["address"] == "localhost", dns
             dns_preview = agent("dns.server.add", {"etag": dns["etag"], "value": "localhost"})
             assert dns_preview["applied"] is False, dns_preview
+            hosts = agent("dns.hosts")
+            assert hosts["hosts"][0]["name"] == "freedom-integration.test" and hosts["hosts"][0]["targets"] == ["127.0.0.1"] and hosts["etag"] == dns["etag"], hosts
+            host_preview = agent("dns.host.add", {
+                "etag": hosts["etag"], "name": "example.com", "targets": ["192.0.2.1"],
+            })
+            assert host_preview["applied"] is False, host_preview
             assert (directory / "config.json").read_bytes() == original_config
             assert {node["tag"] for node in agent("nodes.list")} == {"raw", "cdn"}
             users = agent("users.list")
@@ -222,7 +234,7 @@ def main():
             assert after["users"]["bob"]["total_down"] == before["users"]["bob"]["total_down"], after
             for binding in ("alice+cmF3", "alice+Y2Ru"):
                 assert after["bindings"][binding]["total_down"] == 0, after
-            print("Real Xray balancer routing and live status, per-binding traffic and isolated user reset passed")
+            print("Real Xray DNS host resolution, balancer routing and live status, per-binding traffic and isolated user reset passed")
         except Exception:
             for index, process in enumerate(processes):
                 process.terminate()

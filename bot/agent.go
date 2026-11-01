@@ -94,6 +94,11 @@ var agentOperations = []agentOperation{
 	{"outbounds.delete", true, true, false, "Delete an unreferenced non-default outbound"},
 	{"dns.inspect", false, false, false, "Read a DNS configuration summary"},
 	{"dns.view", false, false, false, "Read redacted DNS servers, switches and an edit reference"},
+	{"dns.hosts", false, false, false, "Read DNS host mappings and their edit reference"},
+	{"dns.host.add", true, true, false, "Add a DNS host mapping"},
+	{"dns.host.update", true, true, false, "Change the targets of a DNS host mapping"},
+	{"dns.host.rename", true, true, false, "Rename a DNS host match"},
+	{"dns.host.remove", true, true, false, "Remove a DNS host mapping"},
 	{"dns.server.add", true, true, false, "Add a DNS server"},
 	{"dns.server.update", true, true, false, "Change a DNS server address"},
 	{"dns.server.remove", true, true, false, "Remove an unreferenced DNS server"},
@@ -701,6 +706,14 @@ func executeAgentOperation(cfg *BotConfig, operation agentOperation, raw []byte,
 			return nil, err
 		}
 		return dnsView(root)
+	case "dns.hosts":
+		root, err := decodeBindingMigrationConfig(cfg.XrayConfigPath)
+		if err != nil {
+			return nil, err
+		}
+		return dnsHostsView(root)
+	case "dns.host.add", "dns.host.update", "dns.host.rename", "dns.host.remove":
+		return agentDNSHostChange(cfg, name, raw, apply)
 	case "dns.server.add", "dns.server.update", "dns.server.remove", "dns.server.move", "dns.strategy", "dns.flag":
 		return agentDNSChange(cfg, name, raw, apply)
 	case "outbounds.list", "dns.inspect":

@@ -317,6 +317,8 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 		s.handleOutboundCallback(cb)
 	case strings.HasPrefix(data,"dn:"):
 		s.handleDNSCallback(cb)
+	case strings.HasPrefix(data,"dh:"):
+		s.handleDNSHostCallback(cb)
 	case strings.HasPrefix(data, "routing_manage:"):
 		s.beginRoutingWizard(cb)
 	case strings.HasPrefix(data, "routing_confirm:"):

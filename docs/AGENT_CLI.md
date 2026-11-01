@@ -92,6 +92,10 @@ Most traffic reads initialize or migrate the local SQLite ledger on first use, w
 | `outbounds.delete` | `{"tag":"block2"}` | Delete an unreferenced non-default outbound. |
 | `dns.inspect`, `dns.get` | — | Summary or full native DNS object; `dns.get` requires sensitive opt-in. |
 | `dns.view` | — | Redacted server addresses, strategy, switches and a DNS configuration `etag`. |
+| `dns.hosts` | — | List static host matches, targets and the DNS edit reference. |
+| `dns.host.add`, `dns.host.update` | `{"etag":"<etag>","name":"full:example.com","targets":["192.0.2.1","2001:db8::1"]}` | Add or update one mapping. |
+| `dns.host.rename` | `{"etag":"<etag>","name":"full:example.com","new_name":"example.com"}` | Change a mapping's match while preserving its targets. |
+| `dns.host.remove` | `{"etag":"<etag>","name":"example.com"}` | Remove one mapping. |
 | `dns.server.add` | `{"etag":"<etag>","value":"1.1.1.1"}` | Append a DNS server; can create the DNS object if absent. |
 | `dns.server.update` | `{"etag":"<etag>","index":1,"value":"8.8.8.8"}` | Change one server address while retaining its other settings. |
 | `dns.server.move` | `{"etag":"<etag>","index":2,"value":"up"}` | Move a server one position `up` or `down`. |
@@ -115,7 +119,9 @@ For `routing.rule.*`, first call `routing.rules` and copy the selected rule's 1-
 
 `outbounds.inspect` returns the 1-based `index`, `etag` and `list_etag` from the full outbound objects. An address or port edit and a delete require the selected object's reference; creating or changing the default also checks the whole list. Supported endpoint editing covers the unique server in VLESS, VMess, Trojan, Shadowsocks, SOCKS and HTTP outbounds, including their flat and legacy single-server forms. Multi-server legacy layouts and other protocols remain accessible through native outbound JSON rather than the guided endpoint editor. Credentials and transport settings are not returned by `outbounds.inspect` and are preserved during endpoint edits.
 
-`dns.view` returns an `etag` based on the entire native DNS object, even though URL paths, queries and credentials are hidden. Supply the current reference to every guided DNS operation; updates, moves and deletions use a 1-based server index. Changing an object server's address preserves its per-server settings. Allowlisted flags are `disableCache`, `disableFallback`, `disableFallbackIfMatch`, `enableParallelQuery` and `useSystemHosts`; support depends on the installed Xray version. With a DNS script, server deletion and changes to built-in ordering, strategy or flags are refused because the script controls query behavior and may reference servers dynamically. Full native DNS configuration, including static hosts and advanced server settings, remains available through `dns.get` and `dns.put`.
+`dns.view` returns an `etag` based on the entire native DNS object, even though URL paths, queries and credentials are hidden. Supply the current reference to every guided DNS operation; updates, moves and deletions use a 1-based server index. Changing an object server's address preserves its per-server settings. Allowlisted flags are `disableCache`, `disableFallback`, `disableFallbackIfMatch`, `enableParallelQuery` and `useSystemHosts`; support depends on the installed Xray version. With a DNS script, server deletion and changes to built-in ordering, strategy or flags are refused because the script controls query behavior and may reference servers dynamically. Full native DNS configuration and advanced server settings remain available through `dns.get` and `dns.put`.
+
+`dns.hosts` uses the same `etag` as `dns.view`; any DNS change invalidates it. A mapping can target one IP, replacement domain or `#` response code, or multiple IPs. Xray checks static mappings before DNS server queries, even with a DNS script; traffic must actually use Xray's built-in DNS for these mappings to take effect. Matches and targets are operational data. Unsupported or malformed native mappings are hidden from the guided view and remain available through sensitive `dns.get` and native JSON.
 
 ## Node inputs
 

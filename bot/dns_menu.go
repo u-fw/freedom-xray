@@ -16,6 +16,7 @@ type dnsWizard struct {
 	Kind    string
 	Index   int
 	ETag    string
+	Host    string
 	Expires time.Time
 }
 
@@ -134,6 +135,7 @@ func (s *BotService) sendDNSPage(chatID int64, msgID, offset int, notice string)
 	if len(pages) > 0 {
 		rows = append(rows, pages)
 	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "dns.hosts.button"), "dh:page:0")))
 	if s.cfg.AllowMutations {
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "dns.add"), "dn:add:"+view.ETag)))
 		if view.Configured && !view.ScriptConfigured {
@@ -253,6 +255,9 @@ func (s *BotService) handleDNSInput(msg *tgbotapi.Message) bool {
 	state, ok := getDNSWizard(msg.Chat.ID, msg.From.ID)
 	if !ok {
 		return false
+	}
+	if strings.HasPrefix(state.Kind, "host-") {
+		return s.handleDNSHostInput(msg, state)
 	}
 	if msg.Command() == "cancel" {
 		clearDNSWizard(msg.Chat.ID)
