@@ -199,12 +199,16 @@ func (s *BotService) sendRoutingPage(chatID int64, msgID, offset int, notice str
 		end = len(records)
 	}
 	routing, _ := getMap(root["routing"])
+	script, _ := routing["script"].(string)
 	strategy, _ := routing["domainStrategy"].(string)
 	if strategy == "" {
 		strategy = "default"
 	}
 	var body strings.Builder
 	body.WriteString(tr(s.cfg.Language, "routing.guide.list", mdEsc(strategy), len(records)))
+	if script != "" {
+		body.WriteString(tr(s.cfg.Language, "routing.guide.script"))
+	}
 	if notice != "" {
 		body.WriteString("\n")
 		body.WriteString(mdEsc(notice))
@@ -238,11 +242,14 @@ func (s *BotService) sendRoutingPage(chatID int64, msgID, offset int, notice str
 	if len(pages) > 0 {
 		rows = append(rows, pages)
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.button"), "bl:page:0")))
-	if s.cfg.AllowMutations {
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "outbound.button"), "ob:page:0"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.button"), "bl:page:0")))
+	if s.cfg.AllowMutations && script == "" {
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.add"), "rt:add"),
 			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.advanced"), "rt:advanced")))
+	}
+	if s.cfg.AllowMutations && script != "" {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.advanced"), "rt:advanced")))
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.refresh"), fmt.Sprintf("rt:page:%d", offset)), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.home"), "menu_main")))
 	s.sendOrEdit(chatID, msgID, body.String(), tgbotapi.NewInlineKeyboardMarkup(rows...))
@@ -264,7 +271,9 @@ func (s *BotService) sendRoutingRuleDetail(chatID int64, msgID int, ref routingR
 	}
 	record := records[ref.Index-1]
 	rows := [][]tgbotapi.InlineKeyboardButton{}
-	if s.cfg.AllowMutations && !record.Protected {
+	routing, _ := getMap(root["routing"])
+	script, _ := routing["script"].(string)
+	if s.cfg.AllowMutations && !record.Protected && script == "" {
 		button := func(field string) tgbotapi.InlineKeyboardButton {
 			return tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.field."+field), fmt.Sprintf("rt:f:%s:%d:%s", field, ref.Index, ref.ETag))
 		}

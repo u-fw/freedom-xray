@@ -114,6 +114,7 @@ func inspectStatsSwitches(configPath string, server ...string) (statsSwitchRepor
 	}
 	hasAPIRoute := false
 	routing, _ := getMap(root["routing"])
+	if script, ok := routing["script"].(string); ok && script != "" { report.APIMissing = append(report.APIMissing, "routing script: internal API handling requires manual verification") }
 	if rules, ok := routing["rules"].([]any); ok {
 		if len(rules)>0 {rule,_:=getMap(rules[0]);hasAPIRoute=isInternalAPIRoute(rule,apiTag)}
 	}

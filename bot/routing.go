@@ -29,6 +29,7 @@ type routingSnapshot struct {
 	Outbounds      []string      `json:"outbounds"`
 	Balancers      []string      `json:"balancers"`
 	DomainStrategy string        `json:"domain_strategy"`
+	ScriptConfigured bool        `json:"script_configured"`
 }
 
 func stringList(value any) []string {
@@ -58,6 +59,7 @@ func LoadRouting(configPath string) (routingSnapshot, error) {
 	var root struct {
 		Routing struct {
 			DomainStrategy string           `json:"domainStrategy"`
+			Script         string           `json:"script"`
 			Rules          []map[string]any `json:"rules"`
 			Balancers      []map[string]any `json:"balancers"`
 		} `json:"routing"`
@@ -67,7 +69,7 @@ func LoadRouting(configPath string) (routingSnapshot, error) {
 		return routingSnapshot{}, err
 	}
 
-	snapshot := routingSnapshot{DomainStrategy: root.Routing.DomainStrategy}
+	snapshot := routingSnapshot{DomainStrategy: root.Routing.DomainStrategy, ScriptConfigured: root.Routing.Script != ""}
 	for _, outbound := range root.Outbounds {
 		if tag, ok := outbound["tag"].(string); ok && tag != "" {
 			snapshot.Outbounds = append(snapshot.Outbounds, tag)

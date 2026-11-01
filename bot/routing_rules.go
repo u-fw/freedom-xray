@@ -288,6 +288,11 @@ func validateRoutingField(field string, value any) error {
 }
 
 func applyRoutingRuleEdit(root map[string]any, change routingRuleEdit) (string, error) {
+	if routing, ok := getMap(root["routing"]); ok {
+		if script, ok := routing["script"].(string); ok && script != "" {
+			return "", errors.New("routing rules cannot be edited while a routing script is configured")
+		}
+	}
 	rules, err := routingRules(root)
 	if err != nil {
 		return "", err
@@ -402,6 +407,11 @@ func changeRoutingRule(cfg *BotConfig, change routingRuleEdit) (string, error) {
 }
 
 func applyGuidedRoutingAdd(root map[string]any, change routingChange) (string, error) {
+	if routing, ok := getMap(root["routing"]); ok {
+		if script, ok := routing["script"].(string); ok && script != "" {
+			return "", errors.New("routing rules cannot be edited while a routing script is configured")
+		}
+	}
 	if root["routing"] == nil {
 		root["routing"] = map[string]any{"rules": []any{}}
 	}

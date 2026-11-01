@@ -153,10 +153,11 @@ func (s *BotService) offerObservatoryChange(chatID, adminID int64, msgID int, ch
 	detail := tr(s.cfg.Language, "monitor.confirm.delete", mdEsc(change.Kind))
 	if change.Action == "field" {
 		value := change.Value
+		field := tr(s.cfg.Language, "monitor.edit_"+change.Field)
 		if change.Field == "url" {
 			value = tr(s.cfg.Language, "monitor.hidden_value")
 		}
-		detail = tr(s.cfg.Language, "monitor.confirm.field", mdEsc(change.Kind), mdEsc(change.Field), mdEsc(value))
+		detail = tr(s.cfg.Language, "monitor.confirm.field", mdEsc(change.Kind), mdEsc(field), mdEsc(value))
 	} else if change.Action != "delete" {
 		selectors := change.Selectors
 		if change.Action == "put" {

@@ -263,3 +263,19 @@ func TestReturningToMainCancelsRoutingInput(t *testing.T) {
 		t.Fatal("returning home retained a routing input")
 	}
 }
+
+func TestRoutingMenuExplainsScriptMode(t *testing.T) {
+	root := agentFixtureRoot(t)
+	root["routing"] = map[string]any{"script": "routing.lua"}
+	data, _ := json.Marshal(root)
+	h := newBindingMigrationHarness(t, string(data), false)
+	cfg := DefaultConfig()
+	cfg.XrayConfigPath, cfg.AllowMutations = h.config, true
+	s, capture := newCapturedRoutingBot(t, cfg)
+	s.sendRoutingPage(9475, 1, 0, "")
+	body, markup := capture.card(t)
+	callbacks := strings.Join(keyboardCallbacks(t, markup), " ")
+	if !strings.Contains(body, "routing script") || strings.Contains(callbacks, "rt:add") || !strings.Contains(callbacks, "ob:page:0") {
+		t.Fatalf("script mode not explained: %s %s", body, callbacks)
+	}
+}

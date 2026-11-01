@@ -123,6 +123,9 @@ func applyRoutingChange(root map[string]any, change routingChange) (string, erro
 	if !ok {
 		return "", errors.New("routing must be configured first")
 	}
+	if script, ok := routing["script"].(string); ok && script != "" {
+		return "", errors.New("routing rules cannot be edited while a routing script is configured")
+	}
 	rules, ok := routing["rules"].([]any)
 	if !ok && routing["rules"] != nil {
 		return "", errors.New("routing.rules must be an array")

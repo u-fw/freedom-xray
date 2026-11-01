@@ -103,25 +103,8 @@ func applyNetworkChange(root map[string]any, change networkChange) (string, erro
 		if index == 0 {
 			return "", errors.New("the default outbound cannot be deleted")
 		}
-		if routing, ok := getMap(root["routing"]); ok {
-			if balancers, ok := routing["balancers"].([]any); ok && len(balancers) > 0 {
-				return "", errors.New("cannot safely delete an outbound while routing balancers exist")
-			}
-		}
-		// Conservatively detect references in every remaining config section,
-		// including routing rules, proxySettings and dialerProxy.
-		for key, value := range root {
-			if key == "outbounds" {
-				continue
-			}
-			if containsNetworkReference(value, change.Tag) {
-				return "", errors.New("outbound is referenced by the Xray configuration")
-			}
-		}
-		for i, value := range outbounds {
-			if i != index && containsNetworkReference(value, change.Tag) {
-				return "", errors.New("outbound is referenced by another outbound")
-			}
+		if err := validateOutboundDeletion(root, outbounds, index, change.Tag); err != nil {
+			return "", err
 		}
 		root["outbounds"] = append(outbounds[:index:index], outbounds[index+1:]...)
 		return fmt.Sprintf("Deleted outbound %s", change.Tag), nil
@@ -140,6 +123,62 @@ func applyNetworkChange(root map[string]any, change networkChange) (string, erro
 	outbounds[index] = change.Value
 	root["outbounds"] = outbounds
 	return fmt.Sprintf("Updated outbound %s (%s)", change.Tag, protocol), nil
+}
+
+func validateOutboundDeletion(root map[string]any, outbounds []any, index int, tag string) error {
+	if index <= 0 {
+		return errors.New("the default outbound cannot be deleted")
+	}
+	if tag == networkAPITag(root) {
+		return errors.New("the internal API outbound is protected")
+	}
+	if routing, ok := getMap(root["routing"]); ok {
+		if script, ok := routing["script"].(string); ok && script != "" {
+			return errors.New("outbound references in a routing script cannot be checked")
+		}
+		if routing["balancers"] != nil {
+			balancers, ok := routing["balancers"].([]any)
+			if !ok {
+				return errors.New("invalid routing balancers")
+			}
+			for _, value := range balancers {
+				balancer, ok := getMap(value)
+				if !ok {
+					return errors.New("invalid routing balancer")
+				}
+				selectors := stringList(balancer["selector"])
+				if len(selectors) == 0 {
+					return errors.New("invalid balancer selector")
+				}
+				if raw, ok := balancer["selector"].([]any); ok && len(raw) != len(selectors) {
+					return errors.New("invalid balancer selector")
+				}
+				for _, selector := range selectors {
+					if tag != "" && strings.HasPrefix(tag, selector) {
+						return errors.New("outbound is selected by a balancer")
+					}
+				}
+				if tag != "" && balancer["fallbackTag"] == tag {
+					return errors.New("outbound is a balancer fallback")
+				}
+			}
+		}
+	}
+	if tag == "" {
+		return nil
+	} // An untagged non-default outbound cannot be named by other configuration.
+	// Conservatively scan every other section, including proxy chains.
+	for key, value := range root {
+		if key != "outbounds" && containsNetworkReference(value, tag) {
+			return errors.New("outbound is referenced by the Xray configuration")
+		}
+	}
+	for i, value := range outbounds {
+		if i != index && containsNetworkReference(value, tag) {
+			return errors.New("outbound is referenced by another outbound")
+		}
+	}
+	return nil
 }
 
 func changeNetworkConfig(cfg *BotConfig, change networkChange) (string, error) {

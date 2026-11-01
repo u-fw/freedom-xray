@@ -256,7 +256,16 @@ func (s *BotService) offerBalancerChange(chatID, adminID int64, msgID int, chang
 	case "put":
 		detail = tr(s.cfg.Language, "balancer.confirm.create", mdEsc(change.Tag), mdEsc(strings.Join(stringList(change.Balancer["selector"]), ", ")))
 	case "patch":
-		detail = tr(s.cfg.Language, "balancer.confirm.patch", mdEsc(change.Tag), mdEsc(change.Field), mdEsc(previewRoutingValue(change.Value)))
+		field := change.Field
+		switch field {
+		case "selector":
+			field = tr(s.cfg.Language, "balancer.edit.selectors")
+		case "strategy":
+			field = tr(s.cfg.Language, "balancer.edit.strategy")
+		case "fallbackTag":
+			field = tr(s.cfg.Language, "balancer.edit.fallback")
+		}
+		detail = tr(s.cfg.Language, "balancer.confirm.patch", mdEsc(change.Tag), mdEsc(field), mdEsc(previewRoutingValue(change.Value)))
 	case "delete":
 		detail = tr(s.cfg.Language, "balancer.confirm.delete", mdEsc(change.Tag))
 	}

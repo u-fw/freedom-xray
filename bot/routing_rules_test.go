@@ -269,3 +269,29 @@ func TestGuidedRoutingChangesAcceptedByRealXray(t *testing.T) {
 		t.Fatalf("Xray rejected guided routing: %v\n%s", err, output)
 	}
 }
+
+func TestRoutingScriptPreventsRuleAndStatsRepairChanges(t *testing.T) {
+	root := agentFixtureRoot(t)
+	root["routing"] = map[string]any{"script": "routing.lua"}
+	before, _ := json.Marshal(root)
+	change := routingChange{Kind: "add", RuleTag: "test", Rule: map[string]any{"ruleTag": "test", "domain": []any{"domain:example.com"}, "outboundTag": "direct"}}
+	if _, err := applyGuidedRoutingAdd(root, change); err == nil {
+		t.Fatal("accepted a rule while script controls routing")
+	}
+	if _, err := applyStatsInfrastructure(root, "127.0.0.1:10085"); err == nil {
+		t.Fatal("stats repair attempted to change a routing script")
+	}
+	after, _ := json.Marshal(root)
+	if !bytes.Equal(before, after) {
+		t.Fatal("stats repair partially changed script configuration")
+	}
+	path := writeRoutingConfig(t, string(before))
+	report, err := inspectStatsSwitches(path)
+	if err != nil || !strings.Contains(strings.Join(report.APIMissing, ","), "routing script") {
+		t.Fatalf("script warning missing: %+v %v", report, err)
+	}
+	snapshot, err := LoadRouting(path)
+	if err != nil || !snapshot.ScriptConfigured {
+		t.Fatalf("script not exposed to agent: %+v %v", snapshot, err)
+	}
+}

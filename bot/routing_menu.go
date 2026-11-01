@@ -25,6 +25,7 @@ type pendingRoutingChange struct {
 	RuleEdit      *routingRuleEdit
 	Balancer      *balancerChange
 	Observatory   *observatoryChange
+	Outbound      *outboundChange
 	ExpectedRules string
 	Expires       time.Time
 }
@@ -44,6 +45,7 @@ func clearRoutingWizard(chatID int64) {
 	routingWizards.Unlock()
 	clearGuidedRoutingWizard(chatID)
 	clearBalancerWizard(chatID)
+	clearOutboundWizard(chatID)
 }
 
 func (s *BotService) beginRoutingWizard(cb *tgbotapi.CallbackQuery) {
@@ -229,7 +231,9 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 		return
 	}
 	if !confirm {
-		if pending.Observatory != nil {
+		if pending.Outbound != nil {
+			s.sendOutboundPage(chatID, msgID, 0, "")
+		} else if pending.Observatory != nil {
 			s.sendObservatoryPage(chatID, msgID, "")
 		} else if pending.Balancer != nil {
 			if pending.Balancer.ETag != "" {
@@ -261,6 +265,8 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 			}
 			message = tr(s.cfg.Language, "serverhost.done", mdEsc(host))
 		}
+	} else if pending.Outbound != nil {
+		message, err = changeOutboundConfig(s.cfg, *pending.Outbound)
 	} else if pending.Observatory != nil {
 		message, err = changeObservatoryConfig(s.cfg, *pending.Observatory)
 	} else if pending.Balancer != nil {
@@ -284,6 +290,10 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 		message, err = changeRoutingConfig(s.cfg.XrayConfigPath, s.cfg.XrayBinPath, s.cfg.StatsAPIServer, pending.Change)
 	}
 	if err != nil {
+		if errors.Is(err, errOutboundChanged) {
+			s.sendOutboundPage(chatID, msgID, 0, tr(s.cfg.Language, "outbound.changed"))
+			return
+		}
 		if errors.Is(err, errObservatoryChanged) {
 			s.sendObservatoryPage(chatID, msgID, tr(s.cfg.Language, "monitor.changed"))
 			return
@@ -297,7 +307,9 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 			return
 		}
 		markup := s.backToMainMarkup()
-		if pending.Observatory != nil {
+		if pending.Outbound != nil {
+			markup = outboundBackMarkup(s.cfg.Language)
+		} else if pending.Observatory != nil {
 			markup = observatoryBackMarkup(s.cfg.Language)
 		} else if pending.Balancer != nil {
 			markup = balancerBackMarkup(s.cfg.Language)
@@ -308,7 +320,9 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 		return
 	}
 	markup := s.backToMainMarkup()
-	if pending.Observatory != nil {
+	if pending.Outbound != nil {
+		markup = outboundBackMarkup(s.cfg.Language)
+	} else if pending.Observatory != nil {
 		markup = observatoryBackMarkup(s.cfg.Language)
 	} else if pending.Balancer != nil {
 		markup = balancerBackMarkup(s.cfg.Language)

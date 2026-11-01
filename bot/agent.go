@@ -82,6 +82,11 @@ var agentOperations = []agentOperation{
 	{"observatories.patch", true, true, false, "Change a monitor's probe interval or URL"},
 	{"observatories.delete", true, true, false, "Delete an unused health-check monitor"},
 	{"outbounds.list", false, false, false, "List outbound tags and protocols without credentials"},
+	{"outbounds.inspect", false, false, false, "Read outbound summaries, server endpoints and edit references"},
+	{"outbounds.create", true, true, false, "Create a direct or blackhole outbound"},
+	{"outbounds.endpoint", true, true, false, "Change one proxy server address or port"},
+	{"outbounds.default", true, true, false, "Choose the default outbound"},
+	{"outbounds.remove", true, true, false, "Delete an outbound by its edit reference"},
 	{"outbounds.get", true, false, true, "Export one native outbound including possible credentials"},
 	{"outbounds.put", true, true, false, "Add or replace a native outbound"},
 	{"outbounds.delete", true, true, false, "Delete an unreferenced non-default outbound"},
@@ -647,6 +652,14 @@ func executeAgentOperation(cfg *BotConfig, operation agentOperation, raw []byte,
 		return observatoryRecords(root, includeSensitive)
 	case "observatories.put", "observatories.selectors", "observatories.patch", "observatories.delete":
 		return agentObservatoryChange(cfg, name, raw, apply)
+	case "outbounds.inspect":
+		root, err := decodeBindingMigrationConfig(cfg.XrayConfigPath)
+		if err != nil {
+			return nil, err
+		}
+		return outboundRecords(root)
+	case "outbounds.create", "outbounds.endpoint", "outbounds.default", "outbounds.remove":
+		return agentOutboundChange(cfg, name, raw, apply)
 	case "outbounds.list", "dns.inspect":
 		outbounds, dns, err := networkSummary(cfg.XrayConfigPath)
 		if err != nil {

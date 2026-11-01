@@ -104,7 +104,9 @@ def main():
             ],
             "outbounds": [{"protocol": "freedom", "tag": tag, "settings": {
                 "finalRules": [{"action": "allow", "network": "tcp", "ip": ["127.0.0.1/32"]}],
-            }} for tag in ("direct", "direct2")],
+            }} for tag in ("direct", "direct2")] + [{"protocol": "vless", "tag": "proxy", "settings": {
+                "address": "127.0.0.1", "port": raw_port, "id": ALICE_ID, "encryption": "none",
+            }}],
             "routing": {"rules": [{"type": "field", "inboundTag": ["api-internal"],
                                    "outboundTag": "api"},
                                   {"type": "field", "domain": ["domain:example.com"],
@@ -182,6 +184,14 @@ def main():
                 "field": "selector", "value": ["direct2"],
             })
             assert balance_preview["applied"] is False, balance_preview
+            assert (directory / "config.json").read_bytes() == original_config
+            outbounds = agent("outbounds.inspect")
+            proxy = next(outbound for outbound in outbounds if outbound["tag"] == "proxy")
+            assert proxy["endpoint"]["port"] == raw_port and ALICE_ID not in json.dumps(outbounds), outbounds
+            outbound_preview = agent("outbounds.endpoint", {
+                "index": proxy["index"], "etag": proxy["etag"], "field": "port", "value": "443",
+            })
+            assert outbound_preview["applied"] is False, outbound_preview
             assert (directory / "config.json").read_bytes() == original_config
             assert {node["tag"] for node in agent("nodes.list")} == {"raw", "cdn"}
             users = agent("users.list")

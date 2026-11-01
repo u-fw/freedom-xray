@@ -230,6 +230,60 @@ func agentObservatoryChange(cfg *BotConfig, operation string, raw []byte, apply 
 	return agentMessage(changeObservatoryConfig(cfg, change))
 }
 
+type agentOutboundEditInput struct {
+	Index    int    `json:"index,omitempty"`
+	ETag     string `json:"etag,omitempty"`
+	ListETag string `json:"list_etag,omitempty"`
+	Tag      string `json:"tag,omitempty"`
+	Protocol string `json:"protocol,omitempty"`
+	Field    string `json:"field,omitempty"`
+	Value    string `json:"value,omitempty"`
+}
+
+func agentOutboundChange(cfg *BotConfig, operation string, raw []byte, apply bool) (any, error) {
+	var input agentOutboundEditInput
+	if err := decodeAgentInput(raw, &input); err != nil {
+		return nil, err
+	}
+	change := outboundChange{Index: input.Index, ETag: input.ETag, ListETag: input.ListETag, Tag: input.Tag, Protocol: input.Protocol, Value: input.Value}
+	switch operation {
+	case "outbounds.create":
+		if input.Tag == "" || input.Protocol == "" || input.ListETag == "" || input.Index != 0 || input.ETag != "" || input.Field != "" || input.Value != "" {
+			return nil, errors.New("create requires tag, protocol and list_etag")
+		}
+		change.Kind = "create"
+	case "outbounds.endpoint":
+		if input.Index < 1 || input.ETag == "" || input.ListETag != "" || input.Tag != "" || input.Protocol != "" || input.Value == "" || (input.Field != "address" && input.Field != "port") {
+			return nil, errors.New("endpoint requires index, etag, field and value")
+		}
+		change.Kind = input.Field
+	case "outbounds.default":
+		if input.Index < 1 || input.ETag == "" || input.ListETag == "" || input.Tag != "" || input.Protocol != "" || input.Field != "" || input.Value != "" {
+			return nil, errors.New("default requires index, etag and list_etag")
+		}
+		change.Kind = "default"
+	case "outbounds.remove":
+		if input.Index < 1 || input.ETag == "" || input.ListETag != "" || input.Tag != "" || input.Protocol != "" || input.Field != "" || input.Value != "" {
+			return nil, errors.New("remove requires index and etag")
+		}
+		change.Kind = "delete"
+	default:
+		return nil, errors.New("unknown outbound operation")
+	}
+	if !apply {
+		root, err := decodeBindingMigrationConfig(cfg.XrayConfigPath)
+		if err != nil {
+			return nil, err
+		}
+		message, err := applyOutboundChange(root, change)
+		if err != nil {
+			return nil, err
+		}
+		return agentPreview(operation, message), nil
+	}
+	return agentMessage(changeOutboundConfig(cfg, change))
+}
+
 func agentNetworkChange(cfg *BotConfig, operation string, raw []byte, apply bool) (any, error) {
 	var input agentNetworkInput
 	if err := decodeAgentInput(raw, &input); err != nil {
