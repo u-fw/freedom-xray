@@ -6,8 +6,6 @@ import (
  "os"
  "sort"
  "strings"
-
- tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type routingRule struct {
@@ -89,20 +87,30 @@ func LoadRouting(configPath string) (routingSnapshot, error) {
 		item.InboundTags = stringList(rule["inboundTag"])
 		item.OutboundTag, _ = rule["outboundTag"].(string)
 		item.BalancerTag, _ = rule["balancerTag"].(string)
-		item.Domains = stringList(rule["domain"])
+		if domains, ok := rule["domains"]; ok && domains != nil {
+			item.Domains = stringList(domains)
+		} else {
+			item.Domains = stringList(rule["domain"])
+		}
 		item.IPs = stringList(rule["ip"])
-		item.Ports = stringList(rule["port"])
+		item.Ports = routingPortList(rule["port"])
 		item.Networks = stringList(rule["network"])
 		item.Protocols = stringList(rule["protocol"])
-		item.SourceIPs = stringList(rule["source"])
-		if len(item.SourceIPs) == 0 {
+		if sourceIP, ok := rule["sourceIP"]; ok && sourceIP != nil {
 			item.SourceIPs = stringList(rule["sourceIP"])
+		} else {
+			item.SourceIPs = stringList(rule["source"])
 		}
-		item.SourcePorts = stringList(rule["sourcePort"])
+		item.SourcePorts = routingPortList(rule["sourcePort"])
 		item.UserEmails = stringList(rule["user"])
 		snapshot.Rules = append(snapshot.Rules, item)
 	}
 	return snapshot, nil
+}
+
+func routingPortList(value any) []string {
+	if number, ok := value.(float64); ok { return []string{fmt.Sprint(number)} }
+	return stringList(value)
 }
 
 func joinOrEmpty(values []string,empty string) string {
@@ -142,25 +150,5 @@ func routingCardText(snapshot routingSnapshot,lang string) string {
 }
 
 func (s *BotService) sendRoutingCard(chatID int64, msgID int) {
-	snapshot, err := LoadRouting(s.cfg.XrayConfigPath)
-	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.error", mdEsc(err.Error())), s.backToMainMarkup())
-		return
-	}
-	rows := [][]tgbotapi.InlineKeyboardButton{}
-	if s.cfg.AllowMutations {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.edit.add"), "routing_manage:add"),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.edit.update"), "routing_manage:update"),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.edit.delete"), "routing_manage:delete")))
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "network.outbound.put"), "routing_manage:outbound_put"),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "network.outbound.delete"), "routing_manage:outbound_delete"),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "network.dns.put"), "routing_manage:dns_put")))
-	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.refresh"), "menu_routing"),
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.home"), "menu_main")))
-	markup := tgbotapi.NewInlineKeyboardMarkup(rows...)
-	s.sendOrEdit(chatID, msgID, routingCardText(snapshot, s.cfg.Language), markup)
+	s.sendRoutingPage(chatID,msgID,0,"")
 }

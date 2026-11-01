@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -16,12 +17,14 @@ type routingWizard struct {
 	Expires time.Time
 }
 type pendingRoutingChange struct {
-	ChatID  int64
-	AdminID int64
-	Change  routingChange
-	Network *networkChange
-	Host    *string
-	Expires time.Time
+	ChatID        int64
+	AdminID       int64
+	Change        routingChange
+	Network       *networkChange
+	Host          *string
+	RuleEdit      *routingRuleEdit
+	ExpectedRules string
+	Expires       time.Time
 }
 
 var routingWizards = struct {
@@ -37,6 +40,7 @@ func clearRoutingWizard(chatID int64) {
 	routingWizards.Lock()
 	delete(routingWizards.items, chatID)
 	routingWizards.Unlock()
+	clearGuidedRoutingWizard(chatID)
 }
 
 func (s *BotService) beginRoutingWizard(cb *tgbotapi.CallbackQuery) {
@@ -221,7 +225,13 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 		return
 	}
 	if !confirm {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.cancelled"), s.backToMainMarkup())
+		if pending.RuleEdit != nil {
+			s.sendRoutingRuleDetail(chatID, msgID, pending.RuleEdit.Ref)
+		} else if pending.ExpectedRules != "" {
+			s.sendRoutingPage(chatID, msgID, 0, "")
+		} else {
+			s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.cancelled"), s.backToMainMarkup())
+		}
 		return
 	}
 	if !s.cfg.AllowMutations {
@@ -239,14 +249,39 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 			}
 			message = tr(s.cfg.Language, "serverhost.done", mdEsc(host))
 		}
+	} else if pending.RuleEdit != nil {
+		message, err = changeRoutingRule(s.cfg, *pending.RuleEdit)
+	} else if pending.ExpectedRules != "" {
+		message, err = commitManagedConfig(s.cfg.XrayConfigPath, s.cfg.XrayBinPath, s.cfg.StatsAPIServer, func(root map[string]any) (string, error) {
+			current, e := routingListETag(root)
+			if e != nil {
+				return "", e
+			}
+			if current != pending.ExpectedRules {
+				return "", errRoutingRuleChanged
+			}
+			return applyGuidedRoutingAdd(root, pending.Change)
+		})
 	} else if pending.Network != nil {
 		message, err = changeNetworkConfig(s.cfg, *pending.Network)
 	} else {
 		message, err = changeRoutingConfig(s.cfg.XrayConfigPath, s.cfg.XrayBinPath, s.cfg.StatsAPIServer, pending.Change)
 	}
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.edit.failed", mdEsc(err.Error())), s.backToMainMarkup())
+		if errors.Is(err, errRoutingRuleChanged) {
+			s.sendRoutingPage(chatID, msgID, 0, tr(s.cfg.Language, "routing.guide.changed"))
+			return
+		}
+		markup := s.backToMainMarkup()
+		if pending.RuleEdit != nil || pending.ExpectedRules != "" {
+			markup = routingPageBackMarkup(s.cfg.Language)
+		}
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.edit.failed", mdEsc(err.Error())), markup)
 		return
 	}
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.edit.done", mdEsc(message)), s.backToMainMarkup())
+	markup := s.backToMainMarkup()
+	if pending.RuleEdit != nil || pending.ExpectedRules != "" {
+		markup = routingPageBackMarkup(s.cfg.Language)
+	}
+	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.edit.done", mdEsc(message)), markup)
 }

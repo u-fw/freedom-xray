@@ -187,6 +187,9 @@ func (s *BotService) handleMessage(msg *tgbotapi.Message) {
 	if s.handleUserLimitInput(msg) {
 		return
 	}
+	if s.handleGuidedRoutingInput(msg) {
+		return
+	}
 	if s.handleRoutingInput(msg) {
 		return
 	}
@@ -201,6 +204,7 @@ func (s *BotService) handleMessage(msg *tgbotapi.Message) {
 
 	switch cmd {
 	case "start", "menu":
+		clearOtherRoutingInputs(msg.Chat.ID)
 		s.registerAdminCommands(msg.Chat.ID)
 		s.sendMainMenu(msg.Chat.ID, 0)
 	case "status":
@@ -214,6 +218,7 @@ func (s *BotService) handleMessage(msg *tgbotapi.Message) {
 	case "stats", "switches":
 		s.sendStatsSwitches(msg.Chat.ID, 0)
 	case "routing":
+		clearOtherRoutingInputs(msg.Chat.ID)
 		s.sendRoutingCard(msg.Chat.ID, 0)
 	case "traffic", "usage":
 		s.sendTrafficCard(msg.Chat.ID, 0)
@@ -256,11 +261,15 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 	chatID := cb.Message.Chat.ID
 	msgID := cb.Message.MessageID
 	data := cb.Data
+	if data=="menu_main" || data=="menu_users" || data=="menu_nodes" || data=="menu_routing" || data=="menu_traffic" || data=="menu_online" || data=="menu_status" || data=="menu_tools" {
+		clearOtherRoutingInputs(chatID)
+	}
 
 	switch {
 	case data == "menu_main":
-		clearRoutingWizard(chatID)
 		s.sendMainMenu(chatID, msgID)
+	case data == "menu_tools":
+		s.sendToolsCard(chatID,msgID)
 	case data == "menu_status":
 		s.sendStatusCard(chatID, msgID)
 	case data == "service_ask:start":
@@ -288,8 +297,9 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 	case data == "stats_repair_confirm":
 		s.doStatsRepair(chatID, msgID)
 	case data == "menu_routing":
-		clearRoutingWizard(chatID)
 		s.sendRoutingCard(chatID, msgID)
+	case strings.HasPrefix(data,"rt:"):
+		s.handleGuidedRoutingCallback(cb)
 	case strings.HasPrefix(data, "routing_manage:"):
 		s.beginRoutingWizard(cb)
 	case strings.HasPrefix(data, "routing_confirm:"):
@@ -303,6 +313,10 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 	case data == "menu_nodes":
 		clearNodeCreateState(chatID)
 		s.sendNodesCard(chatID, msgID)
+	case strings.HasPrefix(data, "nodes_page:"):
+		if offset, err := strconv.Atoi(strings.TrimPrefix(data, "nodes_page:")); err == nil {
+			s.sendNodesCardPage(chatID, msgID, offset)
+		}
 	case data == "node_new_menu":
 		s.sendNodeTemplatePicker(chatID, msgID)
 	case strings.HasPrefix(data, "node_new:"):
@@ -317,7 +331,7 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 		s.confirmNodeDelete(cb)
 	case strings.HasPrefix(data, "node_delete:"):
 		s.showNodeDeleteConfirm(chatID, msgID, strings.TrimPrefix(data, "node_delete:"))
-	case strings.HasPrefix(data, "node_detail:") || strings.HasPrefix(data, "node_mode:") || strings.HasPrefix(data, "node_path:") || strings.HasPrefix(data, "node_public_port:") || strings.HasPrefix(data, "node_sni:") || strings.HasPrefix(data, "node_short_id:") || strings.HasPrefix(data, "node_xhttp_host:") || strings.HasPrefix(data, "node_xhttp_padding:") || strings.HasPrefix(data, "node_listen_port:") || strings.HasPrefix(data, "node_listen_address:") || strings.HasPrefix(data, "node_dest:") || strings.HasPrefix(data, "node_target:") || strings.HasPrefix(data, "node_reality_key:") || strings.HasPrefix(data, "node_mldsa:") || strings.HasPrefix(data, "node_decryption:") || strings.HasPrefix(data, "node_cert_pair:") || strings.HasPrefix(data, "node_alpn:"):
+	case strings.HasPrefix(data, "node_detail:") || strings.HasPrefix(data, "node_advanced:") || strings.HasPrefix(data, "node_basic:") || strings.HasPrefix(data, "node_mode:") || strings.HasPrefix(data, "node_path:") || strings.HasPrefix(data, "node_public_port:") || strings.HasPrefix(data, "node_sni:") || strings.HasPrefix(data, "node_short_id:") || strings.HasPrefix(data, "node_xhttp_host:") || strings.HasPrefix(data, "node_xhttp_padding:") || strings.HasPrefix(data, "node_listen_port:") || strings.HasPrefix(data, "node_listen_address:") || strings.HasPrefix(data, "node_dest:") || strings.HasPrefix(data, "node_target:") || strings.HasPrefix(data, "node_reality_key:") || strings.HasPrefix(data, "node_mldsa:") || strings.HasPrefix(data, "node_decryption:") || strings.HasPrefix(data, "node_cert_pair:") || strings.HasPrefix(data, "node_alpn:"):
 		s.handleNodeCallback(cb)
 	case strings.HasPrefix(data, "node_confirm:"):
 		s.confirmNodeChange(cb, true)
@@ -655,16 +669,7 @@ func (s *BotService) sendMainMenu(chatID int64, msgID int) {
 		updateState = tr(s.cfg.Language, "menu.updates.enabled")
 	}
 	content := fmt.Sprintf(tr(s.cfg.Language, "menu.dashboard"), mdCode(hostname), state, mdCode(status), len(nodes), userCount, mdCode(Version), updateState)
-	keyboard := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.users"), "menu_users"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.nodes"), "menu_nodes"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.routing"), "menu_routing")),
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.traffic"), "menu_traffic"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.online"), "menu_online"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.status"), "menu_status")),
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.stats"), "menu_stats"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.onlinedoctor"), "menu_online_doctor")),
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "serverhost.button"), "routing_manage:server_host")),
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.update"), "menu_update"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.version"), "menu_version")),
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.restart"), "menu_restart_ask"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.backup"), "menu_backup")),
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.help"), "menu_help"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.refresh"), "menu_main")),
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(languageButtonLabel("en", s.cfg.Language), "lang_set:en"), tgbotapi.NewInlineKeyboardButtonData(languageButtonLabel("zh-CN", s.cfg.Language), "lang_set:zh-CN")),
-	)
+	keyboard := mainMenuMarkup(s.cfg.Language)
 	s.sendOrEdit(chatID, msgID, content, keyboard)
 }
 func (s *BotService) sendStatusCard(chatID int64, msgID int) {
@@ -701,7 +706,8 @@ func (s *BotService) sendStatusCard(chatID int64, msgID int) {
 	if s.cfg.AllowMutations {
 		markup.InlineKeyboard = append([][]tgbotapi.InlineKeyboardButton{tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "service.start"), "service_ask:start"),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "service.stop"), "service_ask:stop"))}, markup.InlineKeyboard...)
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "service.stop"), "service_ask:stop"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.restart"), "menu_restart_ask"))}, markup.InlineKeyboard...)
 	}
 
 	s.sendOrEdit(chatID, msgID, text, markup)
@@ -824,6 +830,12 @@ func (s *BotService) doTrafficReset(chatID int64, msgID int) {
 }
 
 func (s *BotService) sendNodesCard(chatID int64, msgID int) {
+	s.sendNodesCardPage(chatID, msgID, 0)
+}
+
+const nodesPerPage = 8
+
+func (s *BotService) sendNodesCardPage(chatID int64, msgID, offset int) {
 	nodes, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if err != nil {
 		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language,"nodes.failure",mdEsc(err.Error())), s.backToMainMarkup())
@@ -833,16 +845,21 @@ func (s *BotService) sendNodesCard(chatID int64, msgID int) {
 	var sb strings.Builder
 	sb.WriteString(tr(s.cfg.Language,"nodes.title"))
 
+	if offset < 0 || len(nodes) == 0 { offset = 0 }
+	if len(nodes) > 0 && offset >= len(nodes) { offset = ((len(nodes) - 1) / nodesPerPage) * nodesPerPage }
+	end := offset + nodesPerPage
+	if end > len(nodes) { end = len(nodes) }
 	if len(nodes) == 0 {
 		sb.WriteString(tr(s.cfg.Language,"nodes.empty"))
 	} else {
-		for i, n := range nodes {
+		sb.WriteString(tr(s.cfg.Language,"nodes.page",offset/nodesPerPage+1,(len(nodes)+nodesPerPage-1)/nodesPerPage,len(nodes)))
+		for i, n := range nodes[offset:end] {
 			sni := n.SNI
 			if sni == "" {
 				sni = "-"
 			}
 			sb.WriteString(fmt.Sprintf(tr(s.cfg.Language,"nodes.row"),
-				i+1, mdEsc(n.Tag), n.SharePort(),
+				offset+i+1, mdEsc(n.Tag), n.SharePort(),
 				mdCode(strings.ToUpper(n.Protocol)), mdCode(strings.ToUpper(n.Network)),
 				mdCode(strings.ToUpper(n.Security)), mdCode(sni),
 				len(n.Clients),
@@ -851,23 +868,22 @@ func (s *BotService) sendNodesCard(chatID int64, msgID int) {
 	}
 
 	var nodeRows [][]tgbotapi.InlineKeyboardButton
-	for _,node:=range nodes {
+	for _,node:=range nodes[offset:end] {
 		if node.Protocol=="vless" {
 			nodeRows=append(nodeRows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⚙ "+truncateLabel(node.Tag,40),"node_detail:"+userCallbackKey(node.Tag))))
 		}
 	}
-	markup := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.create.button"), "node_new_menu"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.refresh"), "menu_nodes"),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.back"), "menu_main"),
-		),
-	)
-
-	markup.InlineKeyboard=append(nodeRows,markup.InlineKeyboard...)
-	s.sendOrEdit(chatID, msgID, sb.String(), markup)
+	var pages []tgbotapi.InlineKeyboardButton
+	if offset > 0 {
+		prev := offset - nodesPerPage
+		if prev < 0 { prev = 0 }
+		pages = append(pages, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.prev"),fmt.Sprintf("nodes_page:%d",prev)))
+	}
+	if end < len(nodes) { pages = append(pages,tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.next"),fmt.Sprintf("nodes_page:%d",end))) }
+	if len(pages) > 0 { nodeRows = append(nodeRows,pages) }
+	if s.cfg.AllowMutations { nodeRows = append(nodeRows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.create.button"),"node_new_menu"))) }
+	nodeRows = append(nodeRows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.refresh"),fmt.Sprintf("nodes_page:%d",offset)),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.back"),"menu_main")))
+	s.sendOrEdit(chatID, msgID, sb.String(), tgbotapi.NewInlineKeyboardMarkup(nodeRows...))
 }
 
 func (s *BotService) sendUsersCard(chatID int64, msgID int) {

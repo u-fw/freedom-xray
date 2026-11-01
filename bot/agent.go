@@ -64,6 +64,11 @@ var agentOperations = []agentOperation{
 	{"stats.inspect", false, false, false, "Inspect statistics policy and API settings"},
 	{"stats.repair", false, true, false, "Repair loopback statistics API and policy switches"},
 	{"routing.read", false, false, false, "Read routing, outbound and balancer summaries"},
+	{"routing.rules", false, false, false, "Read routing rules and edit references; extensions hidden unless requested"},
+	{"routing.rule.patch", true, true, false, "Change one field of a routing rule"},
+	{"routing.rule.target", true, true, false, "Change a rule's outbound or balancer"},
+	{"routing.rule.move", true, true, false, "Move a routing rule up or down"},
+	{"routing.rule.delete", true, true, false, "Delete a routing rule by its edit reference"},
 	{"routing.add", true, true, false, "Add a named Xray routing rule"},
 	{"routing.update", true, true, false, "Replace a named Xray routing rule"},
 	{"routing.delete", true, true, false, "Delete a named Xray routing rule"},
@@ -603,6 +608,14 @@ func executeAgentOperation(cfg *BotConfig, operation agentOperation, raw []byte,
 		return inspectStatsSwitches(cfg.XrayConfigPath, cfg.StatsAPIServer)
 	case "routing.read":
 		return LoadRouting(cfg.XrayConfigPath)
+	case "routing.rules":
+		records, err := loadRoutingRuleRecords(cfg.XrayConfigPath)
+		if err != nil || includeSensitive {
+			return records, err
+		}
+		return redactRoutingRuleRecords(records), nil
+	case "routing.rule.patch", "routing.rule.target", "routing.rule.move", "routing.rule.delete":
+		return agentRoutingRuleEdit(cfg, name, raw, apply)
 	case "routing.add", "routing.update", "routing.delete":
 		return agentRoutingChange(cfg, name, raw, apply)
 	case "outbounds.list", "dns.inspect":

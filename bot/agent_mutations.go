@@ -39,6 +39,72 @@ type agentRoutingInput struct {
 	Position int             `json:"position,omitempty"`
 }
 
+type agentRoutingRuleInput struct {
+	Index     int             `json:"index"`
+	ETag      string          `json:"etag"`
+	Field     string          `json:"field,omitempty"`
+	Value     json.RawMessage `json:"value,omitempty"`
+	Direction string          `json:"direction,omitempty"`
+	ListETag  string          `json:"list_etag,omitempty"`
+}
+
+func agentRoutingRuleEdit(cfg *BotConfig, operation string, raw []byte, apply bool) (any, error) {
+	var input agentRoutingRuleInput
+	if err := decodeAgentInput(raw, &input); err != nil {
+		return nil, err
+	}
+	change := routingRuleEdit{Ref: routingRuleRef{Index: input.Index, ETag: input.ETag}}
+	switch operation {
+	case "routing.rule.patch", "routing.rule.target":
+		if input.Field == "" || len(input.Value) == 0 || input.Direction != "" || input.ListETag != "" {
+			return nil, errors.New("field and value are required")
+		}
+		value, err := decodeRoutingEditValue(input.Value)
+		if err != nil {
+			return nil, fmt.Errorf("invalid field value: %w", err)
+		}
+		change.Field, change.Value = input.Field, value
+		if operation == "routing.rule.patch" {
+			change.Kind = "field"
+		} else {
+			change.Kind = "target"
+		}
+	case "routing.rule.move":
+		if input.Field != "" || len(input.Value) > 0 || input.ListETag == "" {
+			return nil, errors.New("move requires index, etag, list_etag and direction")
+		}
+		change.Kind = "move"
+		change.ExpectedListETag = input.ListETag
+		switch input.Direction {
+		case "up":
+			change.Direction = -1
+		case "down":
+			change.Direction = 1
+		default:
+			return nil, errors.New("direction must be up or down")
+		}
+	case "routing.rule.delete":
+		if input.Field != "" || len(input.Value) > 0 || input.Direction != "" || input.ListETag != "" {
+			return nil, errors.New("delete accepts only index and etag")
+		}
+		change.Kind = "delete"
+	default:
+		return nil, errors.New("unknown routing rule operation")
+	}
+	if !apply {
+		root, err := decodeBindingMigrationConfig(cfg.XrayConfigPath)
+		if err != nil {
+			return nil, err
+		}
+		message, err := applyRoutingRuleEdit(root, change)
+		if err != nil {
+			return nil, err
+		}
+		return agentPreview(operation, message), nil
+	}
+	return agentMessage(changeRoutingRule(cfg, change))
+}
+
 type agentNetworkInput struct {
 	Tag      string          `json:"tag,omitempty"`
 	Outbound json.RawMessage `json:"outbound,omitempty"`

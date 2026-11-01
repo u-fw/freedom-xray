@@ -106,7 +106,9 @@ def main():
                 "finalRules": [{"action": "allow", "network": "tcp", "ip": ["127.0.0.1/32"]}],
             }}],
             "routing": {"rules": [{"type": "field", "inboundTag": ["api-internal"],
-                                   "outboundTag": "api"}]},
+                                   "outboundTag": "api"},
+                                  {"type": "field", "domain": ["domain:example.com"],
+                                   "outboundTag": "direct"}]},
         }
         processes = []
         try:
@@ -160,6 +162,14 @@ def main():
             original_config = (directory / "config.json").read_bytes()
             preview = agent("users.add", {"user": "preview-user", "node": "raw"})
             assert preview["applied"] is False, preview
+            assert (directory / "config.json").read_bytes() == original_config
+            routes = agent("routing.rules")
+            assert routes[0]["protected"] and routes[1]["rule"]["domain"] == ["domain:example.com"], routes
+            route_preview = agent("routing.rule.patch", {
+                "index": routes[1]["index"], "etag": routes[1]["etag"],
+                "field": "domain", "value": ["domain:changed.example"],
+            })
+            assert route_preview["applied"] is False, route_preview
             assert (directory / "config.json").read_bytes() == original_config
             assert {node["tag"] for node in agent("nodes.list")} == {"raw", "cdn"}
             users = agent("users.list")

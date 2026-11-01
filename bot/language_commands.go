@@ -101,9 +101,7 @@ func (s *BotService) changeLanguage(msg *tgbotapi.Message) {
  s.sendMainMenu(msg.Chat.ID,0)
 }
 
-// setLanguage is the dashboard-button path. It renders the menu again in the
-// newly selected language and keeps the same message instead of sending a
-// second dashboard.
+// setLanguage keeps the settings card open in the newly selected language.
 func (s *BotService) setLanguage(chatID int64,msgID int,lang string) {
  lang=normalizeLanguage(lang)
  previous:=s.cfg.Language
@@ -123,7 +121,7 @@ func (s *BotService) setLanguage(chatID int64,msgID int,lang string) {
   return
  }
  s.registerAdminCommands(chatID)
- s.sendMainMenu(chatID,msgID)
+ s.sendToolsCard(chatID,msgID)
 }
 
 // maybeAutoDetectLanguage applies Telegram's client locale until the admin

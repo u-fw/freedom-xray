@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"log"
 	"net"
 	"path/filepath"
@@ -87,6 +88,10 @@ func (s *BotService) startNodeWizardValue(chatID, adminID int64, msgID int, tag,
 }
 
 func (s *BotService) sendNodeDetail(chatID int64, msgID int, key string) {
+	s.sendNodeDetailSection(chatID, msgID, key, false)
+}
+
+func (s *BotService) sendNodeDetailSection(chatID int64, msgID int, key string, advanced bool) {
 	nodes, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if err != nil {
 		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.readfailure", err.Error()), s.backToMainMarkup())
@@ -210,8 +215,41 @@ func (s *BotService) sendNodeDetail(chatID int64, msgID int, key string) {
 		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.edit.listenaddress"), "node_listen_address:"+key),
 	))
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.delete.button"), "node_delete:"+key)))
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.backlist"), "menu_nodes")))
-	s.sendOrEdit(chatID, msgID, msg, tgbotapi.NewInlineKeyboardMarkup(rows...))
+	var visible [][]tgbotapi.InlineKeyboardButton
+	if s.cfg.AllowMutations {
+		for _, row := range rows {
+			var selected []tgbotapi.InlineKeyboardButton
+			for _, button := range row {
+				if button.CallbackData == nil {
+					continue
+				}
+				action := strings.SplitN(*button.CallbackData, ":", 2)[0]
+				basic := action == "node_sni" || action == "node_short_id" || action == "node_path" || action == "node_xhttp_host" || action == "node_mode" || action == "node_public_port" || action == "node_listen_port"
+				if basic != advanced {
+					selected = append(selected, button)
+				}
+			}
+			if len(selected) > 0 {
+				visible = append(visible, selected)
+			}
+		}
+		label, action := tr(s.cfg.Language, "node.more"), "node_advanced:"
+		if advanced {
+			label, action = tr(s.cfg.Language, "node.basic"), "node_basic:"
+		}
+		visible = append(visible, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(label, action+key)))
+	}
+	offset := 0
+	for i := range nodes {
+		if &nodes[i] == node {
+			offset = (i / nodesPerPage) * nodesPerPage
+			break
+		}
+	}
+	visible = append(visible, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.backlist"), fmt.Sprintf("nodes_page:%d", offset)),
+		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.home"), "menu_main")))
+	s.sendOrEdit(chatID, msgID, msg, tgbotapi.NewInlineKeyboardMarkup(visible...))
 }
 
 func (s *BotService) offerNodeChange(chatID,adminID int64,msgID int,change NodeChange){
@@ -328,6 +366,10 @@ func (s *BotService) handleNodeCallback(cb *tgbotapi.CallbackQuery) {
 	switch parts[0] {
 	case "node_detail":
 		s.sendNodeDetail(chatID, msgID, parts[1])
+	case "node_advanced":
+		s.sendNodeDetailSection(chatID, msgID, parts[1], true)
+	case "node_basic":
+		s.sendNodeDetailSection(chatID, msgID, parts[1], false)
 	case "node_sni":
 		if node.Security != "reality" {
 			s.sendAlert(chatID, tr(s.cfg.Language, "node.notreality"))

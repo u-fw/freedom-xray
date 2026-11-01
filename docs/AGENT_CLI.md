@@ -28,7 +28,7 @@ Exit status is `0` on success, `1` for an execution failure, `2` for an unknown 
 
 Mutations **preview by default**. Repeat the same request with `--apply` to execute it. Preview checks input and, for some operations, the current configuration in memory. It does not guarantee that the action will succeed: state can change, and certificate checks, credential generation, core validation, service operations and network access can occur only during apply. Preview is not a reservation or an Xray config test. Config mutations use the shared lock, test the candidate with Xray, back up the prior configuration, and restart Xray with rollback on failure where the underlying transaction supports it. Traffic resets and service or component updates have their own behavior and are not reversible configuration transactions.
 
-Sensitive output is off by default. `users.export`, `outbounds.get`, `dns.get` and `backup.config` require `--include-sensitive`, because links, configuration, outbound settings and DNS URLs can contain credentials. Client identifiers, traffic and source IPs returned by other read operations are also sensitive operational data. Do not publish stdout, logs, exported links, backups, or Bot configuration. Telegram Bot conversations are not end-to-end encrypted; supply proxy credentials locally through this CLI.
+Sensitive output is off by default. `users.export`, `outbounds.get`, `dns.get` and `backup.config` require `--include-sensitive`, because links, configuration, outbound settings and DNS URLs can contain credentials. `routing.rules` hides extensions such as webhooks by default and returns the complete native rules only with `--include-sensitive`. Client identifiers, domains, traffic and source IPs returned by other read operations are also sensitive operational data. Do not publish stdout, logs, exported links, backups, or Bot configuration. Telegram Bot conversations are not end-to-end encrypted; supply proxy credentials locally through this CLI.
 
 Most traffic reads initialize or migrate the local SQLite ledger on first use, which can create the database, WAL files and a legacy backup. They do not reset traffic. Online observations are time-sensitive: check `fresh`; an old poll is unknown, not proof a user is offline.
 
@@ -63,6 +63,11 @@ Most traffic reads initialize or migrate the local SQLite ledger on first use, w
 | `collector.install` | — | Install/refresh and start the independent systemd sampler; may restart Xray to enable policies. Execute the installed `/usr/local/bin/freedom-bot`. |
 | `bindings.migrate`, `bindings.revert` | — | Preview or perform per-inbound accounting identity migration/reversion. |
 | `routing.read` | — | Read summarized rules, outbound tags and balancers. |
+| `routing.rules` | — | List rules, positions, content references and list references. Unknown or potentially credential-bearing extensions are redacted unless `--include-sensitive` is supplied. |
+| `routing.rule.patch` | `{"index":2,"etag":"<etag>","field":"domain","value":["domain:example.com"]}` | Change one supported field without replacing the rest of the rule; `null` clears it. |
+| `routing.rule.target` | `{"index":2,"etag":"<etag>","field":"outboundTag","value":"block"}` | Select an existing `outboundTag` or `balancerTag`. |
+| `routing.rule.move` | `{"index":2,"etag":"<etag>","list_etag":"<list_etag>","direction":"down"}` | Move one place `up` or `down`; rechecks the complete rule list. |
+| `routing.rule.delete` | `{"index":2,"etag":"<etag>"}` | Delete a rule, including an unnamed rule. |
 | `routing.add`, `routing.update` | `{"rule":{"ruleTag":"ads","domain":["domain:example.com"],"outboundTag":"block"}}` | Add or replace a named field rule; `routing.add` optionally accepts a 1-based `position`. |
 | `routing.delete` | `{"rule_tag":"ads"}` | Delete a named rule. |
 | `outbounds.list` | — | List tags, protocols and the default outbound. |
@@ -77,7 +82,9 @@ Most traffic reads initialize or migrate the local SQLite ledger on first use, w
 | `updates.script`, `updates.bot`, `updates.core-rollback` | — | Update the script/Bot or restore the previous core binary. For `updates.bot`, execute the installed `/usr/local/bin/freedom-bot`. |
 | `updates.core` | `{"version":"v26.10.31"}` | Install the specified published stable Xray release, with checksum and compatibility checks. |
 
-`limits.*` enforcement depends on a running Bot with `allow_mutations`; exceeding a quota does not automatically re-enable an account when limits are raised. Binding migration/reversion can restart Xray and does not reconstruct historical per-node traffic. Resetting the ledger can lose unsampled runtime traffic. Native outbound deletion refuses the first/default outbound, the API tag, any referenced outbound, and all deletions while balancers exist. Routing editing requires a unique `ruleTag` and an existing target. The loopback API route is protected and must remain first. Unnamed existing rules and balancers are displayed but are not editable by these operations.
+`limits.*` enforcement depends on a running Bot with `allow_mutations`; exceeding a quota does not automatically re-enable an account when limits are raised. Binding migration/reversion can restart Xray and does not reconstruct historical per-node traffic. Resetting the ledger can lose unsampled runtime traffic. Native outbound deletion refuses the first/default outbound, the API tag, any referenced outbound, and all deletions while balancers exist. The older `routing.add`, `routing.update` and `routing.delete` operations require a unique `ruleTag`; the `routing.rule.*` operations also support unnamed rules. An existing target is required, the loopback API route is protected and must remain first, and balancer configuration itself is read-only.
+
+For `routing.rule.*`, first call `routing.rules` and copy the selected rule's 1-based `index` and `etag` from that result. Moving also requires its `list_etag`. References are based on the full native configuration even when extension values are redacted. A changed rule, changed position, or changed list for a move causes rejection; read the rules again and review before retrying. Supported patch fields are `ruleTag`, `domain`, `domains`, `ip`, `port`, `network`, `protocol`, `source`, `sourceIP`, `sourcePort`, `localIP`, `localPort`, `user`, `inboundTag` and `vlessRoute`. Xray prioritizes `domains` over `domain` and `sourceIP` over `source` when both are present. Fields outside this list are preserved but cannot be patched individually. At least one recognized matching condition must remain.
 
 ## Node inputs
 
@@ -111,6 +118,12 @@ Add a route and inspect traffic:
 printf '%s\n' '{"rule":{"ruleTag":"example","domain":["domain:example.com"],"outboundTag":"block"}}' | sudo freedom-bot agent routing.add --apply
 sudo freedom-bot agent traffic.read
 sudo freedom-bot agent online.diagnose
+```
+
+To edit an existing rule, retrieve `index` and `etag` from `sudo freedom-bot agent routing.rules`, substitute those values in the following JSON, preview it, and rerun with `--apply` after review:
+
+```bash
+printf '%s\n' '{"index":2,"etag":"<etag-from-routing.rules>","field":"domain","value":["domain:example.com"]}' | sudo freedom-bot agent routing.rule.patch
 ```
 
 For an outbound containing credentials, provide the complete native Xray JSON through a protected file or a controlled pipe; do not pass it as an argument. For example, create a root-readable input file using a secure mechanism, then run `sudo freedom-bot agent outbounds.put --apply < /path/to/protected-input.json` and securely manage that file according to your environment.

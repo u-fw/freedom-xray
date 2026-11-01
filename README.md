@@ -31,7 +31,7 @@ Run `sudo freedom` to open the terminal menu. The Telegram submenu can install t
 | Per-user/per-node traffic since binding migration | Aggregate user totals | Yes |
 | Per-user traffic quota and expiry with automatic suspension and admin notices | Local metadata | Yes |
 | Online users, source IPs and last-online information | Via collector | `/online`, `/onlinedoctor` and user details |
-| Named routing rules, native outbounds and DNS | Config file or agent CLI | `/routing` (confirmation required); balancers are read-only |
+| Routing rules, native outbounds and DNS | Config file or agent CLI | `/routing` shows rules and edits common conditions, targets and ordering; balancer configuration is read-only |
 | Xray start, stop and restart; statistics repair | Yes | Status and diagnostics menus (confirmation required) |
 | Bot and manager updates; Xray upgrades and rollback | Yes | Permission-gated |
 | Public subscription service and full web dashboard | Not provided | Not provided |
@@ -61,7 +61,7 @@ Traffic quotas and expiry dates are stored in `freedom-user-limits.json` (mode 0
 /inboundtraffic            Persisted inbound traffic totals
 /online                    Online users and recent source IPs (v1.3.0)
 /onlinedoctor              Diagnose online statistics and repair the policy
-/routing                   View routing; manage named rules, outbounds and DNS
+/routing                   Inspect and edit routing rules; manage outbounds and DNS
 /status                    Server status
 /version                   Installed and upstream component versions
 /update                    Update the manager and bot
@@ -83,7 +83,7 @@ The bot only accepts authorized administrator messages in **private chats**. Rem
 
 `allow_core_updates` additionally requires `allow_updates`. Keep sensitive backup sending disabled unless required. Use a different Telegram Bot token for each VPS unless you have a dedicated centralized polling architecture.
 
-The dashboard's **Public link address** button sets the REALITY export address without a Bot restart. `/routing` can edit named field rules and accept native Xray outbound/DNS JSON, subject to core validation and confirmation. Telegram Bot chats are not end-to-end encrypted; enter credential-bearing outbound/DNS settings through the local agent CLI instead.
+The dashboard groups less frequent actions under **Tools**; the public link address setting takes effect without a Bot restart. In `/routing`, select a rule to see its conditions and target, including rules without names. Choose a field, send its replacement, and review the confirmation before applying it; `-` clears a field and `/cancel` leaves the input flow. Rules can also be created, moved and deleted. Rule order determines precedence, and the internal API rule stays protected. Outbound and DNS management and the previous JSON rule editor remain under **Outbounds / DNS / JSON**. Candidate configurations are validated by Xray before restart. Telegram chats are not end-to-end encrypted; potentially credential-bearing routing extensions are hidden and outbound/DNS secrets should be entered through the local agent CLI instead.
 
 ### Agent CLI
 
