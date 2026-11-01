@@ -322,6 +322,8 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 		s.handleDNSCallback(cb)
 	case strings.HasPrefix(data,"dh:"):
 		s.handleDNSHostCallback(cb)
+	case strings.HasPrefix(data,"ce:"):
+		s.handleNativeConfigExportCallback(cb)
 	case strings.HasPrefix(data,"ni:"):
 		s.handleNativeInboundCallback(cb)
 	case strings.HasPrefix(data,"nc:"):

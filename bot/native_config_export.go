@@ -1,0 +1,191 @@
+package main
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+)
+
+type nativeConfigExport struct {
+	ChatID  int64
+	AdminID int64
+	Kind    string
+	Index   int
+	ETag    string
+	Expires time.Time
+}
+
+var pendingNativeConfigExports = struct {
+	sync.Mutex
+	items map[string]nativeConfigExport
+}{items: map[string]nativeConfigExport{}}
+
+func nativeConfigExportCallback(kind string, index int, etag string) string {
+	return fmt.Sprintf("ce:%s:%d:%s", kind, index, etag)
+}
+
+func nativeConfigExportObject(root map[string]any, kind string, index int, etag string) (map[string]any, error) {
+	switch kind {
+	case "inbound":
+		return lookupNativeInbound(root, index, etag)
+	case "outbound":
+		return lookupOutbound(root, index, etag)
+	case "rule":
+		return lookupRoutingRule(root, routingRuleRef{Index: index, ETag: etag})
+	case "dns":
+		actual, err := dnsETag(root)
+		if err != nil {
+			return nil, err
+		}
+		if index != 0 || len(etag) != 24 || actual != etag {
+			return nil, errDNSChanged
+		}
+		object, err := readDNS(root)
+		if err == nil && object == nil {
+			err = errors.New("DNS is not configured")
+		}
+		return object, err
+	default:
+		return nil, errors.New("unknown export target")
+	}
+}
+
+func (s *BotService) returnNativeConfigExport(chatID int64, msgID int, pending nativeConfigExport, changed bool) {
+	switch pending.Kind {
+	case "outbound":
+		if changed {
+			s.sendOutboundPage(chatID, msgID, 0, tr(s.cfg.Language, "outbound.changed"))
+		} else {
+			s.sendOutboundDetail(chatID, msgID, pending.Index, pending.ETag)
+		}
+	case "dns":
+		notice := ""
+		if changed {
+			notice = tr(s.cfg.Language, "dns.changed")
+		}
+		s.sendDNSPage(chatID, msgID, 0, notice)
+	case "rule":
+		if changed {
+			s.sendRoutingPage(chatID, msgID, 0, tr(s.cfg.Language, "routing.guide.changed"))
+		} else {
+			s.sendRoutingRuleDetail(chatID, msgID, routingRuleRef{Index: pending.Index, ETag: pending.ETag})
+		}
+	default:
+		if changed {
+			s.sendNativeInboundPage(chatID, msgID, 0, tr(s.cfg.Language, "inbound.native.changed"))
+		} else {
+			s.sendNativeInboundDetail(chatID, msgID, pending.Index, pending.ETag)
+		}
+	}
+}
+
+func (s *BotService) handleNativeConfigExportCallback(cb *tgbotapi.CallbackQuery) {
+	if cb.Message == nil || cb.Message.Chat == nil || cb.From == nil {
+		return
+	}
+	parts := strings.Split(cb.Data, ":")
+	if len(parts) != 4 {
+		return
+	}
+	index, err := strconv.Atoi(parts[2])
+	if err != nil || index < 0 {
+		return
+	}
+	clearRoutingWizard(cb.Message.Chat.ID)
+	s.askNativeConfigExport(cb, parts[1], index, parts[3])
+}
+
+func (s *BotService) askNativeConfigExport(cb *tgbotapi.CallbackQuery, kind string, index int, etag string) {
+	chatID, msgID := cb.Message.Chat.ID, cb.Message.MessageID
+	if !s.cfg.AllowSensitiveBackup {
+		s.sendAlert(chatID, tr(s.cfg.Language, "backup.disabled"))
+		return
+	}
+	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
+	if err == nil {
+		_, err = nativeConfigExportObject(root, kind, index, etag)
+	}
+	if err != nil {
+		s.returnNativeConfigExport(chatID, msgID, nativeConfigExport{Kind: kind, Index: index, ETag: etag}, true)
+		return
+	}
+	var token [8]byte
+	if _, err := rand.Read(token[:]); err != nil {
+		s.sendAlert(chatID, tr(s.cfg.Language, "node.tokenerror"))
+		return
+	}
+	key := hex.EncodeToString(token[:])
+	pendingNativeConfigExports.Lock()
+	for k, pending := range pendingNativeConfigExports.items {
+		if time.Now().After(pending.Expires) {
+			delete(pendingNativeConfigExports.items, k)
+		}
+	}
+	pendingNativeConfigExports.items[key] = nativeConfigExport{ChatID: chatID, AdminID: cb.From.ID, Kind: kind, Index: index, ETag: etag, Expires: time.Now().Add(3 * time.Minute)}
+	pendingNativeConfigExports.Unlock()
+	markup := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.confirm"), "ni:exconfirm:"+key),
+		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.cancel"), "ni:excancel:"+key)))
+	var label string
+	if kind == "dns" {
+		label = tr(s.cfg.Language, "config.export.kind.dns")
+	} else {
+		label = tr(s.cfg.Language, "config.export.kind."+kind, index)
+	}
+	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "config.export.confirm", mdEsc(label)), markup)
+}
+
+func (s *BotService) resolveNativeConfigExport(cb *tgbotapi.CallbackQuery, key string, confirm bool) {
+	chatID, msgID := cb.Message.Chat.ID, cb.Message.MessageID
+	pendingNativeConfigExports.Lock()
+	pending, ok := pendingNativeConfigExports.items[key]
+	if ok && pending.ChatID == chatID && pending.AdminID == cb.From.ID {
+		delete(pendingNativeConfigExports.items, key)
+	}
+	pendingNativeConfigExports.Unlock()
+	if ok && (pending.ChatID != chatID || pending.AdminID != cb.From.ID) {
+		s.sendAlert(chatID, tr(s.cfg.Language, "manage.owned"))
+		return
+	}
+	if !ok || time.Now().After(pending.Expires) {
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.expired"), s.backToMainMarkup())
+		return
+	}
+	if !confirm {
+		s.returnNativeConfigExport(chatID, msgID, pending, false)
+		return
+	}
+	if !s.cfg.AllowSensitiveBackup {
+		s.sendAlert(chatID, tr(s.cfg.Language, "backup.disabled"))
+		return
+	}
+	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
+	var object map[string]any
+	if err == nil {
+		object, err = nativeConfigExportObject(root, pending.Kind, pending.Index, pending.ETag)
+	}
+	if err != nil {
+		s.returnNativeConfigExport(chatID, msgID, pending, true)
+		return
+	}
+	data, err := json.MarshalIndent(object, "", "  ")
+	if err != nil || len(data)+1 > telegramJSONDocumentLimit {
+		s.sendAlert(chatID, tr(s.cfg.Language, "config.export.failed"))
+		return
+	}
+	doc := tgbotapi.NewDocument(chatID, tgbotapi.FileBytes{Name: "xray-" + pending.Kind + ".json", Bytes: append(data, '\n')})
+	doc.Caption = tr(s.cfg.Language, "config.export.caption")
+	if _, err := s.bot.Send(doc); err != nil {
+		s.sendAlert(chatID, tr(s.cfg.Language, "config.export.failed"))
+		return
+	}
+	s.returnNativeConfigExport(chatID, msgID, pending, false)
+}

@@ -330,7 +330,7 @@ func (s *BotService) handleNativeInboundCallback(cb *tgbotapi.CallbackQuery) {
 	chatID, msgID := cb.Message.Chat.ID, cb.Message.MessageID
 	parts := strings.Split(cb.Data, ":")
 	if len(parts) == 3 && (parts[1] == "exconfirm" || parts[1] == "excancel") {
-		s.resolveNativeInboundExport(cb, parts[2], parts[1] == "exconfirm")
+		s.resolveNativeConfigExport(cb, parts[2], parts[1] == "exconfirm")
 		return
 	}
 	if len(parts) == 3 && parts[1] == "page" {
@@ -381,7 +381,7 @@ func (s *BotService) handleNativeInboundCallback(cb *tgbotapi.CallbackQuery) {
 	}
 	if parts[1] == "export" {
 		clearRoutingWizard(chatID)
-		s.askNativeInboundExport(cb, index, parts[3])
+		s.askNativeConfigExport(cb, "inbound", index, parts[3])
 		return
 	}
 	if !s.cfg.AllowMutations {

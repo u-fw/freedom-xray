@@ -77,6 +77,7 @@ var agentOperations = []agentOperation{
 	{"stats.repair", false, true, false, "Repair loopback statistics API and policy switches"},
 	{"routing.read", false, false, false, "Read routing, outbound and balancer summaries"},
 	{"routing.rules", false, false, false, "Read routing rules and edit references; extensions hidden unless requested"},
+	{"routing.rule.get", true, false, true, "Export one complete native routing rule including hidden extensions"},
 	{"routing.rule.patch", true, true, false, "Change one field of a routing rule"},
 	{"routing.rule.target", true, true, false, "Change a rule's outbound or balancer"},
 	{"routing.rule.move", true, true, false, "Move a routing rule up or down"},
@@ -708,6 +709,16 @@ func executeAgentOperation(cfg *BotConfig, operation agentOperation, raw []byte,
 			return records, err
 		}
 		return redactRoutingRuleRecords(records), nil
+	case "routing.rule.get":
+		var ref routingRuleRef
+		if err := decodeAgentInput(raw, &ref); err != nil {
+			return nil, err
+		}
+		root, err := decodeBindingMigrationConfig(cfg.XrayConfigPath)
+		if err != nil {
+			return nil, err
+		}
+		return lookupRoutingRule(root, ref)
 	case "routing.rule.patch", "routing.rule.target", "routing.rule.move", "routing.rule.delete":
 		return agentRoutingRuleEdit(cfg, name, raw, apply)
 	case "routing.add", "routing.update", "routing.delete":

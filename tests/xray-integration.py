@@ -209,6 +209,8 @@ def main():
             assert (directory / "config.json").read_bytes() == original_config
             routes = agent("routing.rules")
             assert routes[0]["protected"] and routes[1]["rule"]["domain"] == ["domain:example.com"], routes
+            full_rule = agent("routing.rule.get", {"index": routes[1]["index"], "etag": routes[1]["etag"]}, "--include-sensitive")
+            assert full_rule["domain"] == ["domain:example.com"] and full_rule["outboundTag"] == "direct", full_rule
             route_preview = agent("routing.rule.patch", {
                 "index": routes[1]["index"], "etag": routes[1]["etag"],
                 "field": "domain", "value": ["domain:changed.example"],

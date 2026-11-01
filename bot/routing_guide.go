@@ -295,6 +295,7 @@ func (s *BotService) sendRoutingRuleDetail(chatID int64, msgID int, ref routingR
 			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.down"), routingRefData("down", ref)),
 			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.delete"), routingRefData("del", ref))))
 	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "config.export.button"), nativeConfigExportCallback("rule", ref.Index, ref.ETag))))
 	offset := ((ref.Index - 1) / routingPageSize) * routingPageSize
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.back"), fmt.Sprintf("rt:page:%d", offset)), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.home"), "menu_main")))
 	s.sendOrEdit(chatID, msgID, routingRuleDetailText(s.cfg.Language, record, root), tgbotapi.NewInlineKeyboardMarkup(rows...))

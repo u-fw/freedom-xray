@@ -158,6 +158,7 @@ func (s *BotService) sendOutboundDetail(chatID int64, msgID, index int, etag str
 	if protected {
 		body += tr(s.cfg.Language, "routing.guide.protected")
 	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "config.export.button"), nativeConfigExportCallback("outbound", index, etag))))
 	offset := ((index - 1) / routingPageSize) * routingPageSize
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "outbound.back"), fmt.Sprintf("ob:page:%d", offset)), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.home"), "menu_main")))
 	s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))

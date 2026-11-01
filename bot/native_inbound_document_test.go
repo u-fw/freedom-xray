@@ -23,6 +23,7 @@ type nativeDocumentTransport struct {
 	downloads int
 	foreign   int
 	markup    string
+	text      string
 	documents [][]byte
 	started   chan struct{}
 	release   chan struct{}
@@ -81,6 +82,11 @@ func newNativeDocumentBot(t *testing.T, cfg *BotConfig, payload []byte) (*BotSer
 			}
 		} else {
 			_ = r.ParseForm()
+			if text := r.FormValue("text"); text != "" {
+				m.mu.Lock()
+				m.text = text
+				m.mu.Unlock()
+			}
 			if markup := r.FormValue("reply_markup"); markup != "" {
 				m.mu.Lock()
 				m.markup = markup
@@ -145,14 +151,14 @@ func TestNativeInboundExportChecksPermissionOwnerAndFreshness(t *testing.T) {
 	records, _ := nativeInboundRecords(root)
 	cb.Data = nativeInboundCallback("export", 1, records[0].ETag)
 	s.handleNativeInboundCallback(cb)
-	pendingNativeInboundExports.Lock()
-	for _, pending := range pendingNativeInboundExports.items {
+	pendingNativeConfigExports.Lock()
+	for _, pending := range pendingNativeConfigExports.items {
 		if pending.ChatID == chat.ID {
-			pendingNativeInboundExports.Unlock()
+			pendingNativeConfigExports.Unlock()
 			t.Fatal("disabled sensitive exports created a confirmation")
 		}
 	}
-	pendingNativeInboundExports.Unlock()
+	pendingNativeConfigExports.Unlock()
 	cfg.AllowSensitiveBackup = true
 	first := ask()
 	cb.From, cb.Data = &tgbotapi.User{ID: 18}, first

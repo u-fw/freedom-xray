@@ -19,7 +19,7 @@ type BotConfig struct {
 	AllowMutations   bool    `json:"allow_mutations,omitempty"`
 	AllowUpdates bool `json:"allow_updates,omitempty"`
 	AllowCoreUpdates bool `json:"allow_core_updates,omitempty"`
-	AllowSensitiveBackup bool `json:"allow_sensitive_backup,omitempty"` // periodic report interval in hours (0 = disabled)
+	AllowSensitiveBackup bool `json:"allow_sensitive_backup,omitempty"` // allow full native configuration exports through Telegram
 	XrayConfigPath   string  `json:"xray_config_path"`
 	XrayBinPath      string  `json:"xray_bin_path"`
 	StatsAPIServer   string  `json:"stats_api_server"`
