@@ -89,7 +89,7 @@ func TestBalancerWarnsAboutMissingCoverageAndFallback(t *testing.T) {
 	root["observatory"] = map[string]any{"subjectSelector": []any{"block"}}
 	item := map[string]any{"tag": "pool", "selector": []any{"direct"}, "strategy": map[string]any{"type": "leastPing"}}
 	warning := balancerWarnings("en", root, item)
-	if !strings.Contains(warning, "direct") || !strings.Contains(warning, "fallback") {
+	if !strings.Contains(plainHTML(warning), "direct") || !strings.Contains(plainHTML(warning), "fallback") {
 		t.Fatalf("missing monitor warning: %s", warning)
 	}
 	root["observatory"] = map[string]any{"subjectSelector": []any{"direct"}}

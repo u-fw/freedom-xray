@@ -233,7 +233,7 @@ func main() {
 
 	service.collectorReady = collectorReady
 	if bindingErr == nil && bindingStats.changed() {
-		service.startupNotice = tr(cfg.Language, "binding.notify.migrated", bindingStats.Rewritten, bindingStats.Inbounds)
+		service.startupNotice = trh(cfg.Language, "binding.notify.migrated", bindingStats.Rewritten, bindingStats.Inbounds)
 	}
 
 	// Handle graceful shutdown

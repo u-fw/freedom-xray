@@ -86,7 +86,7 @@ func (s *BotService) beginRoutingWizard(cb *tgCallback) {
 	}
 	chatID, msgID := cb.Message.Chat.ID, cb.Message.MessageID
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
 		return
 	}
 	kind := strings.TrimPrefix(cb.Data, "routing_manage:")
@@ -107,17 +107,17 @@ func (s *BotService) beginRoutingWizard(cb *tgCallback) {
 	routingWizards.Lock()
 	routingWizards.items[chatID] = routingWizard{AdminID: cb.From.ID, Kind: kind, Expires: time.Now().Add(5 * time.Minute)}
 	routingWizards.Unlock()
-	prompt := tr(s.cfg.Language, "routing.edit.ruleprompt")
+	prompt := trh(s.cfg.Language, "routing.edit.ruleprompt")
 	if kind == "delete" {
-		prompt = tr(s.cfg.Language, "routing.edit.deleteprompt")
+		prompt = trh(s.cfg.Language, "routing.edit.deleteprompt")
 	} else if kind == "outbound_put" {
-		prompt = tr(s.cfg.Language, "network.outbound.prompt")
+		prompt = trh(s.cfg.Language, "network.outbound.prompt")
 	} else if kind == "outbound_delete" {
-		prompt = tr(s.cfg.Language, "network.outbound.deleteprompt")
+		prompt = trh(s.cfg.Language, "network.outbound.deleteprompt")
 	} else if kind == "dns_put" {
-		prompt = tr(s.cfg.Language, "network.dns.prompt")
+		prompt = trh(s.cfg.Language, "network.dns.prompt")
 	} else if kind == "server_host" {
-		prompt = tr(s.cfg.Language, "serverhost.prompt")
+		prompt = trh(s.cfg.Language, "serverhost.prompt")
 	}
 	s.sendOrEdit(chatID, msgID, prompt, s.backToMainMarkup())
 }
@@ -150,7 +150,7 @@ func (s *BotService) handleRoutingInput(msg *tgMessage) bool {
 	if msg.Command() == "cancel" {
 		delete(routingWizards.items, chatID)
 		routingWizards.Unlock()
-		s.sendAlert(chatID, tr(s.cfg.Language, "wizard.cancelled"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "wizard.cancelled"))
 		return true
 	}
 	if msg.Command() != "" {
@@ -160,7 +160,7 @@ func (s *BotService) handleRoutingInput(msg *tgMessage) bool {
 	routingWizards.Unlock()
 	if !s.cfg.AllowMutations {
 		consumeRoutingWizard(chatID, state)
-		s.sendAlert(chatID, tr(s.cfg.Language, "manage.writesdisabled"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "manage.writesdisabled"))
 		return true
 	}
 	jsonInput := state.Kind == "add" || state.Kind == "update" || state.Kind == "outbound_put" || state.Kind == "dns_put"
@@ -169,15 +169,15 @@ func (s *BotService) handleRoutingInput(msg *tgMessage) bool {
 		var err error
 		input, err = readTelegramJSONDocument(s.tg, msg.Document)
 		if err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
+			s.sendAlert(chatID, trh(s.cfg.Language, "routing.guide.retry", err.Error()))
 			return true
 		}
 	} else if msg.Document != nil || msg.Text == "" {
-		s.sendAlert(chatID, tr(s.cfg.Language, "wizard.text_required"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "wizard.text_required"))
 		return true
 	}
 	if jsonInput && len(input) > telegramJSONDocumentLimit {
-		s.sendAlert(chatID, tr(s.cfg.Language, "routing.guide.retry", "JSON document exceeds 1 MiB"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "routing.guide.retry", "JSON document exceeds 1 MiB"))
 		return true
 	}
 	change := routingChange{Kind: state.Kind}
@@ -190,7 +190,7 @@ func (s *BotService) handleRoutingInput(msg *tgMessage) bool {
 		}
 		normalized, err := normalizeServerHost(value)
 		if err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "routing.edit.invalid", mdEsc(err.Error())))
+			s.sendAlert(chatID, trh(s.cfg.Language, "routing.edit.invalid", err.Error()))
 			return true
 		}
 		host = &normalized
@@ -199,7 +199,7 @@ func (s *BotService) handleRoutingInput(msg *tgMessage) bool {
 	} else if state.Kind == "outbound_put" || state.Kind == "dns_put" {
 		value, err := decodeNetworkObject(input)
 		if err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "routing.edit.invalid", mdEsc(err.Error())))
+			s.sendAlert(chatID, trh(s.cfg.Language, "routing.edit.invalid", err.Error()))
 			return true
 		}
 		if state.Kind == "outbound_put" {
@@ -213,7 +213,7 @@ func (s *BotService) handleRoutingInput(msg *tgMessage) bool {
 	} else {
 		rule, err := decodeRoutingRule(input)
 		if err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "routing.edit.invalid", err.Error()))
+			s.sendAlert(chatID, trh(s.cfg.Language, "routing.edit.invalid", err.Error()))
 			return true
 		}
 		change.Rule = rule
@@ -239,12 +239,12 @@ func (s *BotService) handleRoutingInput(msg *tgMessage) bool {
 		}
 	}
 	if err != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "routing.edit.invalid", err.Error()))
+		s.sendAlert(chatID, trh(s.cfg.Language, "routing.edit.invalid", err.Error()))
 		return true
 	}
 	var token [8]byte
 	if _, err = rand.Read(token[:]); err != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "node.tokenerror"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "node.tokenerror"))
 		return true
 	}
 	if !consumeRoutingWizard(chatID, state) {
@@ -274,9 +274,9 @@ func (s *BotService) handleRoutingInput(msg *tgMessage) bool {
 		if label == "" {
 			label = "automatic"
 		}
-		s.sendOrEdit(chatID, 0, tr(s.cfg.Language, "serverhost.confirm", mdCode(label)), markup)
+		s.sendOrEdit(chatID, 0, trh(s.cfg.Language, "serverhost.confirm", label), markup)
 	} else {
-		s.sendOrEdit(chatID, 0, tr(s.cfg.Language, "routing.edit.confirm", mdCode(label), mdCode(kind)), markup)
+		s.sendOrEdit(chatID, 0, trh(s.cfg.Language, "routing.edit.confirm", label, kind), markup)
 	}
 	return true
 }
@@ -294,11 +294,11 @@ func (s *BotService) resolveRoutingChange(cb *tgCallback, confirm bool) {
 	}
 	pendingRoutingChanges.Unlock()
 	if ok && (cb.From == nil || pending.ChatID != chatID || pending.AdminID != cb.From.ID) {
-		s.sendAlert(chatID, tr(s.cfg.Language, "manage.owned"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "manage.owned"))
 		return
 	}
 	if !ok || cb.From == nil || pending.ChatID != chatID || pending.AdminID != cb.From.ID || time.Now().After(pending.Expires) {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.expired"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.expired"), s.backToMainMarkup())
 		return
 	}
 	if !confirm {
@@ -335,7 +335,7 @@ func (s *BotService) resolveRoutingChange(cb *tgCallback, confirm bool) {
 		} else if pending.ExpectedRules != "" {
 			s.sendRoutingPage(chatID, msgID, 0, "")
 		} else {
-			s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.cancelled"), s.backToMainMarkup())
+			s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.cancelled"), s.backToMainMarkup())
 		}
 		return
 	}
@@ -344,7 +344,7 @@ func (s *BotService) resolveRoutingChange(cb *tgCallback, confirm bool) {
 			s.sendRouteTestPage(chatID, cb.From.ID, msgID, tr(s.cfg.Language, "manage.writesdisabled"))
 			return
 		}
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
 		return
 	}
 	var message string
@@ -356,7 +356,7 @@ func (s *BotService) resolveRoutingChange(cb *tgCallback, confirm bool) {
 			if host == "" {
 				host = "automatic"
 			}
-			message = tr(s.cfg.Language, "serverhost.done", mdEsc(host))
+			message = tr(s.cfg.Language, "serverhost.done", host)
 		}
 	} else if pending.Override != nil {
 		_, err = setBalancerOverride(s.cfg, *pending.Override, true)
@@ -491,7 +491,7 @@ func (s *BotService) resolveRoutingChange(cb *tgCallback, confirm bool) {
 		} else if pending.RuleEdit != nil || pending.ExpectedRules != "" {
 			markup = routingPageBackMarkup(s.cfg.Language)
 		}
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.edit.failed", mdEsc(err.Error())), markup)
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.edit.failed", err.Error()), markup)
 		return
 	}
 	if pending.Override != nil {
@@ -542,5 +542,5 @@ func (s *BotService) resolveRoutingChange(cb *tgCallback, confirm bool) {
 	} else if pending.RuleEdit != nil || pending.ExpectedRules != "" {
 		markup = routingPageBackMarkup(s.cfg.Language)
 	}
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.edit.done", mdEsc(message)), markup)
+	s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.edit.done", message), markup)
 }

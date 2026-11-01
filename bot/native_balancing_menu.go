@@ -12,7 +12,7 @@ func (s *BotService) handleNativeBalancingInput(msg *tgMessage, state balancerWi
 		var err error
 		input, err = readTelegramJSONDocument(s.tg, msg.Document)
 		if err != nil {
-			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
+			s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "routing.guide.retry", err.Error()))
 			return true
 		}
 	}
@@ -25,7 +25,7 @@ func (s *BotService) handleNativeBalancingInput(msg *tgMessage, state balancerWi
 		}
 	}
 	if err != nil {
-		s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
+		s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "routing.guide.retry", err.Error()))
 		return true
 	}
 	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
@@ -68,6 +68,6 @@ func (s *BotService) handleNativeBalancingInput(msg *tgMessage, state balancerWi
 			return true
 		}
 	}
-	s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
+	s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "routing.guide.retry", err.Error()))
 	return true
 }

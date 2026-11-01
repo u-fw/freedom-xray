@@ -151,7 +151,7 @@ func (s *BotService) handleNativeConfigExportCallback(cb *tgCallback) {
 func (s *BotService) askNativeConfigExport(cb *tgCallback, kind string, index int, etag string) {
 	chatID, msgID := cb.Message.Chat.ID, cb.Message.MessageID
 	if !s.cfg.AllowSensitiveBackup {
-		s.sendAlert(chatID, tr(s.cfg.Language, "backup.disabled"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "backup.disabled"))
 		return
 	}
 	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
@@ -164,7 +164,7 @@ func (s *BotService) askNativeConfigExport(cb *tgCallback, kind string, index in
 	}
 	var token [8]byte
 	if _, err := rand.Read(token[:]); err != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "node.tokenerror"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "node.tokenerror"))
 		return
 	}
 	key := hex.EncodeToString(token[:])
@@ -189,7 +189,7 @@ func (s *BotService) askNativeConfigExport(cb *tgCallback, kind string, index in
 	} else {
 		label = tr(s.cfg.Language, "config.export.kind."+kind, index)
 	}
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "config.export.confirm", mdEsc(label)), markup)
+	s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "config.export.confirm", label), markup)
 }
 
 func (s *BotService) resolveNativeConfigExport(cb *tgCallback, key string, confirm bool) {
@@ -201,11 +201,11 @@ func (s *BotService) resolveNativeConfigExport(cb *tgCallback, key string, confi
 	}
 	pendingNativeConfigExports.Unlock()
 	if ok && (pending.ChatID != chatID || pending.AdminID != cb.From.ID) {
-		s.sendAlert(chatID, tr(s.cfg.Language, "manage.owned"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "manage.owned"))
 		return
 	}
 	if !ok || time.Now().After(pending.Expires) {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.expired"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.expired"), s.backToMainMarkup())
 		return
 	}
 	if !confirm {
@@ -213,7 +213,7 @@ func (s *BotService) resolveNativeConfigExport(cb *tgCallback, key string, confi
 		return
 	}
 	if !s.cfg.AllowSensitiveBackup {
-		s.sendAlert(chatID, tr(s.cfg.Language, "backup.disabled"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "backup.disabled"))
 		return
 	}
 	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
@@ -227,11 +227,11 @@ func (s *BotService) resolveNativeConfigExport(cb *tgCallback, key string, confi
 	}
 	data, err := json.MarshalIndent(object, "", "  ")
 	if err != nil || len(data)+1 > telegramJSONDocumentLimit {
-		s.sendAlert(chatID, tr(s.cfg.Language, "config.export.failed"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "config.export.failed"))
 		return
 	}
 	if err := s.tg.sendDocument(chatID, "xray-"+pending.Kind+".json", append(data, '\n'), tr(s.cfg.Language, "config.export.caption")); err != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "config.export.failed"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "config.export.failed"))
 		return
 	}
 	s.returnNativeConfigExport(chatID, msgID, pending, false)

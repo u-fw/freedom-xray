@@ -98,11 +98,11 @@ func clearNodeCreateState(chatID int64) {
 func (s *BotService) beginNodeCreate(chatID, adminID int64, msgID int, template NodeTemplate) {
 	clearRoutingWizard(chatID)
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.mutationsdisabled"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.mutationsdisabled"), s.backToMainMarkup())
 		return
 	}
 	if !validNodeTemplate(template) {
-		s.sendAlert(chatID, tr(s.cfg.Language, "node.create.unknown"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "node.create.unknown"))
 		return
 	}
 	state := nodeCreateState{
@@ -119,30 +119,30 @@ func (s *BotService) beginNodeCreate(chatID, adminID int64, msgID int, template 
 }
 
 func (s *BotService) promptNodeCreate(chatID int64, msgID int, state nodeCreateState) {
-	prompt := ""
+	var prompt htmlText
 	switch state.Step {
 	case "port":
-		prompt = tr(s.cfg.Language, "node.create.portprompt", defaultPortForTemplate(state.Template))
+		prompt = trh(s.cfg.Language, "node.create.portprompt", defaultPortForTemplate(state.Template))
 	case "tag":
-		prompt = tr(s.cfg.Language, "node.create.tagprompt", mdCode(defaultTagForTemplate(state.Template, state.Params.Port)))
+		prompt = trh(s.cfg.Language, "node.create.tagprompt", defaultTagForTemplate(state.Template, state.Params.Port))
 	case "sni":
-		prompt = tr(s.cfg.Language, "node.create.sniprompt", mdCode(defaultRealitySNI))
+		prompt = trh(s.cfg.Language, "node.create.sniprompt", defaultRealitySNI)
 	case "domain":
-		prompt = tr(s.cfg.Language, "node.create.domainprompt")
+		prompt = trh(s.cfg.Language, "node.create.domainprompt")
 	case "path":
-		prompt = tr(s.cfg.Language, "node.create.pathprompt", mdCode(state.Params.Path))
+		prompt = trh(s.cfg.Language, "node.create.pathprompt", state.Params.Path)
 	case "mode":
-		prompt = tr(s.cfg.Language, "node.create.modeprompt")
+		prompt = trh(s.cfg.Language, "node.create.modeprompt")
 	case "encryption":
-		prompt = tr(s.cfg.Language, "node.create.encprompt")
+		prompt = trh(s.cfg.Language, "node.create.encprompt")
 	case "mldsa":
-		prompt = tr(s.cfg.Language, "node.create.mldsaprompt")
+		prompt = trh(s.cfg.Language, "node.create.mldsaprompt")
 	case "cert_path":
-		prompt = tr(s.cfg.Language, "node.create.certprompt")
+		prompt = trh(s.cfg.Language, "node.create.certprompt")
 	case "key_path":
-		prompt = tr(s.cfg.Language, "node.create.keyprompt")
+		prompt = trh(s.cfg.Language, "node.create.keyprompt")
 	default:
-		prompt = tr(s.cfg.Language, "node.create.cancelled")
+		prompt = trh(s.cfg.Language, "node.create.cancelled")
 	}
 	markup := newKeyboard(
 		newRow(
@@ -150,7 +150,7 @@ func (s *BotService) promptNodeCreate(chatID int64, msgID int, state nodeCreateS
 		),
 	)
 	if state.Step == "cert_source" {
-		prompt = tr(s.cfg.Language, "node.create.certsource")
+		prompt = trh(s.cfg.Language, "node.create.certsource")
 		markup = newKeyboard(
 			newRow(
 				newButton(tr(s.cfg.Language, "node.create.certself"), "node_cert_source:self"),
@@ -239,7 +239,7 @@ func (s *BotService) handleNodeCreateInput(msg *tgMessage) bool {
 		nodeCreateStates.Lock()
 		delete(nodeCreateStates.items, chatID)
 		nodeCreateStates.Unlock()
-		s.sendAlert(chatID, tr(s.cfg.Language, "node.create.cancelled"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "node.create.cancelled"))
 		return true
 	}
 	if msg.Command() != "" {
@@ -263,7 +263,7 @@ func (s *BotService) handleNodeCreateInput(msg *tgMessage) bool {
 		}
 		port, err := validateListenPort(value)
 		if err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.listenportinvalid"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.listenportinvalid"))
 			return true
 		}
 		state.Params.Port = port
@@ -273,16 +273,16 @@ func (s *BotService) handleNodeCreateInput(msg *tgMessage) bool {
 			value = defaultTagForTemplate(state.Template, state.Params.Port)
 		}
 		if err := validateNodeTag(value); err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.create.taginvalid", err.Error()))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.create.taginvalid", err.Error()))
 			return true
 		}
 		nodes, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
 		if err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.readfailure", err.Error()))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.readfailure", err.Error()))
 			return true
 		}
 		if tagExistsInConfig(nodes, value) {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.create.tagexists", mdEsc(value)))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.create.tagexists", value))
 			return true
 		}
 		state.Params.Tag = value
@@ -292,11 +292,11 @@ func (s *BotService) handleNodeCreateInput(msg *tgMessage) bool {
 			value = defaultRealitySNI
 		}
 		if state.Step == "domain" && value == "-" {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.create.domainrequired"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.create.domainrequired"))
 			return true
 		}
 		if err := validateRealitySNI(value); err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.sniinvalid", err.Error()))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.sniinvalid", err.Error()))
 			return true
 		}
 		state.Params.SNI = value
@@ -306,11 +306,11 @@ func (s *BotService) handleNodeCreateInput(msg *tgMessage) bool {
 			value = state.Params.Path
 		}
 		if value == "" {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.pathinvalid"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.pathinvalid"))
 			return true
 		}
 		if !safeXHTTPPath.MatchString(value) {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.pathinvalid"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.pathinvalid"))
 			return true
 		}
 		state.Params.Path = value
@@ -320,21 +320,21 @@ func (s *BotService) handleNodeCreateInput(msg *tgMessage) bool {
 			value = "auto"
 		}
 		if err := validateNodeXHTTPMode(value); err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.create.modeinvalid"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.create.modeinvalid"))
 			return true
 		}
 		state.Params.Mode = value
 	case "encryption":
 		want, valid := parseYesNo(input)
 		if !valid {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.create.yesno"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.create.yesno"))
 			return true
 		}
 		if want {
 			dec, enc, err := generateVLESSEncryptionPair()
 			if err != nil {
 				log.Printf("[Bot] vlessenc failed: %v", err)
-				s.sendAlert(chatID, tr(s.cfg.Language, "node.create.encfailed", err.Error()))
+				s.sendAlert(chatID, trh(s.cfg.Language, "node.create.encfailed", err.Error()))
 				return true
 			}
 			state.Params.Decryption = dec
@@ -352,14 +352,14 @@ func (s *BotService) handleNodeCreateInput(msg *tgMessage) bool {
 	case "mldsa":
 		want, valid := parseYesNo(input)
 		if !valid {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.create.yesno"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.create.yesno"))
 			return true
 		}
 		if want {
 			seed, err := generateMLDSA65Seed()
 			if err != nil {
 				log.Printf("[Bot] mldsa65 failed: %v", err)
-				s.sendAlert(chatID, tr(s.cfg.Language, "node.create.mldsafailed", err.Error()))
+				s.sendAlert(chatID, trh(s.cfg.Language, "node.create.mldsafailed", err.Error()))
 				return true
 			}
 			state.Params.MLDSA65Seed = seed
@@ -368,13 +368,13 @@ func (s *BotService) handleNodeCreateInput(msg *tgMessage) bool {
 		}
 	case "cert_path":
 		if !filepath.IsAbs(input) {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.create.absolutepath"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.create.absolutepath"))
 			return true
 		}
 		state.Params.CertFile = filepath.Clean(input)
 	case "key_path":
 		if !filepath.IsAbs(input) {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.create.absolutepath"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.create.absolutepath"))
 			return true
 		}
 		state.Params.KeyFile = filepath.Clean(input)
@@ -392,7 +392,7 @@ func (s *BotService) handleNodeCreateInput(msg *tgMessage) bool {
 	if state.Step == "path" && state.Params.Path == "" {
 		path, err := randomXHTTPPath()
 		if err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.create.failed", err.Error()))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.create.failed", err.Error()))
 			return true
 		}
 		state.Params.Path = path
@@ -421,11 +421,11 @@ func (s *BotService) handleNodeCertSource(cb *tgCallback) {
 	}
 	nodeCreateStates.Unlock()
 	if otherOwner {
-		s.sendAlert(chatID, tr(s.cfg.Language, "manage.owned"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "manage.owned"))
 		return
 	}
 	if !ok {
-		s.sendOrEdit(chatID, cb.Message.MessageID, tr(s.cfg.Language, "node.create.expired"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, cb.Message.MessageID, trh(s.cfg.Language, "node.create.expired"), s.backToMainMarkup())
 		return
 	}
 	source := strings.TrimPrefix(cb.Data, "node_cert_source:")
@@ -441,7 +441,7 @@ func (s *BotService) handleNodeCertSource(cb *tgCallback) {
 	if state.Step == "path" {
 		path, err := randomXHTTPPath()
 		if err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.create.failed", err.Error()))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.create.failed", err.Error()))
 			return
 		}
 		state.Params.Path = path
@@ -453,7 +453,7 @@ func (s *BotService) handleNodeCertSource(cb *tgCallback) {
 }
 
 func (s *BotService) sendNodeTemplatePicker(chatID int64, msgID int) {
-	text := tr(s.cfg.Language, "node.create.picker")
+	text := trh(s.cfg.Language, "node.create.picker")
 	markup := newKeyboard(
 		newRow(
 			newButton(tr(s.cfg.Language, "node.create.tcp"), "node_new:"+string(NodeTemplateTCPReality)),
@@ -474,7 +474,7 @@ func (s *BotService) sendNodeTemplatePicker(chatID int64, msgID int) {
 	s.sendOrEdit(chatID, msgID, text, markup)
 }
 
-func nodeCreateSummaryText(lang string, state nodeCreateState) string {
+func nodeCreateSummaryText(lang string, state nodeCreateState) htmlText {
 	encryption := tr(lang, "node.encryption.disabled")
 	if state.ClientEncryption != "" && state.ClientEncryption != "none" {
 		encryption = tr(lang, "node.encryption.enabled")
@@ -483,26 +483,26 @@ func nodeCreateSummaryText(lang string, state nodeCreateState) string {
 	if strings.TrimSpace(state.Params.MLDSA65Seed) != "" {
 		mldsa = tr(lang, "node.encryption.enabled")
 	}
-	text := tr(lang, "node.create.summary",
-		mdEsc(nodeTemplateName(state.Template)),
-		mdCode(state.Params.Tag),
+	text := trh(lang, "node.create.summary",
+		nodeTemplateName(state.Template),
+		state.Params.Tag,
 		state.Params.Port,
-		mdCode(state.Params.SNI),
+		state.Params.SNI,
 	)
 	if state.Template == NodeTemplateXHTTPReality || state.Template == NodeTemplateXHTTPTLS {
-		text += tr(lang, "node.create.summaryxhttp", mdCode(state.Params.Path), mdCode(state.Params.Mode))
+		text += trh(lang, "node.create.summaryxhttp", state.Params.Path, state.Params.Mode)
 	}
 	if state.Template == NodeTemplateXHTTPTLS {
-		text += tr(lang, "node.create.summaryencryption", encryption)
+		text += trh(lang, "node.create.summaryencryption", encryption)
 	} else {
-		text += tr(lang, "node.create.summarysecrets", encryption, mldsa)
+		text += trh(lang, "node.create.summarysecrets", encryption, mldsa)
 	}
 	if state.Template == NodeTemplateXHTTPTLS {
 		source := tr(lang, "node.create.certself")
 		if state.CertSource == "existing" {
 			source = tr(lang, "node.create.certexisting")
 		}
-		text += tr(lang, "node.create.summarycert", source, mdCode(state.Params.CertFile), mdCode(state.Params.KeyFile))
+		text += trh(lang, "node.create.summarycert", source, state.Params.CertFile, state.Params.KeyFile)
 	}
 	return text
 }
@@ -514,7 +514,7 @@ func (s *BotService) showNodeCreateSummary(chatID, adminID int64, msgID int, sta
 		if strings.TrimSpace(state.Params.PrivateKey) == "" {
 			key, err := resolveRealityPrivateKey(s.cfg.XrayConfigPath)
 			if err != nil {
-				s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.create.failed", err.Error()), s.backToMainMarkup())
+				s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.create.failed", err.Error()), s.backToMainMarkup())
 				return
 			}
 			state.Params.PrivateKey = key
@@ -526,7 +526,7 @@ func (s *BotService) showNodeCreateSummary(chatID, adminID int64, msgID int, sta
 			domain := state.Params.SNI
 			certPEM, keyPEM, err := GenerateSelfSignedCertificatePEM(domain)
 			if err != nil {
-				s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.create.certfailed", err.Error()), s.backToMainMarkup())
+				s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.create.certfailed", err.Error()), s.backToMainMarkup())
 				return
 			}
 			dir := certsDirectory(s.cfg.XrayConfigPath)
@@ -537,18 +537,18 @@ func (s *BotService) showNodeCreateSummary(chatID, adminID int64, msgID int, sta
 			request.KeyPEM = keyPEM
 		} else {
 			if err := ValidateCertificatePair(state.Params.CertFile, state.Params.KeyFile, state.Params.SNI); err != nil {
-				s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.create.certfailed", err.Error()), s.backToMainMarkup())
+				s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.create.certfailed", err.Error()), s.backToMainMarkup())
 				return
 			}
 		}
 	}
 	if err := ValidateNodeTemplateParams(state.Template, state.Params); err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.create.failed", err.Error()), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.create.failed", err.Error()), s.backToMainMarkup())
 		return
 	}
 	var raw [8]byte
 	if _, err := rand.Read(raw[:]); err != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "node.tokenerror"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "node.tokenerror"))
 		return
 	}
 	token := hex.EncodeToString(raw[:])
@@ -583,68 +583,68 @@ func (s *BotService) confirmNodeCreate(cb *tgCallback, confirm bool) {
 	}
 	pendingNodeCreates.Unlock()
 	if ok && (item.ChatID != chatID || item.AdminID != cb.From.ID) {
-		s.sendAlert(chatID, tr(s.cfg.Language, "manage.owned"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "manage.owned"))
 		return
 	}
 	if !ok || time.Now().After(item.Expires) {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.create.expired"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.create.expired"), s.backToMainMarkup())
 		return
 	}
 	if !confirm {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.create.cancelled"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.create.cancelled"), s.backToMainMarkup())
 		return
 	}
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.mutationsdisabled"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.mutationsdisabled"), s.backToMainMarkup())
 		return
 	}
 	result, err := CreateNode(s.cfg.XrayConfigPath, s.cfg.XrayBinPath, s.cfg.StatsAPIServer, item.Request)
 	if err != nil {
 		log.Printf("[Bot] node create failed: %v", err)
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.create.failed", err.Error()), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.create.failed", err.Error()), s.backToMainMarkup())
 		return
 	}
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.create.success", result), s.backToMainMarkup())
+	s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.create.success", result), s.backToMainMarkup())
 }
 
 func (s *BotService) showNodeDeleteConfirm(chatID, adminID int64, msgID int, key string) {
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.mutationsdisabled"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.mutationsdisabled"), s.backToMainMarkup())
 		return
 	}
 	nodes, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "node.readfailure", err.Error()))
+		s.sendAlert(chatID, trh(s.cfg.Language, "node.readfailure", err.Error()))
 		return
 	}
 	node := findManagedNodeByKey(nodes, key)
 	if node == nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "node.missing"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "node.missing"))
 		return
 	}
 	report, etag, err := inspectNodeDeletionForConfirmation(s.cfg.XrayConfigPath, node.Tag)
 	if err != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "node.delete.inspectfailed", err.Error()))
+		s.sendAlert(chatID, trh(s.cfg.Language, "node.delete.inspectfailed", err.Error()))
 		return
 	}
-	text := tr(s.cfg.Language, "node.delete.impact", mdCode(node.Tag), report.Port, report.Clients)
+	text := trh(s.cfg.Language, "node.delete.impact", node.Tag, report.Port, report.Clients)
 	if len(report.RoutingRules) > 0 {
 		parts := make([]string, 0, len(report.RoutingRules))
 		for _, index := range report.RoutingRules {
 			parts = append(parts, strconv.Itoa(index+1))
 		}
-		text += tr(s.cfg.Language, "node.delete.routing", mdCode(strings.Join(parts, ", ")))
+		text += trh(s.cfg.Language, "node.delete.routing", strings.Join(parts, ", "))
 	}
 	if len(report.SuspendedUsers) > 0 {
-		text += tr(s.cfg.Language, "node.delete.suspended", mdCode(strings.Join(report.SuspendedUsers, ", ")))
+		text += trh(s.cfg.Language, "node.delete.suspended", strings.Join(report.SuspendedUsers, ", "))
 	}
 	if report.PublicPort > 0 {
-		text += tr(s.cfg.Language, "node.delete.publicport", report.PublicPort)
+		text += trh(s.cfg.Language, "node.delete.publicport", report.PublicPort)
 	}
-	text += tr(s.cfg.Language, "node.delete.note")
+	text += trh(s.cfg.Language, "node.delete.note")
 	var raw [8]byte
 	if _, err := rand.Read(raw[:]); err != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "node.tokenerror"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "node.tokenerror"))
 		return
 	}
 	token := hex.EncodeToString(raw[:])
@@ -679,11 +679,11 @@ func (s *BotService) confirmNodeDelete(cb *tgCallback, confirm bool) {
 	}
 	pendingNodeDeletes.Unlock()
 	if ok && (item.ChatID != chatID || item.AdminID != cb.From.ID) {
-		s.sendAlert(chatID, tr(s.cfg.Language, "manage.owned"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "manage.owned"))
 		return
 	}
 	if !ok || time.Now().After(item.Expires) {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.expired"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.expired"), s.backToMainMarkup())
 		return
 	}
 	if !confirm {
@@ -691,18 +691,18 @@ func (s *BotService) confirmNodeDelete(cb *tgCallback, confirm bool) {
 		return
 	}
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.mutationsdisabled"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.mutationsdisabled"), s.backToMainMarkup())
 		return
 	}
 	result, err := deleteNodeWithExpectedImpact(s.cfg.XrayConfigPath, s.cfg.XrayBinPath, s.cfg.StatsAPIServer, item.Tag, item.ETag)
 	if err != nil {
 		if errors.Is(err, errNodeDeletionChanged) {
-			s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.delete.changed"), s.backToMainMarkup())
+			s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.delete.changed"), s.backToMainMarkup())
 			return
 		}
 		log.Printf("[Bot] node delete failed: %v", err)
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.delete.failed", err.Error()), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.delete.failed", err.Error()), s.backToMainMarkup())
 		return
 	}
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.delete.success", result), s.backToMainMarkup())
+	s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.delete.success", result), s.backToMainMarkup())
 }

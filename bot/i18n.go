@@ -43,15 +43,15 @@ func supportedLanguage(lang string) bool {
 		return false
 	}
 }
+
+// tr renders a locale template as plain text for button labels, toasts,
+// captions and logs. Message bodies use trh, which produces escaped HTML.
 func tr(lang, key string, args ...any) string {
-	lang = normalizeLanguage(lang)
-	msg, ok := languageBundles[lang][key]
-	if !ok {
-		msg, ok = languageBundles["en"][key]
-	}
+	template, ok := localeTemplate(lang, key)
 	if !ok {
 		return key
 	}
+	msg := templateMarkup(template, false)
 	if len(args) > 0 {
 		return fmt.Sprintf(msg, args...)
 	}

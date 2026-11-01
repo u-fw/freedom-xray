@@ -6,20 +6,20 @@ import (
 	"time"
 )
 
-func onlineCardText(state trafficStore, now time.Time, lang string) string {
+func onlineCardText(state trafficStore, now time.Time, lang string) htmlText {
 	return onlineCardTextWithError(state, now, lang, nil)
 }
 
-func onlineCardTextWithError(state trafficStore, now time.Time, lang string, queryErr error) string {
-	var out strings.Builder
-	out.WriteString(tr(lang, "online.title"))
-	out.WriteString(tr(lang, "online.history", int(onlineHistoryRetention/(24*time.Hour)), maxOnlineIPsPerUser))
+func onlineCardTextWithError(state trafficStore, now time.Time, lang string, queryErr error) htmlText {
+	var out htmlBuilder
+	out.Add(trh(lang, "online.title"))
+	out.Add(trh(lang, "online.history", int(onlineHistoryRetention/(24*time.Hour)), maxOnlineIPsPerUser))
 	if queryErr != nil {
-		out.WriteString(tr(lang, "online.queryFailure", mdEsc(queryErr.Error())))
+		out.Add(trh(lang, "online.queryFailure", queryErr.Error()))
 	}
 	fresh := state.OnlinePollAt > 0 && now.Unix()-state.OnlinePollAt <= 20 && state.OnlinePollAt <= now.Unix()+5
 	if !fresh {
-		out.WriteString(tr(lang, "online.stale"))
+		out.Add(trh(lang, "online.stale"))
 	}
 	nameSet := map[string]bool{}
 	for name, ips := range state.LiveIPs {
@@ -54,7 +54,7 @@ func onlineCardTextWithError(state trafficStore, now time.Time, lang string, que
 	})
 	showedIPs := false
 	if len(names) == 0 {
-		out.WriteString(tr(lang, "online.noObservation"))
+		out.Add(trh(lang, "online.noObservation"))
 	} else {
 		max := len(names)
 		if max > 25 {
@@ -78,11 +78,11 @@ func onlineCardTextWithError(state trafficStore, now time.Time, lang string, que
 				status = tr(lang, "online.live")
 				ips = current
 			}
-			out.WriteString("👤 *" + mdEsc(name) + "* — " + status + "\n")
+			out.Add("👤 ", bold(name), " — ", esc(status), "\n")
 			if stamp > 0 {
-				out.WriteString(tr(lang, "online.lastSeen", time.Unix(stamp, 0).Format("2006-01-02 15:04:05")))
+				out.Add(trh(lang, "online.lastSeen", time.Unix(stamp, 0).Format("2006-01-02 15:04:05")))
 			} else {
-				out.WriteString(tr(lang, "online.lastNever"))
+				out.Add(trh(lang, "online.lastNever"))
 			}
 			limit := len(ips)
 			if limit > 3 {
@@ -92,25 +92,25 @@ func onlineCardTextWithError(state trafficStore, now time.Time, lang string, que
 				showedIPs = true
 			}
 			for _, ip := range ips[:limit] {
-				out.WriteString(tr(lang, "online.ip", mdCode(ip.IP), time.Unix(ip.LastSeen, 0).Format("2006-01-02 15:04:05")))
+				out.Add(trh(lang, "online.ip", ip.IP, time.Unix(ip.LastSeen, 0).Format("2006-01-02 15:04:05")))
 			}
 			usage := state.Users[name]
-			out.WriteString(tr(lang, "online.traffic", FormatBytes(usage.TotalUp), FormatBytes(usage.TotalDown), FormatBytes(usage.TotalUp+usage.TotalDown)))
-			out.WriteString("\n")
+			out.Add(trh(lang, "online.traffic", FormatBytes(usage.TotalUp), FormatBytes(usage.TotalDown), FormatBytes(usage.TotalUp+usage.TotalDown)))
+			out.Add("\n")
 		}
 		if len(names) > max {
-			out.WriteString(tr(lang, "online.truncated"))
+			out.Add(trh(lang, "online.truncated"))
 		}
 	}
 	if fresh {
-		out.WriteString(tr(lang, "online.polled", time.Unix(state.OnlinePollAt, 0).Format("2006-01-02 15:04:05")))
+		out.Add(trh(lang, "online.polled", time.Unix(state.OnlinePollAt, 0).Format("2006-01-02 15:04:05")))
 	}
-	out.WriteString(tr(lang, "online.totalScope"))
+	out.Add(trh(lang, "online.totalScope"))
 	// The spoofing caveat only concerns addresses that are actually displayed.
 	if showedIPs {
-		out.WriteString(tr(lang, "online.warning"))
+		out.Add(trh(lang, "online.warning"))
 	}
-	return out.String()
+	return out.HTML()
 }
 
 func (s *BotService) sendOnlineCard(chatID int64, msgID int) {
@@ -120,9 +120,9 @@ func (s *BotService) sendOnlineCard(chatID int64, msgID int) {
 	if state.Users == nil {
 		detail := "unknown error"
 		if err != nil {
-			detail = mdEsc(err.Error())
+			detail = err.Error()
 		}
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "online.error", detail), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "online.error", detail), s.backToMainMarkup())
 		return
 	}
 	rows := [][]tgButton{
@@ -133,7 +133,7 @@ func (s *BotService) sendOnlineCard(chatID int64, msgID int) {
 	// An empty online list is expected when a level that owns clients never
 	// enabled statsUserOnline; say so and make the fix reachable in one tap.
 	if missing, lookupErr := missingOnlineLevels(s.cfg.XrayConfigPath); lookupErr == nil && len(missing) > 0 {
-		text = strings.TrimRight(text, "\n") + "\n" + tr(s.cfg.Language, "online.policyoff", strings.Join(missing, ", "))
+		text = htmlText(strings.TrimRight(string(text), "\n")) + "\n" + trh(s.cfg.Language, "online.policyoff", strings.Join(missing, ", "))
 		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "stats.open"), "menu_stats")))
 	}
 	s.sendOrEdit(chatID, msgID, text, newKeyboard(rows...))

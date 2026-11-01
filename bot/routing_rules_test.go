@@ -121,7 +121,7 @@ func TestRoutingAliasesAndSensitiveExtensions(t *testing.T) {
 		t.Fatal("redaction changed edit reference")
 	}
 	body := routingRuleDetailText("en", records[1], root)
-	if strings.Contains(body, "private-value") || strings.Contains(body, "private-header") || !strings.Contains(body, "domain:effective.example") {
+	if strings.Contains(plainHTML(body), "private-value") || strings.Contains(plainHTML(body), "private-header") || !strings.Contains(plainHTML(body), "domain:effective.example") {
 		t.Fatal("Telegram detail did not redact extension or show domain alias")
 	}
 

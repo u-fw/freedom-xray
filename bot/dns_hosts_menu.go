@@ -32,12 +32,12 @@ func currentDNSHostsView(root map[string]any, etag string) (dnsHostsSummary, err
 func (s *BotService) sendDNSHostsPage(chatID int64, msgID, offset int, notice string) {
 	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.error", mdEsc(err.Error())), dnsBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.error", err.Error()), dnsBackMarkup(s.cfg.Language))
 		return
 	}
 	view, err := dnsHostsView(root)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.error", mdEsc(err.Error())), dnsBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.error", err.Error()), dnsBackMarkup(s.cfg.Language))
 		return
 	}
 	if offset < 0 || len(view.Hosts) == 0 {
@@ -50,9 +50,9 @@ func (s *BotService) sendDNSHostsPage(chatID int64, msgID, offset int, notice st
 	if end > len(view.Hosts) {
 		end = len(view.Hosts)
 	}
-	body := tr(s.cfg.Language, "dns.hosts.list", len(view.Hosts))
+	body := trh(s.cfg.Language, "dns.hosts.list", len(view.Hosts))
 	if notice != "" {
-		body += "\n" + mdEsc(notice) + "\n"
+		body += "\n" + esc(notice) + "\n"
 	}
 	var rows [][]tgButton
 	for _, host := range view.Hosts[offset:end] {
@@ -83,10 +83,10 @@ func (s *BotService) sendDNSHostDetail(chatID int64, msgID, index int, etag stri
 		view, err = currentDNSHostsView(root, etag)
 		if err == nil && index >= 1 && index <= len(view.Hosts) {
 			host := view.Hosts[index-1]
-			body := tr(s.cfg.Language, "dns.hosts.detail", mdEsc(host.Name), mdEsc(strings.Join(host.Targets, "\n")))
+			body := trh(s.cfg.Language, "dns.hosts.detail", host.Name, strings.Join(host.Targets, "\n"))
 			var rows [][]tgButton
 			if !host.Editable {
-				body += tr(s.cfg.Language, "dns.hosts.advanced")
+				body += trh(s.cfg.Language, "dns.hosts.advanced")
 			} else if s.cfg.AllowMutations {
 				rows = append(rows, newRow(
 					newButton(tr(s.cfg.Language, "dns.hosts.edit"), dnsHostCallback("edit", index, etag)),
@@ -104,7 +104,7 @@ func (s *BotService) sendDNSHostDetail(chatID int64, msgID, index int, etag stri
 
 func (s *BotService) offerDNSHostChange(chatID, adminID int64, msgID int, change dnsHostChange) {
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), dnsHostsBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), dnsHostsBackMarkup(s.cfg.Language))
 		return
 	}
 	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
@@ -116,17 +116,17 @@ func (s *BotService) offerDNSHostChange(chatID, adminID int64, msgID int, change
 		return
 	}
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.edit.invalid", mdEsc(err.Error())), dnsHostsBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.edit.invalid", err.Error()), dnsHostsBackMarkup(s.cfg.Language))
 		return
 	}
-	var body string
+	var body htmlText
 	switch change.Kind {
 	case "add", "update":
-		body = tr(s.cfg.Language, "dns.hosts.confirm.put", mdEsc(change.Name), mdEsc(strings.Join(change.Targets, ", ")))
+		body = trh(s.cfg.Language, "dns.hosts.confirm.put", change.Name, strings.Join(change.Targets, ", "))
 	case "rename":
-		body = tr(s.cfg.Language, "dns.hosts.confirm.rename", mdEsc(change.Name), mdEsc(change.NewName))
+		body = trh(s.cfg.Language, "dns.hosts.confirm.rename", change.Name, change.NewName)
 	case "delete":
-		body = tr(s.cfg.Language, "dns.hosts.confirm.delete", mdEsc(change.Name))
+		body = trh(s.cfg.Language, "dns.hosts.confirm.delete", change.Name)
 	}
 	s.queueGuidedRoutingChange(chatID, adminID, msgID, pendingRoutingChange{DNSHost: &change}, body)
 }
@@ -142,7 +142,7 @@ func (s *BotService) handleDNSHostInput(msg *tgMessage, state dnsWizard) bool {
 	}
 	if !s.cfg.AllowMutations {
 		clearDNSWizard(msg.Chat.ID)
-		s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "manage.writesdisabled"))
+		s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "manage.writesdisabled"))
 		return true
 	}
 	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
@@ -155,24 +155,24 @@ func (s *BotService) handleDNSHostInput(msg *tgMessage, state dnsWizard) bool {
 		return true
 	}
 	if err != nil {
-		s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
+		s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "routing.guide.retry", err.Error()))
 		return true
 	}
 	text := strings.TrimSpace(msg.Text)
 	if state.Kind == "host-add-name" {
 		if !safeDNSHostName(text) {
-			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "dns.hosts.invalid_name"))
+			s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "dns.hosts.invalid_name"))
 			return true
 		}
 		config, _ := readDNS(root)
 		hosts, _ := readDNSHosts(config)
 		if _, exists := hosts[text]; exists {
-			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "dns.hosts.duplicate"))
+			s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "dns.hosts.duplicate"))
 			return true
 		}
 		state.Kind, state.Host = "host-add-targets", text
 		setDNSWizard(msg.Chat.ID, state)
-		s.sendOrEdit(msg.Chat.ID, 0, tr(s.cfg.Language, "dns.hosts.targets_prompt"), dnsHostsBackMarkup(s.cfg.Language))
+		s.sendOrEdit(msg.Chat.ID, 0, trh(s.cfg.Language, "dns.hosts.targets_prompt"), dnsHostsBackMarkup(s.cfg.Language))
 		return true
 	}
 	change := dnsHostChange{ETag: state.ETag, Name: state.Host}
@@ -184,7 +184,7 @@ func (s *BotService) handleDNSHostInput(msg *tgMessage, state dnsWizard) bool {
 		}
 	case "host-rename":
 		if !safeDNSHostName(text) {
-			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "dns.hosts.invalid_name"))
+			s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "dns.hosts.invalid_name"))
 			return true
 		}
 		change.Kind, change.NewName = "rename", text
@@ -193,7 +193,7 @@ func (s *BotService) handleDNSHostInput(msg *tgMessage, state dnsWizard) bool {
 		return true
 	}
 	if _, err := applyDNSHostChange(root, change); err != nil {
-		s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
+		s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "routing.guide.retry", err.Error()))
 		return true
 	}
 	clearDNSWizard(msg.Chat.ID)
@@ -242,13 +242,13 @@ func (s *BotService) handleDNSHostCallback(cb *tgCallback) {
 		return
 	}
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), dnsHostsBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), dnsHostsBackMarkup(s.cfg.Language))
 		return
 	}
 	if parts[1] == "add" && len(parts) == 3 {
 		clearOtherRoutingInputs(chatID)
 		setDNSWizard(chatID, dnsWizard{AdminID: cb.From.ID, Kind: "host-add-name", ETag: etag, Expires: time.Now().Add(5 * time.Minute)})
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "dns.hosts.name_prompt"), dnsHostsBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "dns.hosts.name_prompt"), dnsHostsBackMarkup(s.cfg.Language))
 		return
 	}
 	if len(parts) != 4 || !record.Editable {
@@ -262,7 +262,7 @@ func (s *BotService) handleDNSHostCallback(cb *tgCallback) {
 			kind, prompt = "host-rename", "dns.hosts.name_prompt"
 		}
 		setDNSWizard(chatID, dnsWizard{AdminID: cb.From.ID, Kind: kind, ETag: etag, Host: record.Name, Expires: time.Now().Add(5 * time.Minute)})
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, prompt), dnsHostsBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, prompt), dnsHostsBackMarkup(s.cfg.Language))
 	case "delete":
 		s.offerDNSHostChange(chatID, cb.From.ID, msgID, dnsHostChange{Kind: "delete", ETag: etag, Name: record.Name})
 	}

@@ -122,10 +122,10 @@ func balancerMatchedOutbounds(root, item map[string]any) []string {
 	return matched
 }
 
-func balancerWarnings(lang string, root, item map[string]any) string {
+func balancerWarnings(lang string, root, item map[string]any) htmlText {
 	matched := balancerMatchedOutbounds(root, item)
 	if len(matched) == 0 {
-		return tr(lang, "balancer.warning.no_match")
+		return trh(lang, "balancer.warning.no_match")
 	}
 	strategy := strings.ToLower(balancerStrategy(item))
 	fallback, _ := item["fallbackTag"].(string)
@@ -150,12 +150,12 @@ func balancerWarnings(lang string, root, item map[string]any) string {
 			missing = append(missing, tag)
 		}
 	}
-	var warning string
+	var warning htmlText
 	if len(missing) > 0 {
-		warning += tr(lang, "balancer.warning.unmonitored", mdEsc(strings.Join(missing, ", ")))
+		warning += trh(lang, "balancer.warning.unmonitored", strings.Join(missing, ", "))
 	}
 	if fallback == "" {
-		warning += tr(lang, "balancer.warning.no_fallback")
+		warning += trh(lang, "balancer.warning.no_fallback")
 	}
 	return warning
 }
@@ -163,12 +163,12 @@ func balancerWarnings(lang string, root, item map[string]any) string {
 func (s *BotService) sendBalancerPage(chatID int64, msgID, offset int, notice string) {
 	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.error", mdEsc(err.Error())), balancerBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.error", err.Error()), balancerBackMarkup(s.cfg.Language))
 		return
 	}
 	records, err := balancerRecords(root)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.error", mdEsc(err.Error())), routingPageBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.error", err.Error()), routingPageBackMarkup(s.cfg.Language))
 		return
 	}
 	if offset < 0 || len(records) == 0 {
@@ -181,12 +181,12 @@ func (s *BotService) sendBalancerPage(chatID int64, msgID, offset int, notice st
 	if end > len(records) {
 		end = len(records)
 	}
-	body := tr(s.cfg.Language, "balancer.list", len(records))
+	body := trh(s.cfg.Language, "balancer.list", len(records))
 	if notice != "" {
-		body += "\n" + mdEsc(notice) + "\n"
+		body += "\n" + esc(notice) + "\n"
 	}
 	if len(records) == 0 {
-		body += tr(s.cfg.Language, "balancer.empty")
+		body += trh(s.cfg.Language, "balancer.empty")
 	}
 	var rows [][]tgButton
 	for _, record := range records[offset:end] {
@@ -255,14 +255,14 @@ func (s *BotService) sendBalancerDetailNotice(chatID int64, msgID int, key, etag
 	if matchedText == "" {
 		matchedText = tr(s.cfg.Language, "balancer.no_match")
 	}
-	body := tr(s.cfg.Language, "balancer.detail", mdEsc(record.Tag), mdEsc(selectors), mdEsc(balancerStrategy(item)), mdEsc(fallback), mdEsc(matchedText))
+	body := trh(s.cfg.Language, "balancer.detail", record.Tag, selectors, balancerStrategy(item), fallback, matchedText)
 	if notice != "" {
-		body = mdEsc(notice) + "\n\n" + body
+		body = esc(notice) + "\n\n" + body
 	}
 	body += balancerWarnings(s.cfg.Language, root, item)
 	redacted := redactBalancerRecords([]balancerRecord{record})[0]
 	if len(redacted.RedactedFields) > 0 {
-		body += tr(s.cfg.Language, "balancer.hidden")
+		body += trh(s.cfg.Language, "balancer.hidden")
 	}
 	var rows [][]tgButton
 	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "balancer.live"), balancerCallback("live", record.Tag, record.ETag))))
@@ -291,18 +291,18 @@ func (s *BotService) sendBalancerLive(chatID int64, msgID int, record balancerRe
 
 func (s *BotService) sendBalancerLiveNotice(chatID int64, msgID int, record balancerRecord, notice string) {
 	status, err := queryBalancerLive(s.cfg, record.Tag)
-	body := tr(s.cfg.Language, "balancer.live.title", mdEsc(record.Tag))
+	body := trh(s.cfg.Language, "balancer.live.title", record.Tag)
 	if notice != "" {
-		body = mdEsc(notice) + "\n\n" + body
+		body = esc(notice) + "\n\n" + body
 	}
 	var rows [][]tgButton
 	if errors.Is(err, errRoutingServiceDisabled) {
-		body += tr(s.cfg.Language, "balancer.live.disabled")
+		body += trh(s.cfg.Language, "balancer.live.disabled")
 		if s.cfg.AllowMutations {
 			rows = append(rows, newRow(newButton(tr(s.cfg.Language, "balancer.live.enable"), balancerCallback("enable", record.Tag, record.ETag))))
 		}
 	} else if err != nil {
-		body += tr(s.cfg.Language, "balancer.live.failed", mdEsc(err.Error()))
+		body += trh(s.cfg.Language, "balancer.live.failed", err.Error())
 	} else {
 		selected := strings.Join(status.Selected, ", ")
 		if selected == "" {
@@ -312,8 +312,8 @@ func (s *BotService) sendBalancerLiveNotice(chatID int64, msgID int, record bala
 		if override == "" {
 			override = tr(s.cfg.Language, "balancer.override.auto")
 		}
-		body += tr(s.cfg.Language, "balancer.live.result", mdEsc(selected), mdEsc(override))
-		body += tr(s.cfg.Language, "balancer.override.runtime_note")
+		body += trh(s.cfg.Language, "balancer.live.result", selected, override)
+		body += trh(s.cfg.Language, "balancer.override.runtime_note")
 		if s.cfg.AllowMutations {
 			rows = append(rows, newRow(newButton(tr(s.cfg.Language, "balancer.override.button"), balancerCallback("override", record.Tag, record.ETag))))
 		}
@@ -339,7 +339,7 @@ func (s *BotService) returnToBalancerLive(chatID int64, msgID int, tag, etag str
 
 func (s *BotService) offerBalancerChange(chatID, adminID int64, msgID int, change balancerChange) {
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), balancerBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), balancerBackMarkup(s.cfg.Language))
 		return
 	}
 	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
@@ -351,17 +351,17 @@ func (s *BotService) offerBalancerChange(chatID, adminID int64, msgID int, chang
 		return
 	}
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.edit.invalid", mdEsc(err.Error())), balancerBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.edit.invalid", err.Error()), balancerBackMarkup(s.cfg.Language))
 		return
 	}
-	var detail string
+	var detail htmlText
 	switch change.Kind {
 	case "put":
 		key := "balancer.confirm.create"
 		if change.ETag != "" {
 			key = "balancer.native.confirm_replace"
 		}
-		detail = tr(s.cfg.Language, key, mdEsc(change.Tag), mdEsc(strings.Join(stringList(change.Balancer["selector"]), ", ")))
+		detail = trh(s.cfg.Language, key, change.Tag, strings.Join(stringList(change.Balancer["selector"]), ", "))
 	case "patch":
 		field := change.Field
 		switch field {
@@ -372,9 +372,9 @@ func (s *BotService) offerBalancerChange(chatID, adminID int64, msgID int, chang
 		case "fallbackTag":
 			field = tr(s.cfg.Language, "balancer.edit.fallback")
 		}
-		detail = tr(s.cfg.Language, "balancer.confirm.patch", mdEsc(change.Tag), mdEsc(field), mdEsc(previewRoutingValue(change.Value)))
+		detail = trh(s.cfg.Language, "balancer.confirm.patch", change.Tag, field, previewRoutingValue(change.Value))
 	case "delete":
-		detail = tr(s.cfg.Language, "balancer.confirm.delete", mdEsc(change.Tag))
+		detail = trh(s.cfg.Language, "balancer.confirm.delete", change.Tag)
 	}
 	if change.Kind != "delete" {
 		_, item, err := findBalancer(root, change.Tag)
@@ -411,7 +411,7 @@ func (s *BotService) handleBalancerInput(msg *tgMessage) bool {
 	}
 	if !s.cfg.AllowMutations {
 		clearBalancerWizard(msg.Chat.ID)
-		s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "manage.writesdisabled"))
+		s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "manage.writesdisabled"))
 		return true
 	}
 	if state.Step == "native-create" || state.Step == "native-replace" || state.Step == "monitor-native" {
@@ -431,7 +431,7 @@ func (s *BotService) handleBalancerInput(msg *tgMessage) bool {
 			return true
 		}
 		if err != nil {
-			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
+			s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "routing.guide.retry", err.Error()))
 			return true
 		}
 		clearBalancerWizard(msg.Chat.ID)
@@ -440,22 +440,22 @@ func (s *BotService) handleBalancerInput(msg *tgMessage) bool {
 	}
 	if state.Step == "new-tag" {
 		if value == "" || len(value) > 256 || strings.ContainsAny(value, "\x00\r\n") {
-			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "balancer.invalid_tag"))
+			s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "balancer.invalid_tag"))
 			return true
 		}
 		root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
 		if err != nil {
-			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.error", mdEsc(err.Error())))
+			s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "routing.error", err.Error()))
 			return true
 		}
 		index, _, err := findBalancer(root, value)
 		if err != nil || index >= 0 {
-			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "balancer.duplicate"))
+			s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "balancer.duplicate"))
 			return true
 		}
 		state.Tag, state.Step, state.Expires = value, "new-selector", time.Now().Add(5*time.Minute)
 		setBalancerWizard(msg.Chat.ID, state)
-		s.sendOrEdit(msg.Chat.ID, 0, tr(s.cfg.Language, "balancer.selector_prompt"), balancerBackMarkup(s.cfg.Language))
+		s.sendOrEdit(msg.Chat.ID, 0, trh(s.cfg.Language, "balancer.selector_prompt"), balancerBackMarkup(s.cfg.Language))
 		return true
 	}
 	var selectors []any
@@ -465,7 +465,7 @@ func (s *BotService) handleBalancerInput(msg *tgMessage) bool {
 		}
 	}
 	if len(selectors) == 0 {
-		s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "balancer.selector_prompt"))
+		s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "balancer.selector_prompt"))
 		return true
 	}
 	if state.Step == "monitor-selectors" {
@@ -489,7 +489,7 @@ func (s *BotService) handleBalancerInput(msg *tgMessage) bool {
 			return true
 		}
 		if err != nil {
-			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
+			s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "routing.guide.retry", err.Error()))
 			return true
 		}
 		clearBalancerWizard(msg.Chat.ID)
@@ -511,7 +511,7 @@ func (s *BotService) handleBalancerInput(msg *tgMessage) bool {
 		return true
 	}
 	if err != nil {
-		s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
+		s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "routing.guide.retry", err.Error()))
 		return true
 	}
 	clearBalancerWizard(msg.Chat.ID)
@@ -542,7 +542,7 @@ func (s *BotService) handleBalancerCallback(cb *tgCallback) {
 	}
 	if (parts[1] == "add" || parts[1] == "jsonnew") && len(parts) == 2 {
 		if !s.cfg.AllowMutations {
-			s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), balancerBackMarkup(s.cfg.Language))
+			s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), balancerBackMarkup(s.cfg.Language))
 			return
 		}
 		clearOtherRoutingInputs(chatID)
@@ -551,7 +551,7 @@ func (s *BotService) handleBalancerCallback(cb *tgCallback) {
 			step, prompt = "native-create", "balancer.native.create_prompt"
 		}
 		setBalancerWizard(chatID, balancerWizard{AdminID: cb.From.ID, Step: step, Expires: time.Now().Add(5 * time.Minute)})
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, prompt), balancerBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, prompt), balancerBackMarkup(s.cfg.Language))
 		return
 	}
 	if len(parts) < 4 {
@@ -577,7 +577,7 @@ func (s *BotService) handleBalancerCallback(cb *tgCallback) {
 		return
 	}
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), balancerBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), balancerBackMarkup(s.cfg.Language))
 		return
 	}
 	switch parts[1] {
@@ -598,7 +598,7 @@ func (s *BotService) handleBalancerCallback(cb *tgCallback) {
 		}
 		clearOtherRoutingInputs(chatID)
 		setBalancerWizard(chatID, balancerWizard{AdminID: cb.From.ID, Step: "native-replace", Tag: record.Tag, ETag: record.ETag, Expires: time.Now().Add(5 * time.Minute)})
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "balancer.native.replace_prompt", mdEsc(record.Tag)), balancerBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "balancer.native.replace_prompt", record.Tag), balancerBackMarkup(s.cfg.Language))
 	case "enable":
 		if len(parts) != 4 {
 			return
@@ -609,21 +609,21 @@ func (s *BotService) handleBalancerCallback(cb *tgCallback) {
 		}
 		changed, err := applyRoutingService(root, server)
 		if err != nil {
-			s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.edit.invalid", mdEsc(err.Error())), balancerBackMarkup(s.cfg.Language))
+			s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.edit.invalid", err.Error()), balancerBackMarkup(s.cfg.Language))
 			return
 		}
 		if !changed {
 			s.sendBalancerLive(chatID, msgID, record)
 			return
 		}
-		s.queueGuidedRoutingChange(chatID, cb.From.ID, msgID, pendingRoutingChange{EnableRoutingAPI: true, LiveBalancerTag: record.Tag, LiveBalancerETag: record.ETag}, tr(s.cfg.Language, "balancer.live.enable_confirm"))
+		s.queueGuidedRoutingChange(chatID, cb.From.ID, msgID, pendingRoutingChange{EnableRoutingAPI: true, LiveBalancerTag: record.Tag, LiveBalancerETag: record.ETag}, trh(s.cfg.Language, "balancer.live.enable_confirm"))
 	case "selector":
 		if len(parts) != 4 {
 			return
 		}
 		clearOtherRoutingInputs(chatID)
 		setBalancerWizard(chatID, balancerWizard{AdminID: cb.From.ID, Step: "edit-selector", Tag: record.Tag, ETag: record.ETag, Expires: time.Now().Add(5 * time.Minute)})
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "balancer.selector_prompt"), balancerBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "balancer.selector_prompt"), balancerBackMarkup(s.cfg.Language))
 	case "strategy":
 		if len(parts) != 4 {
 			return
@@ -637,7 +637,7 @@ func (s *BotService) handleBalancerCallback(cb *tgCallback) {
 			rows = append(rows, buttons)
 		}
 		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "common.back"), balancerCallback("v", record.Tag, record.ETag))))
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "balancer.strategy_prompt"), newKeyboard(rows...))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "balancer.strategy_prompt"), newKeyboard(rows...))
 	case "ss":
 		if len(parts) != 5 {
 			return
@@ -686,7 +686,7 @@ func (s *BotService) handleBalancerCallback(cb *tgCallback) {
 		}
 		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "balancer.clear_fallback"), balancerCallback("sf", record.Tag, record.ETag)+":none")))
 		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "common.back"), balancerCallback("v", record.Tag, record.ETag))))
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "balancer.fallback_prompt"), newKeyboard(rows...))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "balancer.fallback_prompt"), newKeyboard(rows...))
 	case "sf":
 		if len(parts) != 5 {
 			return

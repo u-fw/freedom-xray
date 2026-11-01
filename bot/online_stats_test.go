@@ -88,13 +88,13 @@ func TestOnlineCardShowsSourceAndCumulativeUserTraffic(t *testing.T) {
 	}
 	body := onlineCardText(state, now, "en")
 	for _, wanted := range []string{"phone", "203.0.113.7", "Online", "Total:", "cumulative total", "Last online", "IP history"} {
-		if !strings.Contains(body, wanted) {
+		if !strings.Contains(plainHTML(body), wanted) {
 			t.Fatalf("missing %q in online view: %s", wanted, body)
 		}
 	}
 	state.LiveIPs = map[string][]onlineClientIP{}
 	body = onlineCardText(state, now, "en")
-	if !strings.Contains(body, "Recently observed (not online)") {
+	if !strings.Contains(plainHTML(body), "Recently observed (not online)") {
 		t.Fatalf("recent IP was lost or mislabeled: %s", body)
 	}
 }
@@ -102,7 +102,7 @@ func TestOnlineCardShowsSourceAndCumulativeUserTraffic(t *testing.T) {
 func TestOnlineCardKeepsUserWithoutObservedIP(t *testing.T) {
 	state := trafficStore{Users: map[string]trafficCounter{"reality-user": {TotalDown: 1024}}, OnlinePollAt: time.Now().Unix()}
 	message := onlineCardText(state, time.Now(), "en")
-	if !strings.Contains(message, "reality-user") || !strings.Contains(message, "Source IP not observed") || !strings.Contains(message, "Total:") {
+	if !strings.Contains(plainHTML(message), "reality-user") || !strings.Contains(plainHTML(message), "Source IP not observed") || !strings.Contains(plainHTML(message), "Total:") {
 		t.Fatalf("user with traffic must remain visible without a captured IP: %s", message)
 	}
 }
@@ -111,11 +111,11 @@ func TestOnlineCardKeepsUserWithoutObservedIP(t *testing.T) {
 func TestOnlineCardShowsXFFWarningOnlyWithDisplayedIPs(t *testing.T) {
 	now := time.Now()
 	state := trafficStore{Users: map[string]trafficCounter{"u": {TotalUp: 1}}, OnlinePollAt: now.Unix()}
-	if strings.Contains(onlineCardText(state, now, "en"), "XFF") {
+	if strings.Contains(plainHTML(onlineCardText(state, now, "en")), "XFF") {
 		t.Fatal("spoofing warning shown without any displayed IP")
 	}
 	state.OnlineIPs = map[string][]onlineClientIP{"u": {{IP: "203.0.113.7", LastSeen: now.Unix()}}}
-	if !strings.Contains(onlineCardText(state, now, "en"), "XFF") {
+	if !strings.Contains(plainHTML(onlineCardText(state, now, "en")), "XFF") {
 		t.Fatal("spoofing warning missing while an IP is displayed")
 	}
 }
@@ -148,11 +148,11 @@ func TestTrafficIncreaseMarksActivityWithoutOnlineIP(t *testing.T) {
 		t.Fatalf("last-active not updated: %+v", state.LastActive)
 	}
 	body := onlineCardText(state, now, "en")
-	if !strings.Contains(body, "Active traffic") || !strings.Contains(body, "Last online") {
+	if !strings.Contains(plainHTML(body), "Active traffic") || !strings.Contains(plainHTML(body), "Last online") {
 		t.Fatalf("activity status missing: %s", body)
 	}
 	// The activity window is bounded: stale activity falls back to the normal label.
-	if !strings.Contains(onlineCardText(state, now.Add(2*onlineActivityWindow), "en"), "Source IP not observed") {
+	if !strings.Contains(plainHTML(onlineCardText(state, now.Add(2*onlineActivityWindow), "en")), "Source IP not observed") {
 		t.Fatalf("stale activity must not claim live state: %s", onlineCardText(state, now.Add(2*onlineActivityWindow), "en"))
 	}
 }

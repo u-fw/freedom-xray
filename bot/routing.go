@@ -137,7 +137,7 @@ func routingCardText(snapshot routingSnapshot, lang string) string {
 	if strategy == "" {
 		strategy = "default"
 	}
-	out.WriteString(tr(lang, "routing.summary", mdCode(strategy), len(snapshot.Rules), len(snapshot.Outbounds), len(snapshot.Balancers)))
+	out.WriteString(tr(lang, "routing.summary", strategy, len(snapshot.Rules), len(snapshot.Outbounds), len(snapshot.Balancers)))
 	if len(snapshot.Rules) == 0 {
 		out.WriteString(tr(lang, "routing.empty"))
 	} else {
@@ -161,15 +161,15 @@ func routingCardText(snapshot routingSnapshot, lang string) string {
 			ports := joinOrEmpty(rule.Ports, tr(lang, "routing.none"))
 			protocols := joinOrEmpty(rule.Protocols, tr(lang, "routing.none"))
 			out.WriteString(tr(lang, "routing.rule",
-				rule.Index, mdCode(truncateLabel(tag, 24)), mdCode(truncateLabel(inbound, 40)), mdCode(truncateLabel(outbound, 40)),
-				len(rule.Domains), len(rule.IPs), mdCode(truncateLabel(ports, 40)), mdCode(truncateLabel(protocols, 40))))
+				rule.Index, truncateLabel(tag, 24), truncateLabel(inbound, 40), truncateLabel(outbound, 40),
+				len(rule.Domains), len(rule.IPs), truncateLabel(ports, 40), truncateLabel(protocols, 40)))
 		}
 		if len(snapshot.Rules) > limit {
 			out.WriteString(tr(lang, "routing.truncated", limit))
 		}
 	}
-	out.WriteString(tr(lang, "routing.outbounds", mdCode(truncateLabel(joinOrEmpty(snapshot.Outbounds, tr(lang, "routing.none")), 180))))
-	out.WriteString(tr(lang, "routing.balancers", mdCode(truncateLabel(joinOrEmpty(snapshot.Balancers, tr(lang, "routing.none")), 180))))
+	out.WriteString(tr(lang, "routing.outbounds", truncateLabel(joinOrEmpty(snapshot.Outbounds, tr(lang, "routing.none")), 180)))
+	out.WriteString(tr(lang, "routing.balancers", truncateLabel(joinOrEmpty(snapshot.Balancers, tr(lang, "routing.none")), 180)))
 	out.WriteString(tr(lang, "routing.note"))
 	return out.String()
 }

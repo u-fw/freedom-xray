@@ -60,17 +60,17 @@ func nativeInboundBackMarkup(lang string) tgKeyboard {
 func (s *BotService) sendNativeInboundPage(chatID int64, msgID, offset int, notice string) {
 	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "nodes.failure", mdEsc(err.Error())), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "nodes.failure", err.Error()), s.backToMainMarkup())
 		return
 	}
 	records, err := nativeInboundRecords(root)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "nodes.failure", mdEsc(err.Error())), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "nodes.failure", err.Error()), s.backToMainMarkup())
 		return
 	}
 	listETag, err := nativeInboundListETag(root)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "nodes.failure", mdEsc(err.Error())), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "nodes.failure", err.Error()), s.backToMainMarkup())
 		return
 	}
 	if offset < 0 || len(records) == 0 {
@@ -83,9 +83,9 @@ func (s *BotService) sendNativeInboundPage(chatID int64, msgID, offset int, noti
 	if end > len(records) {
 		end = len(records)
 	}
-	body := tr(s.cfg.Language, "inbound.native.list", len(records))
+	body := trh(s.cfg.Language, "inbound.native.list", len(records))
 	if notice != "" {
-		body += "\n" + mdEsc(notice) + "\n"
+		body += "\n" + esc(notice) + "\n"
 	}
 	var rows [][]tgButton
 	for _, record := range records[offset:end] {
@@ -138,21 +138,21 @@ func (s *BotService) sendNativeInboundDetail(chatID int64, msgID, index int, eta
 	if port == "" {
 		port = tr(s.cfg.Language, "node.notconfigured")
 	}
-	body := tr(s.cfg.Language, "inbound.native.detail", index, mdEsc(name), mdEsc(record.Protocol), mdEsc(listen), mdEsc(port))
+	body := trh(s.cfg.Language, "inbound.native.detail", index, name, record.Protocol, listen, port)
 	if record.ClientCount != nil {
-		body += tr(s.cfg.Language, "inbound.native.clients", *record.ClientCount)
+		body += trh(s.cfg.Language, "inbound.native.clients", *record.ClientCount)
 	}
 	var rows [][]tgButton
 	switch {
 	case record.Protected:
-		body += tr(s.cfg.Language, "inbound.native.protected")
+		body += trh(s.cfg.Language, "inbound.native.protected")
 	case record.Managed:
-		body += tr(s.cfg.Language, "inbound.native.vless")
+		body += trh(s.cfg.Language, "inbound.native.vless")
 		if record.Tag != "" && record.Tag != "<hidden>" {
 			rows = append(rows, newRow(newButton(tr(s.cfg.Language, "inbound.native.open_managed"), "node_detail:"+userCallbackKey(record.Tag))))
 		}
 	default:
-		body += tr(s.cfg.Language, "inbound.native.unmanaged")
+		body += trh(s.cfg.Language, "inbound.native.unmanaged")
 		if record.Protocol == "vmess" || record.Protocol == "trojan" {
 			rows = append(rows, newRow(newButton(tr(s.cfg.Language, "inbound.client.open"), nativeClientCallback("list", index, 0, etag))))
 		}
@@ -175,7 +175,7 @@ func (s *BotService) sendNativeInboundDetail(chatID int64, msgID, index int, eta
 
 func (s *BotService) offerNativeInboundChange(chatID, adminID int64, msgID int, change nativeInboundChange) {
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), nativeInboundBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), nativeInboundBackMarkup(s.cfg.Language))
 		return
 	}
 	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
@@ -223,33 +223,33 @@ func (s *BotService) offerNativeInboundChange(chatID, adminID int64, msgID int, 
 		return
 	}
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.edit.invalid", mdEsc(err.Error())), nativeInboundBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.edit.invalid", err.Error()), nativeInboundBackMarkup(s.cfg.Language))
 		return
 	}
-	var body string
+	var body htmlText
 	switch change.Kind {
 	case "add":
 		protocol, _ := change.Inbound["protocol"].(string)
-		body = tr(s.cfg.Language, "inbound.native.confirm.add", mdEsc(safeInboundField(protocol)))
+		body = trh(s.cfg.Language, "inbound.native.confirm.add", safeInboundField(protocol))
 	case "replace":
-		body = tr(s.cfg.Language, "inbound.native.confirm.replace", change.Index, mdEsc(record.Tag), mdEsc(record.Protocol))
+		body = trh(s.cfg.Language, "inbound.native.confirm.replace", change.Index, record.Tag, record.Protocol)
 	case "port", "listen":
 		value := change.Value
 		if value == "" {
 			value = tr(s.cfg.Language, "inbound.native.all_interfaces")
 		}
-		body = tr(s.cfg.Language, "inbound.native.confirm.field", change.Index, mdEsc(tr(s.cfg.Language, "inbound.native."+change.Kind)), mdEsc(value))
+		body = trh(s.cfg.Language, "inbound.native.confirm.field", change.Index, tr(s.cfg.Language, "inbound.native."+change.Kind), value)
 	case "delete":
-		body = tr(s.cfg.Language, "inbound.native.confirm.delete", change.Index, mdEsc(record.Tag), mdEsc(record.Protocol))
+		body = trh(s.cfg.Language, "inbound.native.confirm.delete", change.Index, record.Tag, record.Protocol)
 		if len(impact.RoutingRules) > 0 {
 			parts := make([]string, 0, len(impact.RoutingRules))
 			for _, index := range impact.RoutingRules {
 				parts = append(parts, strconv.Itoa(index+1))
 			}
-			body += tr(s.cfg.Language, "node.delete.routing", mdCode(strings.Join(parts, ", ")))
+			body += trh(s.cfg.Language, "node.delete.routing", strings.Join(parts, ", "))
 		}
 		if len(impact.SuspendedUsers) > 0 {
-			body += tr(s.cfg.Language, "node.delete.suspended", mdCode(strings.Join(impact.SuspendedUsers, ", ")))
+			body += trh(s.cfg.Language, "node.delete.suspended", strings.Join(impact.SuspendedUsers, ", "))
 		}
 	}
 	s.queueGuidedRoutingChange(chatID, adminID, msgID, pendingRoutingChange{NativeInbound: &change}, body)
@@ -276,7 +276,7 @@ func (s *BotService) handleNativeInboundInput(msg *tgMessage) bool {
 	}
 	if !s.cfg.AllowMutations {
 		clearNativeInboundWizard(msg.Chat.ID)
-		s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "manage.writesdisabled"))
+		s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "manage.writesdisabled"))
 		return true
 	}
 	change := nativeInboundChange{Kind: state.Kind, Index: state.Index, ETag: state.ETag, ListETag: state.ListETag, Value: strings.TrimSpace(msg.Text)}
@@ -286,17 +286,17 @@ func (s *BotService) handleNativeInboundInput(msg *tgMessage) bool {
 			var err error
 			input, err = readTelegramJSONDocument(s.tg, msg.Document)
 			if err != nil {
-				s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
+				s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "routing.guide.retry", err.Error()))
 				return true
 			}
 		}
 		if len(input) > telegramJSONDocumentLimit {
-			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", "JSON document exceeds 1 MiB"))
+			s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "routing.guide.retry", "JSON document exceeds 1 MiB"))
 			return true
 		}
 		value, err := decodeNetworkObject(input)
 		if err != nil {
-			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
+			s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "routing.guide.retry", err.Error()))
 			return true
 		}
 		change.Inbound, change.Value = value, ""
@@ -313,7 +313,7 @@ func (s *BotService) handleNativeInboundInput(msg *tgMessage) bool {
 		return true
 	}
 	if err != nil {
-		s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
+		s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "routing.guide.retry", err.Error()))
 		return true
 	}
 	clearNativeInboundWizard(msg.Chat.ID)
@@ -354,7 +354,7 @@ func (s *BotService) handleNativeInboundCallback(cb *tgCallback) {
 		}
 		clearOtherRoutingInputs(chatID)
 		setNativeInboundWizard(chatID, nativeInboundWizard{AdminID: cb.From.ID, Kind: "add", ListETag: current, Expires: time.Now().Add(5 * time.Minute)})
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "inbound.native.json_prompt"), nativeInboundBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "inbound.native.json_prompt"), nativeInboundBackMarkup(s.cfg.Language))
 		return
 	}
 	if len(parts) != 4 {
@@ -383,7 +383,7 @@ func (s *BotService) handleNativeInboundCallback(cb *tgCallback) {
 		return
 	}
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), nativeInboundBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), nativeInboundBackMarkup(s.cfg.Language))
 		return
 	}
 	records, err := nativeInboundRecords(root)
@@ -398,7 +398,7 @@ func (s *BotService) handleNativeInboundCallback(cb *tgCallback) {
 		if parts[1] == "replace" {
 			prompt = "inbound.native.json_prompt"
 		}
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, prompt), nativeInboundBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, prompt), nativeInboundBackMarkup(s.cfg.Language))
 	case "delete":
 		s.offerNativeInboundChange(chatID, cb.From.ID, msgID, nativeInboundChange{Kind: "delete", Index: index, ETag: parts[3]})
 	}

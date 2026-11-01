@@ -23,9 +23,9 @@ func (s *BotService) beginUserWizard(chatID, adminID int64, msgID int, stage, us
 	managementWizards.Lock()
 	managementWizards.states[chatID] = managementWizard{AdminID: adminID, Expires: time.Now().Add(5 * time.Minute), Stage: stage, User: user}
 	managementWizards.Unlock()
-	prompt := tr(s.cfg.Language, "wizard.nameprompt")
+	prompt := trh(s.cfg.Language, "wizard.nameprompt")
 	if stage == "rename" {
-		prompt = tr(s.cfg.Language, "wizard.renameprompt", user)
+		prompt = trh(s.cfg.Language, "wizard.renameprompt", user)
 	}
 	s.sendOrEdit(chatID, msgID, prompt, s.backToMainMarkup())
 }
@@ -46,7 +46,7 @@ func (s *BotService) handleWizardMessage(msg *tgMessage) bool {
 	}
 	managementWizards.Unlock()
 	if ok && msg.Command() == "cancel" {
-		s.sendAlert(chatID, tr(s.cfg.Language, "wizard.cancelled"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "wizard.cancelled"))
 		return true
 	}
 	if !ok || msg.Command() != "" {
@@ -54,7 +54,7 @@ func (s *BotService) handleWizardMessage(msg *tgMessage) bool {
 	}
 	input := strings.TrimSpace(msg.Text)
 	if !managedUserName.MatchString(input) {
-		s.sendAlert(chatID, tr(s.cfg.Language, "wizard.invalidname"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "wizard.invalidname"))
 		return true
 	}
 	if state.Stage == "rename" {
@@ -66,7 +66,7 @@ func (s *BotService) handleWizardMessage(msg *tgMessage) bool {
 	}
 	nodes, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "manage.inboundsfailed", err.Error()))
+		s.sendAlert(chatID, trh(s.cfg.Language, "manage.inboundsfailed", err.Error()))
 		return true
 	}
 	var rows [][]tgButton
@@ -83,7 +83,7 @@ func (s *BotService) handleWizardMessage(msg *tgMessage) bool {
 	managementWizards.Lock()
 	managementWizards.states[chatID] = managementWizard{AdminID: msg.From.ID, Expires: time.Now().Add(5 * time.Minute), Stage: "scope", User: input}
 	managementWizards.Unlock()
-	s.sendOrEdit(chatID, 0, tr(s.cfg.Language, "wizard.scopebody", input), newKeyboard(rows...))
+	s.sendOrEdit(chatID, 0, trh(s.cfg.Language, "wizard.scopebody", input), newKeyboard(rows...))
 	return true
 }
 
@@ -102,7 +102,7 @@ func (s *BotService) handleWizardScope(cb *tgCallback) {
 	}
 	managementWizards.Unlock()
 	if !ok {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "wizard.expired"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "wizard.expired"), s.backToMainMarkup())
 		return
 	}
 	key := strings.TrimPrefix(cb.Data, "manage_scope:")
@@ -113,7 +113,7 @@ func (s *BotService) handleWizardScope(cb *tgCallback) {
 	if key != "all" && key != "unbound" {
 		nodes, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
 		if err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "wizard.inboundread"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "wizard.inboundread"))
 			return
 		}
 		target = ""
@@ -124,7 +124,7 @@ func (s *BotService) handleWizardScope(cb *tgCallback) {
 			}
 		}
 		if target == "" {
-			s.sendAlert(chatID, tr(s.cfg.Language, "wizard.inboundchanged"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "wizard.inboundchanged"))
 			return
 		}
 	}

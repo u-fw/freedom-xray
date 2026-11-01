@@ -23,12 +23,12 @@ func (s *BotService) sendXraySectionsPage(chatID int64, msgID int, notice string
 		records, err = xraySectionRecords(root)
 	}
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.error", mdEsc(err.Error())), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.error", err.Error()), s.backToMainMarkup())
 		return
 	}
-	body := tr(s.cfg.Language, "xray.section.list")
+	body := trh(s.cfg.Language, "xray.section.list")
 	if notice != "" {
-		body += "\n" + mdEsc(notice)
+		body += "\n" + esc(notice)
 	}
 	var rows [][]tgButton
 	for _, record := range records {
@@ -60,14 +60,14 @@ func (s *BotService) sendXraySectionDetail(chatID int64, msgID int, name, etag, 
 	if record.Configured {
 		state = tr(s.cfg.Language, "xray.section.configured")
 	}
-	body := tr(s.cfg.Language, "xray.section.detail", mdEsc(tr(s.cfg.Language, "xray.section."+name)), mdEsc(state))
+	body := trh(s.cfg.Language, "xray.section.detail", tr(s.cfg.Language, "xray.section."+name), state)
 	if value, _, e := lookupXraySection(root, name, etag); e == nil && record.Configured {
 		summary, _ := json.MarshalIndent(xraySectionSafeSummary(name, value), "", "  ")
-		body += "\n```\n" + string(summary) + "\n```\n"
+		body += "\n" + pre(string(summary)) + "\n"
 	}
-	body += "\n" + tr(s.cfg.Language, "xray.section.note."+name)
+	body += "\n" + trh(s.cfg.Language, "xray.section.note."+name)
 	if notice != "" {
-		body += "\n" + mdEsc(notice)
+		body += "\n" + esc(notice)
 	}
 	var rows [][]tgButton
 	if record.Configured {
@@ -97,7 +97,7 @@ func (s *BotService) returnXraySection(chatID int64, msgID int, name, notice str
 
 func (s *BotService) offerXraySectionChange(chatID, adminID int64, msgID int, change xraySectionChange) {
 	if !s.cfg.AllowMutations {
-		s.sendAlert(chatID, tr(s.cfg.Language, "manage.writesdisabled"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "manage.writesdisabled"))
 		return
 	}
 	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
@@ -109,12 +109,12 @@ func (s *BotService) offerXraySectionChange(chatID, adminID int64, msgID int, ch
 		return
 	}
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.edit.invalid", mdEsc(err.Error())), xraySectionsBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.edit.invalid", err.Error()), xraySectionsBackMarkup(s.cfg.Language))
 		return
 	}
-	body := tr(s.cfg.Language, "xray.section.confirm", mdEsc(tr(s.cfg.Language, "xray.section."+change.Name)), mdEsc(tr(s.cfg.Language, "xray.section.action."+change.Kind)))
+	body := trh(s.cfg.Language, "xray.section.confirm", tr(s.cfg.Language, "xray.section."+change.Name), tr(s.cfg.Language, "xray.section.action."+change.Kind))
 	if change.Name == "policy" || (change.Name == "fakedns" && change.Kind == "reset") {
-		body += "\n" + tr(s.cfg.Language, "xray.section.note."+change.Name)
+		body += "\n" + trh(s.cfg.Language, "xray.section.note."+change.Name)
 	}
 	s.queueGuidedRoutingChange(chatID, adminID, msgID, pendingRoutingChange{XraySection: &change}, body)
 }
@@ -130,7 +130,7 @@ func (s *BotService) handleXraySectionInput(msg *tgMessage, state routingWizard)
 	}
 	if !s.cfg.AllowMutations {
 		consumeRoutingWizard(msg.Chat.ID, state)
-		s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "manage.writesdisabled"))
+		s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "manage.writesdisabled"))
 		return true
 	}
 	input := []byte(msg.Text)
@@ -138,13 +138,13 @@ func (s *BotService) handleXraySectionInput(msg *tgMessage, state routingWizard)
 		var err error
 		input, err = readTelegramJSONDocument(s.tg, msg.Document)
 		if err != nil {
-			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
+			s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "routing.guide.retry", err.Error()))
 			return true
 		}
 	}
 	value, err := decodeXraySectionValue(state.Section, input)
 	if err != nil {
-		s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
+		s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "routing.guide.retry", err.Error()))
 		return true
 	}
 	change := xraySectionChange{Kind: "put", Name: state.Section, ETag: state.ETag, Value: value}
@@ -158,7 +158,7 @@ func (s *BotService) handleXraySectionInput(msg *tgMessage, state routingWizard)
 		return true
 	}
 	if err != nil {
-		s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
+		s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "routing.guide.retry", err.Error()))
 		return true
 	}
 	if consumeRoutingWizard(msg.Chat.ID, state) {
@@ -202,7 +202,7 @@ func (s *BotService) handleXraySectionCallback(cb *tgCallback) {
 		routingWizards.Lock()
 		routingWizards.items[chatID] = routingWizard{AdminID: cb.From.ID, Kind: "xray_section", Section: name, ETag: etag, Expires: time.Now().Add(5 * time.Minute)}
 		routingWizards.Unlock()
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "xray.section.prompt", mdEsc(tr(s.cfg.Language, "xray.section."+name))), xraySectionsBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "xray.section.prompt", tr(s.cfg.Language, "xray.section."+name)), xraySectionsBackMarkup(s.cfg.Language))
 	case "reset":
 		s.offerXraySectionChange(chatID, cb.From.ID, msgID, xraySectionChange{Kind: "reset", Name: name, ETag: etag})
 	}

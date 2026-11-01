@@ -172,21 +172,21 @@ func xhttpInboundsWithoutXFF(root map[string]any) []string {
 	return missing
 }
 
-func statsSwitchesText(lang string, report statsSwitchReport, readErr error) string {
-	var out strings.Builder
-	out.WriteString(tr(lang, "stats.title"))
+func statsSwitchesText(lang string, report statsSwitchReport, readErr error) htmlText {
+	var out htmlBuilder
+	out.Add(trh(lang, "stats.title"))
 	if readErr != nil {
-		out.WriteString(tr(lang, "stats.readerror", mdEsc(readErr.Error())))
-		return out.String()
+		out.Add(trh(lang, "stats.readerror", readErr.Error()))
+		return out.HTML()
 	}
 	on := tr(lang, "stats.on")
 	trafficState := on
 	if len(report.MissingTrafficLevels) > 0 {
-		trafficState = tr(lang, "stats.offlevels", mdCode(strings.Join(report.MissingTrafficLevels, ", ")))
+		trafficState = tr(lang, "stats.offlevels", strings.Join(report.MissingTrafficLevels, ", "))
 	}
 	onlineState := on
 	if len(report.MissingOnlineLevels) > 0 {
-		onlineState = tr(lang, "stats.offlevels", mdCode(strings.Join(report.MissingOnlineLevels, ", ")))
+		onlineState = tr(lang, "stats.offlevels", strings.Join(report.MissingOnlineLevels, ", "))
 	}
 	inboundState := on
 	if !report.SystemInbound {
@@ -194,24 +194,24 @@ func statsSwitchesText(lang string, report statsSwitchReport, readErr error) str
 	}
 	apiState := on
 	if len(report.APIMissing) > 0 {
-		apiState = tr(lang, "stats.offmissing", mdCode(strings.Join(report.APIMissing, ", ")))
+		apiState = tr(lang, "stats.offmissing", strings.Join(report.APIMissing, ", "))
 	}
-	out.WriteString(tr(lang, "stats.item.traffic", trafficState))
-	out.WriteString(tr(lang, "stats.item.online", onlineState))
-	out.WriteString(tr(lang, "stats.item.inbound", inboundState))
-	out.WriteString(tr(lang, "stats.item.api", apiState))
+	out.Add(trh(lang, "stats.item.traffic", trafficState))
+	out.Add(trh(lang, "stats.item.online", onlineState))
+	out.Add(trh(lang, "stats.item.inbound", inboundState))
+	out.Add(trh(lang, "stats.item.api", apiState))
 	if len(report.XHTTPWithoutXFF) > 0 {
-		out.WriteString(tr(lang, "stats.xff", mdCode(strings.Join(report.XHTTPWithoutXFF, ", "))))
+		out.Add(trh(lang, "stats.xff", strings.Join(report.XHTTPWithoutXFF, ", ")))
 	}
 	if len(report.APIMissing) > 0 {
-		out.WriteString(tr(lang, "stats.api.hint"))
+		out.Add(trh(lang, "stats.api.hint"))
 	}
 	if report.allReady() {
-		out.WriteString(tr(lang, "stats.allgood"))
+		out.Add(trh(lang, "stats.allgood"))
 	} else if !report.policyComplete() {
-		out.WriteString(tr(lang, "stats.repairhint"))
+		out.Add(trh(lang, "stats.repairhint"))
 	}
-	return out.String()
+	return out.HTML()
 }
 
 func statsSwitchesMarkup(lang string, report statsSwitchReport, readErr error) tgKeyboard {
@@ -244,7 +244,7 @@ func (s *BotService) sendStatsSwitches(chatID int64, msgID int) {
 
 func (s *BotService) askStatsRepair(chatID int64, msgID int) {
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "online.doctor.mutations"), statsSwitchesBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "online.doctor.mutations"), statsSwitchesBackMarkup(s.cfg.Language))
 		return
 	}
 	markup := newKeyboard(
@@ -253,19 +253,19 @@ func (s *BotService) askStatsRepair(chatID int64, msgID int) {
 			newButton(tr(s.cfg.Language, "common.cancel"), "menu_stats"),
 		),
 	)
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "stats.repairconfirm"), markup)
+	s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "stats.repairconfirm"), markup)
 }
 
 func (s *BotService) doStatsRepair(chatID int64, msgID int) {
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "online.doctor.mutations"), statsSwitchesBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "online.doctor.mutations"), statsSwitchesBackMarkup(s.cfg.Language))
 		return
 	}
 	if err := ensureStatsInfrastructure(s.cfg); err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "stats.repairfailed", mdEsc(err.Error())), statsSwitchesBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "stats.repairfailed", err.Error()), statsSwitchesBackMarkup(s.cfg.Language))
 		return
 	}
 	report, err := inspectStatsSwitches(s.cfg.XrayConfigPath, s.cfg.StatsAPIServer)
-	text := tr(s.cfg.Language, "stats.repairdone") + "\n\n" + statsSwitchesText(s.cfg.Language, report, err)
+	text := trh(s.cfg.Language, "stats.repairdone") + "\n\n" + statsSwitchesText(s.cfg.Language, report, err)
 	s.sendOrEdit(chatID, msgID, text, statsSwitchesMarkup(s.cfg.Language, report, err))
 }

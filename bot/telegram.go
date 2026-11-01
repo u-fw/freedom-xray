@@ -29,7 +29,7 @@ type BotService struct {
 	collectorReady bool
 	// startupNotice is set by main after a successful one-time migration and is
 	// delivered once the polling loop has started.
-	startupNotice string
+	startupNotice htmlText
 }
 
 func telegramHTTPClient(socksAddress string) (*http.Client, error) {
@@ -164,7 +164,7 @@ func (s *BotService) handleUpdate(update tgUpdate) {
 			}
 		}
 		if !isCallback && update.Message != nil && update.Message.Chat.IsPrivate() {
-			if _, err := s.tg.sendText(chatID, fmt.Sprintf(tr(s.cfg.Language, "auth.unauthorized"), senderID), "Markdown", nil, false); err != nil {
+			if _, err := s.tg.sendText(chatID, string(trh(s.cfg.Language, "auth.unauthorized", senderID)), "HTML", nil, false); err != nil {
 				log.Printf("[Bot] send unauthorized notice failed: %v", err)
 			}
 		}
@@ -271,7 +271,7 @@ func (s *BotService) handleMessage(msg *tgMessage) {
 		s.sendHelpCard(msg.Chat.ID, 0)
 	default:
 		if strings.HasPrefix(text, "/") {
-			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "command.unknown"))
+			s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "command.unknown"))
 		} else {
 			s.sendMainMenu(msg.Chat.ID, 0)
 		}
@@ -403,7 +403,7 @@ func (s *BotService) handleCallback(cb *tgCallback) {
 	case strings.HasPrefix(data, "manage_rename:"):
 		email := lookupManagedUserByKey(s.cfg.XrayConfigPath, strings.TrimPrefix(data, "manage_rename:"))
 		if email == "" {
-			s.sendAlert(chatID, tr(s.cfg.Language, "manage.userrenamed"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "manage.userrenamed"))
 			return
 		}
 		s.beginUserWizard(chatID, cb.From.ID, msgID, "rename", email)
@@ -469,12 +469,12 @@ func (s *BotService) handleUserLinksCallback(chatID int64, payload string) {
 
 	_, loadErr := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if loadErr != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "users.linkreadfailed", loadErr.Error()))
+		s.sendAlert(chatID, trh(s.cfg.Language, "users.linkreadfailed", loadErr.Error()))
 		return
 	}
 	emails, dirErr := allDirectoryNames(s.cfg.XrayConfigPath)
 	if dirErr != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "users.directoryreadfailed", dirErr.Error()))
+		s.sendAlert(chatID, trh(s.cfg.Language, "users.directoryreadfailed", dirErr.Error()))
 		return
 	}
 
@@ -487,7 +487,7 @@ func (s *BotService) handleUserLinksCallback(chatID int64, payload string) {
 					return
 				}
 			}
-			s.sendAlert(chatID, tr(s.cfg.Language, "users.listchanged"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "users.listchanged"))
 			s.sendUsersCard(chatID, 0)
 			return
 		}
@@ -499,7 +499,7 @@ func (s *BotService) handleUserLinksCallback(chatID int64, payload string) {
 			s.sendUserLinksAndQRs(chatID, emails[idx])
 			return
 		}
-		s.sendAlert(chatID, tr(s.cfg.Language, "users.listchanged"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "users.listchanged"))
 		s.sendUsersCard(chatID, 0)
 		return
 	}
@@ -562,48 +562,6 @@ func storeChunkTail(chatID int64, msgID int, ids []int) {
 	chunkTails.added[key] = time.Now()
 }
 
-// splitTelegramText cuts text into pieces of at most limit bytes, preferring
-// newline boundaries so inline Markdown entities stay intact. A single line
-// longer than the limit is hard-split on a UTF-8 boundary.
-func splitTelegramText(text string, limit int) []string {
-	if limit < 64 {
-		limit = 64
-	}
-	if len(text) <= limit {
-		return []string{text}
-	}
-	chunks := make([]string, 0, len(text)/limit+1)
-	var current strings.Builder
-	flush := func() {
-		if current.Len() > 0 {
-			chunks = append(chunks, current.String())
-			current.Reset()
-		}
-	}
-	for _, line := range strings.SplitAfter(text, "\n") {
-		if current.Len() > 0 && current.Len()+len(line) > limit {
-			flush()
-		}
-		for len(line) > limit {
-			cut := limit
-			for cut > 0 && !utf8.RuneStart(line[cut]) {
-				cut--
-			}
-			if cut == 0 {
-				cut = limit
-			}
-			chunks = append(chunks, line[:cut])
-			line = line[cut:]
-		}
-		current.WriteString(line)
-		if current.Len() >= limit {
-			flush()
-		}
-	}
-	flush()
-	return chunks
-}
-
 func (s *BotService) deleteChunkTail(chatID int64, msgID int) {
 	for _, id := range takeChunkTail(chatID, msgID) {
 		if err := s.tg.deleteMessage(chatID, id); err != nil {
@@ -614,15 +572,15 @@ func (s *BotService) deleteChunkTail(chatID int64, msgID int) {
 
 // sendChunkTail delivers the parts after the anchor. The anchor keeps the
 // keyboard so a refresh edits the same card and replaces these messages.
-func (s *BotService) sendChunkTail(chatID int64, anchor int, chunks []string) {
+func (s *BotService) sendChunkTail(chatID int64, anchor int, chunks []htmlText) {
 	if len(chunks) == 0 {
 		return
 	}
 	ids := make([]int, 0, len(chunks))
 	for _, chunk := range chunks {
-		sent, err := s.tg.sendText(chatID, chunk, "Markdown", nil, false)
+		sent, err := s.tg.sendText(chatID, string(chunk), "HTML", nil, false)
 		if err != nil {
-			if sent, err = s.tg.sendText(chatID, chunk, "", nil, false); err != nil {
+			if sent, err = s.tg.sendText(chatID, plainHTML(chunk), "", nil, false); err != nil {
 				log.Printf("[Bot] send continuation failed: %v", err)
 				continue
 			}
@@ -633,12 +591,12 @@ func (s *BotService) sendChunkTail(chatID int64, anchor int, chunks []string) {
 }
 
 // sendTextChunks sends a long, button-less message such as the periodic report.
-func (s *BotService) sendTextChunks(chatID int64, text string) {
-	for _, chunk := range splitTelegramText(text, telegramChunkLimit) {
-		if _, err := s.tg.sendText(chatID, chunk, "Markdown", nil, false); err == nil {
+func (s *BotService) sendTextChunks(chatID int64, text htmlText) {
+	for _, chunk := range splitTelegramHTML(text, telegramChunkLimit) {
+		if _, err := s.tg.sendText(chatID, string(chunk), "HTML", nil, false); err == nil {
 			continue
 		}
-		if _, err := s.tg.sendText(chatID, chunk, "", nil, false); err != nil {
+		if _, err := s.tg.sendText(chatID, plainHTML(chunk), "", nil, false); err != nil {
 			log.Printf("[Bot] send message chunk failed: %v", err)
 		}
 	}
@@ -647,10 +605,10 @@ func (s *BotService) sendTextChunks(chatID int64, text string) {
 // sendOrEdit edits an existing message if msgID > 0, otherwise sends a new one.
 // Bodies longer than one Telegram message are split; the first part stays in
 // the edited/sent message and the remainder are tracked continuations.
-func (s *BotService) sendOrEdit(chatID int64, msgID int, text string, markup tgKeyboard) {
-	chunks := splitTelegramText(text, telegramChunkLimit)
+func (s *BotService) sendOrEdit(chatID int64, msgID int, text htmlText, markup tgKeyboard) {
+	chunks := splitTelegramHTML(text, telegramChunkLimit)
 	if msgID > 0 {
-		if err := s.tg.editText(chatID, msgID, chunks[0], "Markdown", &markup); err == nil {
+		if err := s.tg.editText(chatID, msgID, string(chunks[0]), "HTML", &markup); err == nil {
 			s.deleteChunkTail(chatID, msgID)
 			s.sendChunkTail(chatID, msgID, chunks[1:])
 			return
@@ -664,7 +622,7 @@ func (s *BotService) sendOrEdit(chatID int64, msgID int, text string, markup tgK
 
 		// Malformed Markdown must not duplicate the card; retry the same
 		// message as plain text before falling back to a new message.
-		if err := s.tg.editText(chatID, msgID, chunks[0], "", &markup); err == nil {
+		if err := s.tg.editText(chatID, msgID, plainHTML(chunks[0]), "", &markup); err == nil {
 			s.deleteChunkTail(chatID, msgID)
 			s.sendChunkTail(chatID, msgID, chunks[1:])
 			return
@@ -673,12 +631,12 @@ func (s *BotService) sendOrEdit(chatID int64, msgID int, text string, markup tgK
 		}
 	}
 
-	sent, err := s.tg.sendText(chatID, chunks[0], "Markdown", &markup, false)
+	sent, err := s.tg.sendText(chatID, string(chunks[0]), "HTML", &markup, false)
 	if err != nil {
 		log.Printf("[Bot] send message failed: %v", err)
 		// A malformed Markdown entity must not swallow the whole card; resend
 		// as plain text without parse mode.
-		if sent, err = s.tg.sendText(chatID, chunks[0], "", &markup, false); err != nil {
+		if sent, err = s.tg.sendText(chatID, plainHTML(chunks[0]), "", &markup, false); err != nil {
 			log.Printf("[Bot] plain-text fallback failed: %v", err)
 			return
 		}
@@ -706,14 +664,14 @@ func (s *BotService) sendMainMenu(chatID int64, msgID int) {
 	if s.cfg.AllowUpdates {
 		updateState = tr(s.cfg.Language, "menu.updates.enabled")
 	}
-	content := fmt.Sprintf(tr(s.cfg.Language, "menu.dashboard"), mdCode(hostname), state, mdCode(status), len(nodes), userCount, mdCode(Version), updateState)
+	content := trh(s.cfg.Language, "menu.dashboard", hostname, state, status, len(nodes), userCount, Version, updateState)
 	keyboard := mainMenuMarkup(s.cfg.Language)
 	s.sendOrEdit(chatID, msgID, content, keyboard)
 }
 func (s *BotService) sendStatusCard(chatID int64, msgID int) {
 	stats, err := GetSystemStats()
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "status.failure", mdEsc(err.Error())), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "status.failure", err.Error()), s.backToMainMarkup())
 		return
 	}
 
@@ -723,16 +681,15 @@ func (s *BotService) sendStatusCard(chatID int64, msgID int) {
 		statusIcon = "🔴"
 	}
 
-	text := fmt.Sprintf(
-		tr(s.cfg.Language, "status.summary"),
-		mdCode(stats.Hostname), mdEsc(stats.Platform),
-		mdCode(stats.UptimeStr),
-		statusIcon, mdCode(xrayStatus),
+	text := trh(s.cfg.Language, "status.summary",
+		stats.Hostname, stats.Platform,
+		stats.UptimeStr,
+		statusIcon, xrayStatus,
 		stats.CPUCores, stats.CPUUsagePct,
-		mdCode(stats.Load1), mdCode(stats.Load5), mdCode(stats.Load15),
+		stats.Load1, stats.Load5, stats.Load15,
 		FormatBytes(stats.MemUsedBytes), FormatBytes(stats.MemTotalBytes), stats.MemUsagePct,
 		FormatBytes(stats.DiskUsedBytes), FormatBytes(stats.DiskTotalBytes), stats.DiskUsagePct,
-		mdCode(stats.BotUptime),
+		stats.BotUptime,
 	)
 
 	markup := newKeyboard(
@@ -756,7 +713,7 @@ func (s *BotService) sendTrafficCard(chatID int64, msgID int) {
 	if err != nil {
 		cached, readErr := loadTrafficStore(s.cfg.XrayConfigPath)
 		if readErr != nil {
-			s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "traffic.readerror", mdEsc(err.Error()), mdEsc(readErr.Error())), s.backToMainMarkup())
+			s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "traffic.readerror", err.Error(), readErr.Error()), s.backToMainMarkup())
 			return
 		}
 		state = cached
@@ -765,39 +722,39 @@ func (s *BotService) sendTrafficCard(chatID int64, msgID int) {
 	// validating the actual managed users and suspended user records.
 	clean, cleanErr := reconcileStoredTraffic(s.cfg.XrayConfigPath)
 	if cleanErr != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "traffic.directoryerror", mdEsc(cleanErr.Error())), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "traffic.directoryerror", cleanErr.Error()), s.backToMainMarkup())
 		return
 	}
 	state = clean
 	traffics := storedUserTraffic(state)
-	var sb strings.Builder
-	sb.WriteString(tr(s.cfg.Language, "traffic.title"))
+	var sb htmlBuilder
+	sb.Add(trh(s.cfg.Language, "traffic.title"))
 	if err != nil {
-		sb.WriteString(tr(s.cfg.Language, "traffic.stale", mdEsc(err.Error())))
+		sb.Add(trh(s.cfg.Language, "traffic.stale", err.Error()))
 	}
 
 	if len(traffics) == 0 {
-		sb.WriteString(tr(s.cfg.Language, "traffic.empty"))
+		sb.Add(trh(s.cfg.Language, "traffic.empty"))
 	} else {
 		var totalAll uint64
 		for _, u := range traffics {
 			totalAll += u.Total
-			sb.WriteString(fmt.Sprintf(tr(s.cfg.Language, "traffic.row"),
-				mdEsc(u.Email),
+			sb.Add(trh(s.cfg.Language, "traffic.row",
+				u.Email,
 				FormatBytes(u.Uplink),
 				FormatBytes(u.Downlink),
 				FormatBytes(u.Total),
 			))
 		}
-		sb.WriteString(tr(s.cfg.Language, "traffic.total", FormatBytes(totalAll)))
+		sb.Add(trh(s.cfg.Language, "traffic.total", FormatBytes(totalAll)))
 	}
 
-	sb.WriteString(tr(s.cfg.Language, "traffic.note"))
+	sb.Add(trh(s.cfg.Language, "traffic.note"))
 	trafficMissing := []string{}
 	if report, reportErr := inspectStatsSwitches(s.cfg.XrayConfigPath, s.cfg.StatsAPIServer); reportErr == nil {
 		trafficMissing = report.MissingTrafficLevels
 		if len(trafficMissing) > 0 {
-			sb.WriteString(tr(s.cfg.Language, "stats.traffic.off", mdCode(strings.Join(trafficMissing, ", "))))
+			sb.Add(trh(s.cfg.Language, "stats.traffic.off", strings.Join(trafficMissing, ", ")))
 		}
 	}
 	trafficActions := []tgButton{
@@ -818,15 +775,15 @@ func (s *BotService) sendTrafficCard(chatID int64, msgID int) {
 	}
 	markup := newKeyboard(rows...)
 
-	s.sendOrEdit(chatID, msgID, sb.String(), markup)
+	s.sendOrEdit(chatID, msgID, sb.HTML(), markup)
 }
 
 func (s *BotService) askTrafficReset(chatID int64, msgID int) {
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
 		return
 	}
-	text := tr(s.cfg.Language, "traffic.resetconfirm")
+	text := trh(s.cfg.Language, "traffic.resetconfirm")
 	markup := newKeyboard(
 		newRow(
 			newButton(tr(s.cfg.Language, "traffic.resetbutton"), "traffic_reset_confirm"),
@@ -838,12 +795,12 @@ func (s *BotService) askTrafficReset(chatID int64, msgID int) {
 
 func (s *BotService) doTrafficReset(chatID int64, msgID int) {
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
 		return
 	}
 	lock, lockErr := acquireConfigLock(s.cfg.XrayConfigPath, 10*time.Second)
 	if lockErr != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "traffic.lock", mdEsc(lockErr.Error())), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "traffic.lock", lockErr.Error()), s.backToMainMarkup())
 		return
 	}
 	defer releaseConfigLock(lock)
@@ -852,15 +809,15 @@ func (s *BotService) doTrafficReset(chatID int64, msgID int) {
 
 	_, err := QueryTrafficStats(ctx, s.cfg.XrayBinPath, s.cfg.StatsAPIServer, true)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "traffic.reseterror", mdEsc(err.Error())), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "traffic.reseterror", err.Error()), s.backToMainMarkup())
 		return
 	}
 
 	if err := resetTrafficAllUsersLocked(s.cfg.XrayConfigPath); err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "traffic.partialreset", mdEsc(err.Error())), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "traffic.partialreset", err.Error()), s.backToMainMarkup())
 		return
 	}
-	text := tr(s.cfg.Language, "traffic.resetsuccess")
+	text := trh(s.cfg.Language, "traffic.resetsuccess")
 	markup := newKeyboard(
 		newRow(
 			newButton(tr(s.cfg.Language, "traffic.view"), "menu_traffic"),
@@ -879,7 +836,7 @@ const nodesPerPage = 8
 func (s *BotService) sendNodesCardPage(chatID int64, msgID, offset int) {
 	nodes, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "nodes.failure", mdEsc(err.Error())), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "nodes.failure", err.Error()), s.backToMainMarkup())
 		return
 	}
 	var nativeNodes []nativeInboundRecord
@@ -895,8 +852,8 @@ func (s *BotService) sendNodesCardPage(chatID int64, msgID, offset int) {
 		}
 	}
 
-	var sb strings.Builder
-	sb.WriteString(tr(s.cfg.Language, "nodes.title"))
+	var sb htmlBuilder
+	sb.Add(trh(s.cfg.Language, "nodes.title"))
 
 	if offset < 0 || len(nodes) == 0 {
 		offset = 0
@@ -909,27 +866,27 @@ func (s *BotService) sendNodesCardPage(chatID int64, msgID, offset int) {
 		end = len(nodes)
 	}
 	if len(nodes) == 0 {
-		sb.WriteString(tr(s.cfg.Language, "nodes.empty"))
+		sb.Add(trh(s.cfg.Language, "nodes.empty"))
 	} else {
-		sb.WriteString(tr(s.cfg.Language, "nodes.page", offset/nodesPerPage+1, (len(nodes)+nodesPerPage-1)/nodesPerPage, len(nodes)))
+		sb.Add(trh(s.cfg.Language, "nodes.page", offset/nodesPerPage+1, (len(nodes)+nodesPerPage-1)/nodesPerPage, len(nodes)))
 		for i, n := range nodes[offset:end] {
 			sni := n.SNI
 			if sni == "" {
 				sni = "-"
 			}
 			if n.Protocol == "vless" {
-				sb.WriteString(fmt.Sprintf(tr(s.cfg.Language, "nodes.row"),
-					offset+i+1, mdEsc(n.Tag), n.SharePort(),
-					mdCode(strings.ToUpper(n.Protocol)), mdCode(strings.ToUpper(n.Network)),
-					mdCode(strings.ToUpper(n.Security)), mdCode(sni), len(n.Clients)))
+				sb.Add(trh(s.cfg.Language, "nodes.row",
+					offset+i+1, n.Tag, n.SharePort(),
+					strings.ToUpper(n.Protocol), strings.ToUpper(n.Network),
+					strings.ToUpper(n.Security), sni, len(n.Clients)))
 			} else {
 				port := "-"
 				if len(nativeNodes) == len(nodes) && nativeNodes[offset+i].Tag == safeInboundField(n.Tag) && nativeNodes[offset+i].Protocol == safeInboundField(n.Protocol) && nativeNodes[offset+i].Port != "" {
 					port = nativeNodes[offset+i].Port
 				}
-				sb.WriteString(fmt.Sprintf(tr(s.cfg.Language, "nodes.native_row"),
-					offset+i+1, mdEsc(n.Tag), mdCode(port), mdCode(strings.ToUpper(n.Protocol)),
-					mdCode(strings.ToUpper(n.Network)), mdCode(strings.ToUpper(n.Security)), mdCode(sni)))
+				sb.Add(trh(s.cfg.Language, "nodes.native_row",
+					offset+i+1, n.Tag, port, strings.ToUpper(n.Protocol),
+					strings.ToUpper(n.Network), strings.ToUpper(n.Security), sni))
 			}
 		}
 	}
@@ -972,7 +929,7 @@ func (s *BotService) sendNodesCardPage(chatID int64, msgID, offset int) {
 		nodeRows = append(nodeRows, newRow(newButton(tr(s.cfg.Language, "node.create.button"), "node_new_menu")))
 	}
 	nodeRows = append(nodeRows, newRow(newButton(tr(s.cfg.Language, "common.refresh"), fmt.Sprintf("nodes_page:%d", offset)), newButton(tr(s.cfg.Language, "common.back"), "menu_main")))
-	s.sendOrEdit(chatID, msgID, sb.String(), newKeyboard(nodeRows...))
+	s.sendOrEdit(chatID, msgID, sb.HTML(), newKeyboard(nodeRows...))
 }
 
 func (s *BotService) sendUsersCard(chatID int64, msgID int) {
@@ -986,13 +943,13 @@ const usersPerPage = 20
 func (s *BotService) sendUsersCardPage(chatID int64, msgID, offset int) {
 	_, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "users.failure", mdEsc(err.Error())), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "users.failure", err.Error()), s.backToMainMarkup())
 		return
 	}
 
 	emails, dirErr := allDirectoryNames(s.cfg.XrayConfigPath)
 	if dirErr != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "users.directoryerror", dirErr.Error()))
+		s.sendAlert(chatID, trh(s.cfg.Language, "users.directoryerror", dirErr.Error()))
 		return
 	}
 
@@ -1041,12 +998,12 @@ func (s *BotService) sendUsersCardPage(chatID int64, msgID, offset int) {
 		newButton(tr(s.cfg.Language, "common.back"), "menu_main"),
 	))
 
-	text := tr(s.cfg.Language, "users.title")
+	text := trh(s.cfg.Language, "users.title")
 	if total == 0 {
-		text = tr(s.cfg.Language, "users.empty")
+		text = trh(s.cfg.Language, "users.empty")
 	} else if total > usersPerPage {
 		pages := (total + usersPerPage - 1) / usersPerPage
-		text += tr(s.cfg.Language, "users.page", offset/usersPerPage+1, pages, total)
+		text += trh(s.cfg.Language, "users.page", offset/usersPerPage+1, pages, total)
 	}
 
 	markup := newKeyboard(rows...)
@@ -1064,10 +1021,10 @@ func (s *BotService) sendUserLinksAndQRs(chatID int64, email string) {
 
 func (s *BotService) askRestart(chatID int64, msgID int) {
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
 		return
 	}
-	text := tr(s.cfg.Language, "restart.ask")
+	text := trh(s.cfg.Language, "restart.ask")
 	markup := newKeyboard(
 		newRow(
 			newButton(tr(s.cfg.Language, "restart.confirm"), "menu_restart_confirm"),
@@ -1079,14 +1036,14 @@ func (s *BotService) askRestart(chatID int64, msgID int) {
 
 func (s *BotService) doRestart(chatID int64, msgID int) {
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
 		return
 	}
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "restart.running"), tgKeyboard{})
+	s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "restart.running"), tgKeyboard{})
 
 	lock, lockErr := acquireConfigLock(s.cfg.XrayConfigPath, 15*time.Second)
 	if lockErr != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "restart.lockfail", mdEsc(lockErr.Error())), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "restart.lockfail", lockErr.Error()), s.backToMainMarkup())
 		return
 	}
 	snapshotTrafficBestEffortLocked(s.cfg.XrayConfigPath, s.cfg.XrayBinPath, s.cfg.StatsAPIServer)
@@ -1095,15 +1052,15 @@ func (s *BotService) doRestart(chatID int64, msgID int) {
 	time.Sleep(1 * time.Second)
 	status := CheckXrayServiceStatus()
 
-	var text string
+	var text htmlText
 	if err != nil || status != "active" {
 		reason := tr(s.cfg.Language, "restart.unknown")
 		if err != nil {
 			reason = err.Error()
 		}
-		text = fmt.Sprintf(tr(s.cfg.Language, "restart.failed"), mdCode(status), mdCode(reason))
+		text = trh(s.cfg.Language, "restart.failed", status, reason)
 	} else {
-		text = tr(s.cfg.Language, "restart.success")
+		text = trh(s.cfg.Language, "restart.success")
 	}
 
 	s.sendOrEdit(chatID, msgID, text, s.backToMainMarkup())
@@ -1111,20 +1068,20 @@ func (s *BotService) doRestart(chatID int64, msgID int) {
 
 func (s *BotService) sendBackupFile(chatID int64) {
 	if !s.cfg.AllowSensitiveBackup {
-		s.sendAlert(chatID, tr(s.cfg.Language, "backup.disabled"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "backup.disabled"))
 		return
 	}
 	if _, err := os.Stat(s.cfg.XrayConfigPath); err != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "backup.missing", s.cfg.XrayConfigPath))
+		s.sendAlert(chatID, trh(s.cfg.Language, "backup.missing", s.cfg.XrayConfigPath))
 		return
 	}
 
 	data, err := os.ReadFile(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "backup.missing", s.cfg.XrayConfigPath))
+		s.sendAlert(chatID, trh(s.cfg.Language, "backup.missing", s.cfg.XrayConfigPath))
 		return
 	}
-	caption := fmt.Sprintf(tr(s.cfg.Language, "backup.caption"), time.Now().Format("2006-01-02 15:04:05"))
+	caption := tr(s.cfg.Language, "backup.caption", time.Now().Format("2006-01-02 15:04:05"))
 	if err := s.tg.sendDocument(chatID, filepath.Base(s.cfg.XrayConfigPath), data, caption); err != nil {
 		log.Printf("[Bot] send backup document failed: %v", err)
 	}
@@ -1171,26 +1128,26 @@ func (s *BotService) broadcastReport() {
 	}
 	traffics := storedUserTraffic(state)
 
-	var sb strings.Builder
-	sb.WriteString(tr(s.cfg.Language, "report.title"))
+	var sb htmlBuilder
+	sb.Add(trh(s.cfg.Language, "report.title"))
 	if stats != nil {
-		sb.WriteString(tr(s.cfg.Language, "report.host",
-			mdCode(stats.Hostname), mdCode(stats.XrayStatus),
+		sb.Add(trh(s.cfg.Language, "report.host",
+			stats.Hostname, stats.XrayStatus,
 			stats.CPUUsagePct, stats.MemUsagePct, stats.DiskUsagePct,
 		))
 	}
 
-	sb.WriteString(tr(s.cfg.Language, "report.top"))
+	sb.Add(trh(s.cfg.Language, "report.top"))
 	if len(traffics) == 0 {
-		sb.WriteString(tr(s.cfg.Language, "report.empty"))
+		sb.Add(trh(s.cfg.Language, "report.empty"))
 	} else {
 		for _, u := range traffics {
-			sb.WriteString(tr(s.cfg.Language, "report.row",
-				mdCode(u.Email), FormatBytes(u.Uplink), FormatBytes(u.Downlink), FormatBytes(u.Total)))
+			sb.Add(trh(s.cfg.Language, "report.row",
+				u.Email, FormatBytes(u.Uplink), FormatBytes(u.Downlink), FormatBytes(u.Total)))
 		}
 	}
 
-	reportText := sb.String()
+	reportText := sb.HTML()
 	for _, adminID := range s.cfg.AdminIDs {
 		s.sendTextChunks(adminID, reportText)
 	}
@@ -1204,31 +1161,12 @@ func (s *BotService) backToMainMarkup() tgKeyboard {
 	)
 }
 
-// mdEsc escapes characters that Telegram legacy Markdown treats as entities.
-// User emails, node tags, SNI values and error text all reach message bodies.
-var mdEscaper = strings.NewReplacer(
-	`\`, `\\`,
-	`_`, `\_`,
-	`*`, `\*`,
-	"`", "\\`",
-	`[`, `\[`,
-)
-
-func mdEsc(s string) string { return mdEscaper.Replace(s) }
-
-// mdCode renders untrusted text inside a single-backtick code span. Backticks
-// and newlines cannot be escaped inside code entities in legacy Markdown, so
-// they are replaced instead of breaking the whole message.
-func mdCode(s string) string {
-	s = strings.ReplaceAll(s, "`", "'")
-	s = strings.ReplaceAll(s, "\r", " ")
-	s = strings.ReplaceAll(s, "\n", " ")
-	return s
-}
-
-// sendAlert sends a plain one-off notification and logs delivery failures.
-func (s *BotService) sendAlert(chatID int64, text string) {
-	if _, err := s.tg.sendText(chatID, text, "", nil, false); err != nil {
+// sendAlert sends a one-off HTML notification and logs delivery failures.
+func (s *BotService) sendAlert(chatID int64, text htmlText) {
+	if _, err := s.tg.sendText(chatID, string(text), "HTML", nil, false); err == nil {
+		return
+	}
+	if _, err := s.tg.sendText(chatID, plainHTML(text), "", nil, false); err != nil {
 		log.Printf("[Bot] send message failed: %v", err)
 	}
 }

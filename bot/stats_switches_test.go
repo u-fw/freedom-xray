@@ -104,14 +104,14 @@ func TestStatsSwitchesTextExplainsOffSwitches(t *testing.T) {
 	report, _ := inspectStatsSwitches(writeDiagnosticsConfig(t, statsSwitchFixture))
 	text := statsSwitchesText("en", report, nil)
 	for _, wanted := range []string{"Per-user traffic", "level(s) 2", "Online IPs", "Inbound/node traffic", "Stats API", "cdn"} {
-		if !strings.Contains(text, wanted) {
+		if !strings.Contains(plainHTML(text), wanted) {
 			t.Fatalf("missing %q in stats card: %s", wanted, text)
 		}
 	}
-	if strings.Contains(text, "stats.") {
+	if strings.Contains(plainHTML(text), "stats.") {
 		t.Fatalf("raw locale key leaked into the card: %s", text)
 	}
-	if !strings.Contains(statsSwitchesText("en", statsSwitchReport{SystemInbound: true}, nil), "All statistics switches are enabled") {
+	if !strings.Contains(plainHTML(statsSwitchesText("en", statsSwitchReport{SystemInbound: true}, nil)), "All statistics switches are enabled") {
 		t.Fatal("complete policy must say all switches are enabled")
 	}
 }

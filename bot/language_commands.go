@@ -73,11 +73,11 @@ func languageButtonLabel(lang, current string) string {
 func (s *BotService) changeLanguage(msg *tgMessage) {
 	lang := strings.TrimSpace(msg.CommandArguments())
 	if lang == "" {
-		s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "lang.usage", s.cfg.Language))
+		s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "lang.usage", s.cfg.Language))
 		return
 	}
 	if !supportedLanguage(lang) {
-		s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "lang.unsupported"))
+		s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "lang.unsupported"))
 		return
 	}
 	previous := s.cfg.Language
@@ -87,17 +87,17 @@ func (s *BotService) changeLanguage(msg *tgMessage) {
 	if s.cfg.ConfigFile == "" {
 		s.cfg.Language = previous
 		s.cfg.LanguageExplicit = previousExplicit
-		s.sendAlert(msg.Chat.ID, tr(previous, "lang.error", "bot configuration file path is unavailable"))
+		s.sendAlert(msg.Chat.ID, trh(previous, "lang.error", "bot configuration file path is unavailable"))
 		return
 	}
 	if err := persistLanguage(s.cfg.ConfigFile, s.cfg.Language); err != nil {
 		s.cfg.Language = previous
 		s.cfg.LanguageExplicit = previousExplicit
-		s.sendAlert(msg.Chat.ID, tr(previous, "lang.error", err.Error()))
+		s.sendAlert(msg.Chat.ID, trh(previous, "lang.error", err.Error()))
 		return
 	}
 	s.registerAdminCommands(msg.Chat.ID)
-	s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "lang.updated", s.cfg.Language))
+	s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "lang.updated", s.cfg.Language))
 	// Re-render the dashboard so /language behaves like the language button and
 	// the new locale is visible immediately rather than on the next navigation.
 	s.sendMainMenu(msg.Chat.ID, 0)
@@ -113,13 +113,13 @@ func (s *BotService) setLanguage(chatID int64, msgID int, lang string) {
 	if s.cfg.ConfigFile == "" {
 		s.cfg.Language = previous
 		s.cfg.LanguageExplicit = previousExplicit
-		s.sendAlert(chatID, tr(previous, "lang.error", "bot configuration file path is unavailable"))
+		s.sendAlert(chatID, trh(previous, "lang.error", "bot configuration file path is unavailable"))
 		return
 	}
 	if err := persistLanguage(s.cfg.ConfigFile, lang); err != nil {
 		s.cfg.Language = previous
 		s.cfg.LanguageExplicit = previousExplicit
-		s.sendAlert(chatID, tr(previous, "lang.error", err.Error()))
+		s.sendAlert(chatID, trh(previous, "lang.error", err.Error()))
 		return
 	}
 	s.registerAdminCommands(chatID)

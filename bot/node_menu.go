@@ -98,11 +98,11 @@ func nodeChangeFieldLabel(lang, kind string) string {
 	return kind
 }
 
-func (s *BotService) startNodeWizard(chatID, adminID int64, msgID int, tag, kind, prompt string) {
+func (s *BotService) startNodeWizard(chatID, adminID int64, msgID int, tag, kind string, prompt htmlText) {
 	s.startNodeWizardValue(chatID, adminID, msgID, tag, kind, prompt, "")
 }
 
-func (s *BotService) startNodeWizardValue(chatID, adminID int64, msgID int, tag, kind, prompt, value string) {
+func (s *BotService) startNodeWizardValue(chatID, adminID int64, msgID int, tag, kind string, prompt htmlText, value string) {
 	clearRoutingWizard(chatID)
 	nodePathWizards.Lock()
 	nodePathWizards.items[chatID] = nodePathWizard{Tag: tag, AdminID: adminID, Expires: time.Now().Add(5 * time.Minute), Kind: kind, Value: value}
@@ -117,16 +117,16 @@ func (s *BotService) sendNodeDetail(chatID int64, msgID int, key string) {
 func (s *BotService) sendNodeDetailSection(chatID int64, msgID int, key string, advanced bool) {
 	nodes, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.readfailure", err.Error()), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.readfailure", err.Error()), s.backToMainMarkup())
 		return
 	}
 	node := findManagedNodeByKey(nodes, key)
 	if node == nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.notfound"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.notfound"), s.backToMainMarkup())
 		return
 	}
 
-	msg := tr(s.cfg.Language, "node.detail",
+	msg := trh(s.cfg.Language, "node.detail",
 		node.Tag, strings.ToUpper(node.Protocol), strings.ToUpper(node.Network), strings.ToUpper(node.Security),
 		node.Port, node.SharePort(), len(node.Clients))
 	rows := [][]tgButton{}
@@ -140,7 +140,7 @@ func (s *BotService) sendNodeDetailSection(chatID int64, msgID int, key string, 
 	}
 
 	if node.Security == "reality" {
-		msg += tr(s.cfg.Language, "node.realitydetail", node.SNI, maskRealityShortID(node.ShortID, s.cfg.Language))
+		msg += trh(s.cfg.Language, "node.realitydetail", node.SNI, maskRealityShortID(node.ShortID, s.cfg.Language))
 		dest := node.Dest
 		if dest == "" {
 			dest = tr(s.cfg.Language, "node.notconfigured")
@@ -149,7 +149,7 @@ func (s *BotService) sendNodeDetailSection(chatID int64, msgID int, key string, 
 		if target == "" {
 			target = tr(s.cfg.Language, "node.notconfigured")
 		}
-		msg += tr(s.cfg.Language, "node.realityadvanced", dest, target, encryptionState, mldsaState)
+		msg += trh(s.cfg.Language, "node.realityadvanced", dest, target, encryptionState, mldsaState)
 		rows = append(rows, newRow(
 			newButton(tr(s.cfg.Language, "node.edit.sni"), "node_sni:"+key),
 			newButton(tr(s.cfg.Language, "node.edit.shortid"), "node_short_id:"+key),
@@ -180,14 +180,14 @@ func (s *BotService) sendNodeDetailSection(chatID int64, msgID int, key string, 
 		if padding == "" {
 			padding = tr(s.cfg.Language, "node.default")
 		}
-		msg += tr(s.cfg.Language, "node.xhttpdetail", node.XHTTPPath, mode, host, padding)
+		msg += trh(s.cfg.Language, "node.xhttpdetail", node.XHTTPPath, mode, host, padding)
 		rows = append(rows, newRow(
 			newButton(tr(s.cfg.Language, "node.edit.path"), "node_path:"+key),
 			newButton(tr(s.cfg.Language, "node.edit.host"), "node_xhttp_host:"+key),
 		))
 		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "node.edit.padding"), "node_xhttp_padding:"+key)))
 		if node.Security == "tls" {
-			msg += tr(s.cfg.Language, "node.publicnote")
+			msg += trh(s.cfg.Language, "node.publicnote")
 			rows = append(rows, newRow(newButton(tr(s.cfg.Language, "node.edit.publicport"), "node_public_port:"+key)))
 		}
 		modes := []string{"auto", "packet-up", "stream-up", "stream-one"}
@@ -216,7 +216,7 @@ func (s *BotService) sendNodeDetailSection(chatID int64, msgID int, key string, 
 		if len(node.ALPN) > 0 {
 			alpn = strings.Join(node.ALPN, ", ")
 		}
-		msg += tr(s.cfg.Language, "node.tlsdetail", cert, certKey, alpn)
+		msg += trh(s.cfg.Language, "node.tlsdetail", cert, certKey, alpn)
 		rows = append(rows, newRow(
 			newButton(tr(s.cfg.Language, "node.edit.certpair"), "node_cert_pair:"+key),
 			newButton(tr(s.cfg.Language, "node.edit.alpn"), "node_alpn:"+key),
@@ -277,12 +277,12 @@ func (s *BotService) sendNodeDetailSection(chatID int64, msgID int, key string, 
 
 func (s *BotService) offerNodeChange(chatID, adminID int64, msgID int, change NodeChange) {
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.mutationsdisabled"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.mutationsdisabled"), s.backToMainMarkup())
 		return
 	}
 	var randKey [8]byte
 	if _, err := rand.Read(randKey[:]); err != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "node.tokenerror"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "node.tokenerror"))
 		return
 	}
 	key := hex.EncodeToString(randKey[:])
@@ -294,34 +294,34 @@ func (s *BotService) offerNodeChange(chatID, adminID int64, msgID int, change No
 	}
 	pendingNodes.items[key] = pendingNodeChange{Change: change, ChatID: chatID, AdminID: adminID, Expires: time.Now().Add(3 * time.Minute)}
 	pendingNodes.Unlock()
-	note := tr(s.cfg.Language, "node.changenote.generic")
+	note := trh(s.cfg.Language, "node.changenote.generic")
 	switch change.Kind {
 	case "public_port":
-		note = tr(s.cfg.Language, "node.changenote.publicport")
+		note = trh(s.cfg.Language, "node.changenote.publicport")
 	case "reality_sni":
-		note = tr(s.cfg.Language, "node.changenote.sni")
+		note = trh(s.cfg.Language, "node.changenote.sni")
 	case "port":
-		note = tr(s.cfg.Language, "node.changenote.port")
+		note = trh(s.cfg.Language, "node.changenote.port")
 	case "xhttp_host":
-		note = tr(s.cfg.Language, "node.changenote.host")
+		note = trh(s.cfg.Language, "node.changenote.host")
 	case "xhttp_padding":
-		note = tr(s.cfg.Language, "node.changenote.padding")
+		note = trh(s.cfg.Language, "node.changenote.padding")
 	case "reality_short_id":
-		note = tr(s.cfg.Language, "node.changenote.shortid")
+		note = trh(s.cfg.Language, "node.changenote.shortid")
 	case "reality_dest":
-		note = tr(s.cfg.Language, "node.changenote.dest")
+		note = trh(s.cfg.Language, "node.changenote.dest")
 	case "reality_target":
-		note = tr(s.cfg.Language, "node.changenote.target")
+		note = trh(s.cfg.Language, "node.changenote.target")
 	case "tls_pair":
-		note = tr(s.cfg.Language, "node.changenote.certpair")
+		note = trh(s.cfg.Language, "node.changenote.certpair")
 	case "alpn":
-		note = tr(s.cfg.Language, "node.changenote.alpn")
+		note = trh(s.cfg.Language, "node.changenote.alpn")
 	}
 	value := change.Value
 	if value == "" {
 		value = tr(s.cfg.Language, "node.clear")
 	}
-	body := tr(s.cfg.Language, "node.changebody", mdCode(change.Tag), mdEsc(nodeChangeFieldLabel(s.cfg.Language, change.Kind)), mdCode(value), note)
+	body := trh(s.cfg.Language, "node.changebody", change.Tag, nodeChangeFieldLabel(s.cfg.Language, change.Kind), value, note)
 	keyboard := newKeyboard(newRow(
 		newButton(tr(s.cfg.Language, "common.confirm"), "node_confirm:"+key),
 		newButton(tr(s.cfg.Language, "common.cancel"), "node_cancel:"+key)))
@@ -332,12 +332,12 @@ func (s *BotService) offerNodeChange(chatID, adminID int64, msgID int, change No
 // the Bot or intentionally omitted. Secret material is never rendered.
 func (s *BotService) offerNodeSecretChange(chatID, adminID int64, msgID int, change NodeChange, noteKey string) {
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.mutationsdisabled"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.mutationsdisabled"), s.backToMainMarkup())
 		return
 	}
 	var randKey [8]byte
 	if _, err := rand.Read(randKey[:]); err != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "node.tokenerror"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "node.tokenerror"))
 		return
 	}
 	key := hex.EncodeToString(randKey[:])
@@ -349,7 +349,7 @@ func (s *BotService) offerNodeSecretChange(chatID, adminID int64, msgID int, cha
 	}
 	pendingNodes.items[key] = pendingNodeChange{Change: change, ChatID: chatID, AdminID: adminID, Expires: time.Now().Add(3 * time.Minute)}
 	pendingNodes.Unlock()
-	body := tr(s.cfg.Language, "node.secretchange", mdCode(change.Tag), mdEsc(nodeChangeFieldLabel(s.cfg.Language, change.Kind)), mdEsc(tr(s.cfg.Language, noteKey)))
+	body := trh(s.cfg.Language, "node.secretchange", change.Tag, nodeChangeFieldLabel(s.cfg.Language, change.Kind), trh(s.cfg.Language, noteKey))
 	keyboard := newKeyboard(newRow(
 		newButton(tr(s.cfg.Language, "common.confirm"), "node_confirm:"+key),
 		newButton(tr(s.cfg.Language, "common.cancel"), "node_cancel:"+key)))
@@ -360,12 +360,12 @@ func (s *BotService) offerNodeSecretChange(chatID, adminID int64, msgID int, cha
 // committed as one pair; validating either half alone would always fail.
 func (s *BotService) offerNodeTLSPair(chatID, adminID int64, msgID int, change NodeChange, noteKey string) {
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.mutationsdisabled"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.mutationsdisabled"), s.backToMainMarkup())
 		return
 	}
 	var randKey [8]byte
 	if _, err := rand.Read(randKey[:]); err != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "node.tokenerror"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "node.tokenerror"))
 		return
 	}
 	key := hex.EncodeToString(randKey[:])
@@ -377,7 +377,7 @@ func (s *BotService) offerNodeTLSPair(chatID, adminID int64, msgID int, change N
 	}
 	pendingNodes.items[key] = pendingNodeChange{Change: change, ChatID: chatID, AdminID: adminID, Expires: time.Now().Add(3 * time.Minute)}
 	pendingNodes.Unlock()
-	body := tr(s.cfg.Language, "node.certpairchange", mdCode(change.Tag), mdCode(change.Value), mdCode(change.Secret), mdEsc(tr(s.cfg.Language, noteKey)))
+	body := trh(s.cfg.Language, "node.certpairchange", change.Tag, change.Value, change.Secret, trh(s.cfg.Language, noteKey))
 	keyboard := newKeyboard(newRow(
 		newButton(tr(s.cfg.Language, "common.confirm"), "node_confirm:"+key),
 		newButton(tr(s.cfg.Language, "common.cancel"), "node_cancel:"+key)))
@@ -398,19 +398,19 @@ func (s *BotService) confirmNodeChange(cb *tgCallback, confirm bool) {
 	}
 	pendingNodes.Unlock()
 	if ok && (p.ChatID != chatID || p.AdminID != cb.From.ID) {
-		s.sendAlert(chatID, tr(s.cfg.Language, "manage.owned"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "manage.owned"))
 		return
 	}
 	if !ok || time.Now().After(p.Expires) {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.expired"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.expired"), s.backToMainMarkup())
 		return
 	}
 	if !confirm {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.cancelled"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.cancelled"), s.backToMainMarkup())
 		return
 	}
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.denied"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.denied"), s.backToMainMarkup())
 		return
 	}
 	var result string
@@ -418,7 +418,7 @@ func (s *BotService) confirmNodeChange(cb *tgCallback, confirm bool) {
 	if p.Change.Kind == "public_port" {
 		port, parseErr := strconv.Atoi(p.Change.Value)
 		if parseErr != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.invalidport"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.invalidport"))
 			return
 		}
 		result, err = SetInboundPublicPort(s.cfg.XrayConfigPath, p.Change.Tag, port)
@@ -427,10 +427,10 @@ func (s *BotService) confirmNodeChange(cb *tgCallback, confirm bool) {
 	}
 	if err != nil {
 		log.Printf("[Bot] node update failed: %v", err)
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.updatefailed", err.Error()), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.updatefailed", err.Error()), s.backToMainMarkup())
 		return
 	}
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.updatesuccess", result), s.backToMainMarkup())
+	s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.updatesuccess", result), s.backToMainMarkup())
 }
 
 func (s *BotService) handleNodeCallback(cb *tgCallback) {
@@ -445,12 +445,12 @@ func (s *BotService) handleNodeCallback(cb *tgCallback) {
 	}
 	nodes, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "node.readfailure", err.Error()))
+		s.sendAlert(chatID, trh(s.cfg.Language, "node.readfailure", err.Error()))
 		return
 	}
 	node := findManagedNodeByKey(nodes, parts[1])
 	if node == nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "node.missing"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "node.missing"))
 		return
 	}
 	switch parts[0] {
@@ -462,84 +462,84 @@ func (s *BotService) handleNodeCallback(cb *tgCallback) {
 		s.sendNodeDetailSection(chatID, msgID, parts[1], false)
 	case "node_sni":
 		if node.Security != "reality" {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.notreality"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.notreality"))
 			return
 		}
 		if !s.cfg.AllowMutations {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.enablemutations"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.enablemutations"))
 			return
 		}
-		s.startNodeWizard(chatID, cb.From.ID, msgID, node.Tag, "reality_sni", tr(s.cfg.Language, "node.sniprompt"))
+		s.startNodeWizard(chatID, cb.From.ID, msgID, node.Tag, "reality_sni", trh(s.cfg.Language, "node.sniprompt"))
 	case "node_short_id":
 		if node.Security != "reality" {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.notreality"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.notreality"))
 			return
 		}
 		if !s.cfg.AllowMutations {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.enablemutations"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.enablemutations"))
 			return
 		}
-		s.startNodeWizard(chatID, cb.From.ID, msgID, node.Tag, "reality_short_id", tr(s.cfg.Language, "node.shortidprompt", mdCode(maskRealityShortID(node.ShortID, s.cfg.Language))))
+		s.startNodeWizard(chatID, cb.From.ID, msgID, node.Tag, "reality_short_id", trh(s.cfg.Language, "node.shortidprompt", maskRealityShortID(node.ShortID, s.cfg.Language)))
 	case "node_path":
 		if node.Network != "xhttp" {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.notxhttp"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.notxhttp"))
 			return
 		}
 		if !s.cfg.AllowMutations {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.enablemutations"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.enablemutations"))
 			return
 		}
-		s.startNodeWizard(chatID, cb.From.ID, msgID, node.Tag, "path", tr(s.cfg.Language, "node.pathprompt"))
+		s.startNodeWizard(chatID, cb.From.ID, msgID, node.Tag, "path", trh(s.cfg.Language, "node.pathprompt"))
 	case "node_xhttp_host":
 		if node.Network != "xhttp" {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.notxhttp"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.notxhttp"))
 			return
 		}
 		if !s.cfg.AllowMutations {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.enablemutations"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.enablemutations"))
 			return
 		}
 		current := node.XHTTPHost
 		if current == "" {
 			current = tr(s.cfg.Language, "node.notconfigured")
 		}
-		s.startNodeWizard(chatID, cb.From.ID, msgID, node.Tag, "xhttp_host", tr(s.cfg.Language, "node.hostprompt", mdCode(current)))
+		s.startNodeWizard(chatID, cb.From.ID, msgID, node.Tag, "xhttp_host", trh(s.cfg.Language, "node.hostprompt", current))
 	case "node_xhttp_padding":
 		if node.Network != "xhttp" {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.notxhttp"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.notxhttp"))
 			return
 		}
 		if !s.cfg.AllowMutations {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.enablemutations"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.enablemutations"))
 			return
 		}
 		current := node.XHTTPPaddingBytes
 		if current == "" {
 			current = tr(s.cfg.Language, "node.default")
 		}
-		s.startNodeWizard(chatID, cb.From.ID, msgID, node.Tag, "xhttp_padding", tr(s.cfg.Language, "node.paddingprompt", mdCode(current)))
+		s.startNodeWizard(chatID, cb.From.ID, msgID, node.Tag, "xhttp_padding", trh(s.cfg.Language, "node.paddingprompt", current))
 	case "node_public_port":
 		if node.Network != "xhttp" || node.Security != "tls" {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.portonly"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.portonly"))
 			return
 		}
 		if !s.cfg.AllowMutations {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.mutationsdisabled"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.mutationsdisabled"))
 			return
 		}
-		s.startNodeWizard(chatID, cb.From.ID, msgID, node.Tag, "public_port", tr(s.cfg.Language, "node.portprompt", node.Port))
+		s.startNodeWizard(chatID, cb.From.ID, msgID, node.Tag, "public_port", trh(s.cfg.Language, "node.portprompt", node.Port))
 	case "node_listen_port":
 		if !s.cfg.AllowMutations {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.enablemutations"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.enablemutations"))
 			return
 		}
-		s.startNodeWizard(chatID, cb.From.ID, msgID, node.Tag, "port", tr(s.cfg.Language, "node.listenportprompt", node.Port))
+		s.startNodeWizard(chatID, cb.From.ID, msgID, node.Tag, "port", trh(s.cfg.Language, "node.listenportprompt", node.Port))
 	case "node_listen_address":
 		if !s.cfg.AllowMutations {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.enablemutations"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.enablemutations"))
 			return
 		}
-		s.startNodeWizard(chatID, cb.From.ID, msgID, node.Tag, "listen", tr(s.cfg.Language, "node.listenaddressprompt"))
+		s.startNodeWizard(chatID, cb.From.ID, msgID, node.Tag, "listen", trh(s.cfg.Language, "node.listenaddressprompt"))
 	case "node_mode":
 		if node.Network != "xhttp" || len(parts) != 3 {
 			return
@@ -547,11 +547,11 @@ func (s *BotService) handleNodeCallback(cb *tgCallback) {
 		s.offerNodeChange(chatID, cb.From.ID, msgID, NodeChange{Kind: "mode", Tag: node.Tag, Value: parts[2]})
 	case "node_dest", "node_target":
 		if node.Security != "reality" {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.notreality"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.notreality"))
 			return
 		}
 		if !s.cfg.AllowMutations {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.enablemutations"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.enablemutations"))
 			return
 		}
 		kind := "reality_dest"
@@ -565,21 +565,21 @@ func (s *BotService) handleNodeCallback(cb *tgCallback) {
 		if current == "" {
 			current = node.SNI + ":443"
 		}
-		s.startNodeWizard(chatID, cb.From.ID, msgID, node.Tag, kind, tr(s.cfg.Language, promptKey, mdCode(current)))
+		s.startNodeWizard(chatID, cb.From.ID, msgID, node.Tag, kind, trh(s.cfg.Language, promptKey, current))
 	case "node_reality_key":
 		if node.Security != "reality" {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.notreality"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.notreality"))
 			return
 		}
 		private, _, err := generateRealityKeyPair()
 		if err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.secretgeneratefailed", err.Error()))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.secretgeneratefailed", err.Error()))
 			return
 		}
 		s.offerNodeSecretChange(chatID, cb.From.ID, msgID, NodeChange{Kind: "reality_private_key", Tag: node.Tag, Secret: private}, "node.secretnote.privatekey")
 	case "node_mldsa":
 		if node.Security != "reality" || len(parts) != 3 {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.notreality"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.notreality"))
 			return
 		}
 		if parts[2] == "clear" {
@@ -588,7 +588,7 @@ func (s *BotService) handleNodeCallback(cb *tgCallback) {
 		}
 		seed, err := generateMLDSA65Seed()
 		if err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.secretgeneratefailed", err.Error()))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.secretgeneratefailed", err.Error()))
 			return
 		}
 		s.offerNodeSecretChange(chatID, cb.From.ID, msgID, NodeChange{Kind: "reality_mldsa_seed", Tag: node.Tag, Secret: seed}, "node.secretnote.mldsaset")
@@ -602,38 +602,38 @@ func (s *BotService) handleNodeCallback(cb *tgCallback) {
 		}
 		dec, enc, err := generateVLESSEncryptionPair()
 		if err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.secretgeneratefailed", err.Error()))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.secretgeneratefailed", err.Error()))
 			return
 		}
 		s.offerNodeSecretChange(chatID, cb.From.ID, msgID, NodeChange{Kind: "decryption", Tag: node.Tag, Secret: dec, ClientSecret: enc}, "node.secretnote.encryptionenable")
 	case "node_cert_pair":
 		if node.Security != "tls" {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.nottls"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.nottls"))
 			return
 		}
 		if !s.cfg.AllowMutations {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.enablemutations"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.enablemutations"))
 			return
 		}
 		current := node.CertFile
 		if current == "" {
 			current = tr(s.cfg.Language, "node.notconfigured")
 		}
-		s.startNodeWizard(chatID, cb.From.ID, msgID, node.Tag, "tls_pair_cert", tr(s.cfg.Language, "node.certpairprompt", mdCode(current)))
+		s.startNodeWizard(chatID, cb.From.ID, msgID, node.Tag, "tls_pair_cert", trh(s.cfg.Language, "node.certpairprompt", current))
 	case "node_alpn":
 		if node.Security != "tls" {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.nottls"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.nottls"))
 			return
 		}
 		if !s.cfg.AllowMutations {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.enablemutations"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.enablemutations"))
 			return
 		}
 		current := strings.Join(node.ALPN, ", ")
 		if current == "" {
 			current = "h2, http/1.1"
 		}
-		s.startNodeWizard(chatID, cb.From.ID, msgID, node.Tag, "alpn", tr(s.cfg.Language, "node.alpnprompt", mdCode(current)))
+		s.startNodeWizard(chatID, cb.From.ID, msgID, node.Tag, "alpn", trh(s.cfg.Language, "node.alpnprompt", current))
 	}
 }
 
@@ -657,7 +657,7 @@ func (s *BotService) handleNodePathInput(msg *tgMessage) bool {
 	if strings.TrimSpace(msg.Text) == "/cancel" {
 		delete(nodePathWizards.items, chatID)
 		nodePathWizards.Unlock()
-		s.sendAlert(chatID, tr(s.cfg.Language, "node.cancelinput"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "node.cancelinput"))
 		return true
 	}
 	if msg.Command() != "" {
@@ -671,12 +671,12 @@ func (s *BotService) handleNodePathInput(msg *tgMessage) bool {
 	case "public_port":
 		port, err := strconv.Atoi(value)
 		if err != nil || port < 0 || port > 65535 {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.portinvalid"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.portinvalid"))
 			return true
 		}
 	case "port":
 		if _, err := validateListenPort(value); err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.listenportinvalid"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.listenportinvalid"))
 			return true
 		}
 	case "listen":
@@ -684,17 +684,17 @@ func (s *BotService) handleNodePathInput(msg *tgMessage) bool {
 			value = ""
 		}
 		if value != "" && net.ParseIP(value) == nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.listenaddressinvalid"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.listenaddressinvalid"))
 			return true
 		}
 	case "path":
 		if !safeXHTTPPath.MatchString(value) {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.pathinvalid"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.pathinvalid"))
 			return true
 		}
 	case "reality_sni":
 		if err := validateRealitySNI(value); err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.sniinvalid", err.Error()))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.sniinvalid", err.Error()))
 			return true
 		}
 	case "reality_short_id":
@@ -702,7 +702,7 @@ func (s *BotService) handleNodePathInput(msg *tgMessage) bool {
 			value = ""
 		}
 		if err := validateRealityShortID(value); err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.shortidinvalid", err.Error()))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.shortidinvalid", err.Error()))
 			return true
 		}
 	case "xhttp_host":
@@ -710,41 +710,41 @@ func (s *BotService) handleNodePathInput(msg *tgMessage) bool {
 			value = ""
 		}
 		if err := validateXHTTPHost(value); err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.hostinvalid", err.Error()))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.hostinvalid", err.Error()))
 			return true
 		}
 	case "xhttp_padding":
 		if err := validateXHTTPPadding(value); err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.paddinginvalid", err.Error()))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.paddinginvalid", err.Error()))
 			return true
 		}
 	case "reality_dest", "reality_target":
 		if _, err := validateRealityTarget(value); err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.targetinvalid", err.Error()))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.targetinvalid", err.Error()))
 			return true
 		}
 	case "tls_pair_cert":
 		if !filepath.IsAbs(value) {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.create.absolutepath"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.create.absolutepath"))
 			return true
 		}
 		certPath := filepath.Clean(value)
-		s.startNodeWizardValue(chatID, msg.From.ID, 0, state.Tag, "tls_pair_key", tr(s.cfg.Language, "node.keypairprompt", mdCode(certPath)), certPath)
+		s.startNodeWizardValue(chatID, msg.From.ID, 0, state.Tag, "tls_pair_key", trh(s.cfg.Language, "node.keypairprompt", certPath), certPath)
 		return true
 	case "tls_pair_key":
 		if !filepath.IsAbs(value) {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.create.absolutepath"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.create.absolutepath"))
 			return true
 		}
 		s.offerNodeTLSPair(chatID, msg.From.ID, 0, NodeChange{Kind: "tls_pair", Tag: state.Tag, Value: state.Value, Secret: filepath.Clean(value)}, "node.secretnote.certpair")
 		return true
 	case "alpn":
 		if _, err := validateNodeALPNText(value); err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "node.alpninvalid", err.Error()))
+			s.sendAlert(chatID, trh(s.cfg.Language, "node.alpninvalid", err.Error()))
 			return true
 		}
 	default:
-		s.sendAlert(chatID, tr(s.cfg.Language, "node.unknownop"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "node.unknownop"))
 		return true
 	}
 	s.offerNodeChange(chatID, msg.From.ID, 0, NodeChange{Kind: state.Kind, Tag: state.Tag, Value: value})

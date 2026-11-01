@@ -24,12 +24,12 @@ var pendingUserChanges = struct {
 
 func (s *BotService) offerUserChange(chatID, adminID int64, messageID int, change UserChange) {
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, messageID, tr(s.cfg.Language, "manage.disabled"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, messageID, trh(s.cfg.Language, "manage.disabled"), s.backToMainMarkup())
 		return
 	}
 	var token [8]byte
 	if _, err := rand.Read(token[:]); err != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "manage.tokenerror", err.Error()))
+		s.sendAlert(chatID, trh(s.cfg.Language, "manage.tokenerror", err.Error()))
 		return
 	}
 	key := hex.EncodeToString(token[:])
@@ -66,7 +66,7 @@ func (s *BotService) offerUserChange(chatID, adminID int64, messageID int, chang
 	case "enable":
 		description = tr(s.cfg.Language, "manage.enable", change.User)
 	default:
-		s.sendAlert(chatID, tr(s.cfg.Language, "manage.unknown"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "manage.unknown"))
 		return
 	}
 	markup := newKeyboard(
@@ -75,7 +75,7 @@ func (s *BotService) offerUserChange(chatID, adminID int64, messageID int, chang
 			newButton(tr(s.cfg.Language, "common.cancel"), "manage_cancel:"+key),
 		),
 	)
-	s.sendOrEdit(chatID, messageID, tr(s.cfg.Language, "manage.confirmbody", description), markup)
+	s.sendOrEdit(chatID, messageID, trh(s.cfg.Language, "manage.confirmbody", description), markup)
 }
 
 func scopeLabel(node, lang string) string {
@@ -99,28 +99,28 @@ func (s *BotService) resolveUserChange(cb *tgCallback, confirm bool) {
 	}
 	pendingUserChanges.Unlock()
 	if ok && (request.ChatID != chatID || request.AdminID != cb.From.ID) {
-		s.sendAlert(chatID, tr(s.cfg.Language, "manage.owned"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "manage.owned"))
 		return
 	}
 	if !ok || time.Now().After(request.ExpiresAt) {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.expired"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.expired"), s.backToMainMarkup())
 		return
 	}
 	if !confirm {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.cancelled"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.cancelled"), s.backToMainMarkup())
 		return
 	}
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
 		return
 	}
 	msg, err := changeManagedUser(s.cfg.XrayConfigPath, s.cfg.XrayBinPath, s.cfg.StatsAPIServer, request.Change)
 	if err != nil {
 		log.Printf("[Bot] management %s failed: %v", request.Change.Kind, err)
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.changefailed", err.Error()), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.changefailed", err.Error()), s.backToMainMarkup())
 		return
 	}
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.completed", msg), s.backToMainMarkup())
+	s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.completed", msg), s.backToMainMarkup())
 }
 
 func (s *BotService) handleUserManagementCommand(msg *tgMessage) bool {
@@ -133,7 +133,7 @@ func (s *BotService) handleUserManagementCommand(msg *tgMessage) bool {
 	switch cmd {
 	case "adduser":
 		if len(parts) < 1 || len(parts) > 2 {
-			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "manage.usage.adduser"))
+			s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "manage.usage.adduser"))
 			return true
 		}
 		change = UserChange{Kind: "add", User: parts[0]}
@@ -142,13 +142,13 @@ func (s *BotService) handleUserManagementCommand(msg *tgMessage) bool {
 		}
 	case "renameuser":
 		if len(parts) != 2 {
-			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "manage.usage.renameuser"))
+			s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "manage.usage.renameuser"))
 			return true
 		}
 		change = UserChange{Kind: "rename", User: parts[0], NewName: parts[1]}
 	case "disableuser", "enableuser":
 		if len(parts) != 1 {
-			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "manage.usage.user", cmd))
+			s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "manage.usage.user", cmd))
 			return true
 		}
 		kind := "disable"
@@ -158,19 +158,19 @@ func (s *BotService) handleUserManagementCommand(msg *tgMessage) bool {
 		change = UserChange{Kind: kind, User: parts[0]}
 	case "rotateuser":
 		if len(parts) != 1 {
-			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "manage.usage.user", "rotateuser"))
+			s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "manage.usage.user", "rotateuser"))
 			return true
 		}
 		change = UserChange{Kind: "rotate", User: parts[0]}
 	case "removeuser":
 		if len(parts) != 1 {
-			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "manage.usage.user", "removeuser"))
+			s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "manage.usage.user", "removeuser"))
 			return true
 		}
 		change = UserChange{Kind: "delete", User: parts[0]}
 	case "assignuser", "unassignuser":
 		if len(parts) != 2 {
-			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "manage.usage.node", cmd))
+			s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "manage.usage.node", cmd))
 			return true
 		}
 		kind := "assign"
@@ -195,84 +195,84 @@ func lookupManagedUserEmail(nodes []InboundDetails, key string) string {
 func (s *BotService) sendUserManageCard(chatID int64, msgID int, key string) {
 	nodes, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "nodes.failure", err.Error()), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "nodes.failure", err.Error()), s.backToMainMarkup())
 		return
 	}
 	email := lookupManagedUserByKey(s.cfg.XrayConfigPath, key)
 	if email == "" {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "users.empty"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "users.empty"), s.backToMainMarkup())
 		return
 	}
 	var rows [][]tgButton
-	var content strings.Builder
+	var content htmlBuilder
 	var usedBytes uint64
-	content.WriteString(tr(s.cfg.Language, "account.title", email))
+	content.Add(trh(s.cfg.Language, "account.title", email))
 	if root, e := decodeBindingMigrationConfig(s.cfg.XrayConfigPath); e == nil {
 		if ambiguous, e := trafficAmbiguities(s.cfg.XrayConfigPath, root); e == nil && ambiguous[email] {
-			content.WriteString(tr(s.cfg.Language, "account.traffic_ambiguous"))
+			content.Add(trh(s.cfg.Language, "account.traffic_ambiguous"))
 		}
 	}
 	if state, e := loadTrafficStore(s.cfg.XrayConfigPath); e == nil {
 		if c, ok := state.Users[email]; ok {
 			usedBytes = c.TotalUp + c.TotalDown
-			content.WriteString(tr(s.cfg.Language, "account.total", FormatBytes(c.TotalUp), FormatBytes(c.TotalDown), FormatBytes(usedBytes)))
+			content.Add(trh(s.cfg.Language, "account.total", FormatBytes(c.TotalUp), FormatBytes(c.TotalDown), FormatBytes(usedBytes)))
 			if entries := storedBindingTrafficForUser(state, email); len(entries) > 0 {
-				content.WriteString(tr(s.cfg.Language, "account.bindings.header"))
+				content.Add(trh(s.cfg.Language, "account.bindings.header"))
 				limit := len(entries)
 				if limit > 8 {
 					limit = 8
 				}
 				for _, item := range entries[:limit] {
-					content.WriteString(tr(s.cfg.Language, "account.bindings.row", mdEsc(item.Tag), FormatBytes(item.Uplink), FormatBytes(item.Downlink), FormatBytes(item.Total())))
+					content.Add(trh(s.cfg.Language, "account.bindings.row", item.Tag, FormatBytes(item.Uplink), FormatBytes(item.Downlink), FormatBytes(item.Total())))
 				}
 				if len(entries) > limit {
-					content.WriteString(tr(s.cfg.Language, "account.bindings.more", len(entries)-limit))
+					content.Add(trh(s.cfg.Language, "account.bindings.more", len(entries)-limit))
 				}
 			}
 		}
 		if ips, known := recentOnline(state, email, time.Now()); !known {
-			content.WriteString(tr(s.cfg.Language, "account.unknown"))
+			content.Add(trh(s.cfg.Language, "account.unknown"))
 		} else if len(ips) > 0 {
-			content.WriteString(tr(s.cfg.Language, "account.online", len(ips)))
+			content.Add(trh(s.cfg.Language, "account.online", len(ips)))
 			for _, ip := range ips {
-				content.WriteString("  • " + ip.IP + "\n")
+				content.Add("  • ", esc(ip.IP), "\n")
 			}
 		} else if stamp := state.LastActive[email]; stamp > 0 && time.Now().Unix()-stamp <= int64(onlineActivityWindow/time.Second) {
-			content.WriteString(tr(s.cfg.Language, "account.active"))
+			content.Add(trh(s.cfg.Language, "account.active"))
 		} else {
-			content.WriteString(tr(s.cfg.Language, "account.offline"))
+			content.Add(trh(s.cfg.Language, "account.offline"))
 		}
 		if stamp := state.LastOnline[email]; stamp > 0 {
-			content.WriteString(tr(s.cfg.Language, "account.last", time.Unix(stamp, 0).Format("2006-01-02 15:04:05")))
+			content.Add(trh(s.cfg.Language, "account.last", time.Unix(stamp, 0).Format("2006-01-02 15:04:05")))
 		} else {
-			content.WriteString(tr(s.cfg.Language, "account.lastNever"))
+			content.Add(trh(s.cfg.Language, "account.lastNever"))
 		}
 		if entries := state.OnlineIPs[email]; len(entries) > 0 {
-			content.WriteString(tr(s.cfg.Language, "account.recent"))
+			content.Add(trh(s.cfg.Language, "account.recent"))
 			for i, ip := range entries {
 				if i >= 5 {
 					break
 				}
-				content.WriteString(tr(s.cfg.Language, "account.recentline", mdCode(ip.IP), time.Unix(ip.LastSeen, 0).Format("2006-01-02 15:04:05")))
+				content.Add(trh(s.cfg.Language, "account.recentline", ip.IP, time.Unix(ip.LastSeen, 0).Format("2006-01-02 15:04:05")))
 			}
 		}
-		content.WriteString(tr(s.cfg.Language, "account.warning"))
+		content.Add(trh(s.cfg.Language, "account.warning"))
 	} else {
-		content.WriteString(tr(s.cfg.Language, "account.error", e.Error()))
+		content.Add(trh(s.cfg.Language, "account.error", e.Error()))
 	}
 	limits, limitErr := snapshotUserLimits(s.cfg.XrayConfigPath)
 	if limitErr != nil {
-		content.WriteString(tr(s.cfg.Language, "account.limits.error", mdEsc(limitErr.Error())))
+		content.Add(trh(s.cfg.Language, "account.limits.error", limitErr.Error()))
 	} else if limit, ok := limits[email]; ok && !limit.empty() {
-		content.WriteString(tr(s.cfg.Language, "account.limits.header"))
+		content.Add(trh(s.cfg.Language, "account.limits.header"))
 		if limit.QuotaBytes > 0 {
-			content.WriteString(tr(s.cfg.Language, "account.limits.quota", mdCode(FormatBytes(uint64(limit.QuotaBytes))), mdCode(FormatBytes(usedBytes))))
+			content.Add(trh(s.cfg.Language, "account.limits.quota", FormatBytes(uint64(limit.QuotaBytes)), FormatBytes(usedBytes)))
 		}
 		if limit.ExpiryUnix > 0 {
-			content.WriteString(tr(s.cfg.Language, "account.limits.expiry", mdCode(expiryLabel(limit, s.cfg.Language))))
+			content.Add(trh(s.cfg.Language, "account.limits.expiry", expiryLabel(limit, s.cfg.Language)))
 		}
 	} else {
-		content.WriteString(tr(s.cfg.Language, "account.limits.none"))
+		content.Add(trh(s.cfg.Language, "account.limits.none"))
 	}
 	for _, node := range nodes {
 		if node.Protocol != "vless" || node.Tag == "" {
@@ -295,7 +295,7 @@ func (s *BotService) sendUserManageCard(chatID int64, msgID int, key string) {
 		if present {
 			status = tr(s.cfg.Language, "account.assigned")
 		}
-		content.WriteString(fmt.Sprintf("• %s (%d): %s\n", node.Tag, node.Port, status))
+		content.Add(esc(fmt.Sprintf("• %s (%d): %s\n", node.Tag, node.Port, status)))
 		rows = append(rows, newRow(
 			newButton(mark+" "+truncateLabel(node.Tag, 28), "manage_node:"+op+":"+key+":"+userCallbackKey(node.Tag)),
 		))
@@ -325,8 +325,8 @@ func (s *BotService) sendUserManageCard(chatID int64, msgID int, key string) {
 		newButton(tr(s.cfg.Language, "account.delete"), "manage_delete:"+key),
 		newButton(tr(s.cfg.Language, "account.list"), "menu_users"),
 	))
-	content.WriteString(tr(s.cfg.Language, "account.footer"))
-	s.sendOrEdit(chatID, msgID, content.String(), newKeyboard(rows...))
+	content.Add(trh(s.cfg.Language, "account.footer"))
+	s.sendOrEdit(chatID, msgID, content.HTML(), newKeyboard(rows...))
 }
 
 func (s *BotService) handleManagedUserCallback(cb *tgCallback) {
@@ -341,7 +341,7 @@ func (s *BotService) handleManagedUserCallback(cb *tgCallback) {
 	}
 	nodes, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "manage.inboundsfailed", err.Error()))
+		s.sendAlert(chatID, trh(s.cfg.Language, "manage.inboundsfailed", err.Error()))
 		return
 	}
 	switch parts[0] {
@@ -351,7 +351,7 @@ func (s *BotService) handleManagedUserCallback(cb *tgCallback) {
 	case "manage_rotate", "manage_delete", "manage_disable":
 		email := lookupManagedUserByKey(s.cfg.XrayConfigPath, parts[1])
 		if email == "" {
-			s.sendAlert(chatID, tr(s.cfg.Language, "manage.usermissing"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "manage.usermissing"))
 			return
 		}
 		kind := "rotate"
@@ -365,7 +365,7 @@ func (s *BotService) handleManagedUserCallback(cb *tgCallback) {
 	case "manage_quota", "manage_expiry", "manage_limitclear":
 		email := lookupManagedUserByKey(s.cfg.XrayConfigPath, parts[1])
 		if email == "" {
-			s.sendAlert(chatID, tr(s.cfg.Language, "manage.usermissing"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "manage.usermissing"))
 			return
 		}
 		if parts[0] == "manage_limitclear" {
@@ -373,19 +373,19 @@ func (s *BotService) handleManagedUserCallback(cb *tgCallback) {
 			return
 		}
 		if !s.cfg.AllowMutations {
-			s.sendAlert(chatID, tr(s.cfg.Language, "manage.disabled"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "manage.disabled"))
 			return
 		}
 		limits, limitErr := snapshotUserLimits(s.cfg.XrayConfigPath)
 		if limitErr != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "limit.savefailed", limitErr.Error()))
+			s.sendAlert(chatID, trh(s.cfg.Language, "limit.savefailed", limitErr.Error()))
 			return
 		}
 		limit := limits[email]
 		if parts[0] == "manage_quota" {
-			s.beginUserLimitWizard(chatID, cb.From.ID, msgID, email, "quota", tr(s.cfg.Language, "limit.quotaprompt", mdCode(quotaLabel(limit, s.cfg.Language))))
+			s.beginUserLimitWizard(chatID, cb.From.ID, msgID, email, "quota", trh(s.cfg.Language, "limit.quotaprompt", quotaLabel(limit, s.cfg.Language)))
 		} else {
-			s.beginUserLimitWizard(chatID, cb.From.ID, msgID, email, "expiry", tr(s.cfg.Language, "limit.expiryprompt", mdCode(expiryLabel(limit, s.cfg.Language))))
+			s.beginUserLimitWizard(chatID, cb.From.ID, msgID, email, "expiry", trh(s.cfg.Language, "limit.expiryprompt", expiryLabel(limit, s.cfg.Language)))
 		}
 	case "manage_traffic":
 		s.askUserTrafficReset(cb)
@@ -395,7 +395,7 @@ func (s *BotService) handleManagedUserCallback(cb *tgCallback) {
 		}
 		email := lookupManagedUserByKey(s.cfg.XrayConfigPath, parts[2])
 		if email == "" {
-			s.sendAlert(chatID, tr(s.cfg.Language, "manage.usermissing"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "manage.usermissing"))
 			return
 		}
 		for _, node := range nodes {
@@ -414,7 +414,7 @@ func (s *BotService) handleManagedUserCallback(cb *tgCallback) {
 			s.offerUserChange(chatID, cb.From.ID, msgID, UserChange{Kind: kind, User: email, Node: node.Tag})
 			return
 		}
-		s.sendAlert(chatID, tr(s.cfg.Language, "manage.inboundmissing"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "manage.inboundmissing"))
 	}
 }
 
@@ -430,21 +430,21 @@ func (s *BotService) askUserTrafficReset(cb *tgCallback) {
 	key := strings.TrimPrefix(cb.Data, "manage_traffic:")
 	email := lookupManagedUserByKey(s.cfg.XrayConfigPath, key)
 	if email == "" {
-		s.sendAlert(chatID, tr(s.cfg.Language, "manage.usermissing"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "manage.usermissing"))
 		return
 	}
 	if !s.cfg.AllowMutations {
-		s.sendAlert(chatID, tr(s.cfg.Language, "manage.disabled"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "manage.disabled"))
 		return
 	}
 	identity, err := managedUserIdentityFingerprint(s.cfg.XrayConfigPath, email)
 	if err != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "traffic.userreset.failed", err.Error()))
+		s.sendAlert(chatID, trh(s.cfg.Language, "traffic.userreset.failed", err.Error()))
 		return
 	}
 	var raw [8]byte
 	if _, err = rand.Read(raw[:]); err != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "node.tokenerror"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "node.tokenerror"))
 		return
 	}
 	token := hex.EncodeToString(raw[:])
@@ -462,7 +462,7 @@ func (s *BotService) askUserTrafficReset(cb *tgCallback) {
 			newButton(tr(s.cfg.Language, "common.cancel"), "manage_traffic_cancel:"+token),
 		),
 	)
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "traffic.userreset.confirm", mdCode(email)), markup)
+	s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "traffic.userreset.confirm", email), markup)
 }
 
 func (s *BotService) resolveUserTrafficReset(cb *tgCallback, confirm bool) {
@@ -479,11 +479,11 @@ func (s *BotService) resolveUserTrafficReset(cb *tgCallback, confirm bool) {
 	}
 	pendingTrafficResets.Unlock()
 	if ok && (item.ChatID != chatID || item.AdminID != cb.From.ID) {
-		s.sendAlert(chatID, tr(s.cfg.Language, "manage.owned"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "manage.owned"))
 		return
 	}
 	if !ok || time.Now().After(item.Expires) {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.expired"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.expired"), s.backToMainMarkup())
 		return
 	}
 	email, key := item.User, userCallbackKey(item.User)
@@ -492,23 +492,23 @@ func (s *BotService) resolveUserTrafficReset(cb *tgCallback, confirm bool) {
 		return
 	}
 	if !s.cfg.AllowMutations {
-		s.sendAlert(chatID, tr(s.cfg.Language, "manage.disabled"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "manage.disabled"))
 		return
 	}
 	if err := resetUserTrafficWithIdentity(s.cfg.XrayConfigPath, s.cfg.XrayBinPath, s.cfg.StatsAPIServer, email, item.Identity); err != nil {
 		log.Printf("[Bot] user traffic reset for %s failed: %v", email, err)
-		s.sendAlert(chatID, tr(s.cfg.Language, "traffic.userreset.failed", err.Error()))
+		s.sendAlert(chatID, trh(s.cfg.Language, "traffic.userreset.failed", err.Error()))
 		s.sendUserManageCard(chatID, msgID, key)
 		return
 	}
-	s.sendAlert(chatID, tr(s.cfg.Language, "traffic.userreset.done", email))
+	s.sendAlert(chatID, trh(s.cfg.Language, "traffic.userreset.done", email))
 	s.sendUserManageCard(chatID, msgID, key)
 }
 
 func (s *BotService) sendDisabledUsersCard(chatID int64, msgID int) {
 	names, err := disabledUserNames(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.suspended.loadfailed", err.Error()), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.suspended.loadfailed", err.Error()), s.backToMainMarkup())
 		return
 	}
 	rows := [][]tgButton{}
@@ -520,9 +520,9 @@ func (s *BotService) sendDisabledUsersCard(chatID int64, msgID int) {
 	rows = append(rows, newRow(
 		newButton(tr(s.cfg.Language, "manage.suspended.back"), "menu_users"),
 	))
-	message := tr(s.cfg.Language, "manage.suspended.title")
+	message := trh(s.cfg.Language, "manage.suspended.title")
 	if len(names) == 0 {
-		message = tr(s.cfg.Language, "manage.suspended.empty")
+		message = trh(s.cfg.Language, "manage.suspended.empty")
 	}
 	s.sendOrEdit(chatID, msgID, message, newKeyboard(rows...))
 }
@@ -533,7 +533,7 @@ func (s *BotService) enableDisabledUserCallback(cb *tgCallback) {
 	}
 	names, err := disabledUserNames(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendAlert(cb.Message.Chat.ID, tr(s.cfg.Language, "manage.suspended.corrupt"))
+		s.sendAlert(cb.Message.Chat.ID, trh(s.cfg.Language, "manage.suspended.corrupt"))
 		return
 	}
 	key := strings.TrimPrefix(cb.Data, "manage_enable:")
@@ -543,7 +543,7 @@ func (s *BotService) enableDisabledUserCallback(cb *tgCallback) {
 			return
 		}
 	}
-	s.sendAlert(cb.Message.Chat.ID, tr(s.cfg.Language, "manage.suspended.notfound"))
+	s.sendAlert(cb.Message.Chat.ID, trh(s.cfg.Language, "manage.suspended.notfound"))
 }
 
 func lookupManagedUserByKey(configPath, key string) string {

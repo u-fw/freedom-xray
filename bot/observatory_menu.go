@@ -46,17 +46,17 @@ func observatoryBackMarkup(lang string) tgKeyboard {
 func (s *BotService) sendObservatoryPage(chatID int64, msgID int, notice string) {
 	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.error", mdEsc(err.Error())), balancerBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.error", err.Error()), balancerBackMarkup(s.cfg.Language))
 		return
 	}
 	records, err := observatoryRecords(root, false)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.error", mdEsc(err.Error())), balancerBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.error", err.Error()), balancerBackMarkup(s.cfg.Language))
 		return
 	}
-	body := tr(s.cfg.Language, "monitor.list")
+	body := trh(s.cfg.Language, "monitor.list")
 	if notice != "" {
-		body += "\n" + mdEsc(notice) + "\n"
+		body += "\n" + esc(notice) + "\n"
 	}
 	var rows [][]tgButton
 	for _, record := range records {
@@ -114,12 +114,12 @@ func (s *BotService) sendObservatoryDetailNotice(chatID int64, msgID int, kind, 
 		s.sendObservatoryPage(chatID, msgID, tr(s.cfg.Language, "monitor.changed"))
 		return
 	}
-	body := tr(s.cfg.Language, "monitor.detail", mdEsc(kind))
+	body := trh(s.cfg.Language, "monitor.detail", kind)
 	if notice != "" {
-		body = mdEsc(notice) + "\n\n" + body
+		body = esc(notice) + "\n\n" + body
 	}
 	if record.Configured {
-		body += tr(s.cfg.Language, "monitor.selectors", mdEsc(strings.Join(stringList(record.Config["subjectSelector"]), "\n")))
+		body += trh(s.cfg.Language, "monitor.selectors", strings.Join(stringList(record.Config["subjectSelector"]), "\n"))
 		config, _ := readObservatory(root, kind)
 		interval, _ := config["probeInterval"].(string)
 		if kind == "burstObservatory" {
@@ -129,12 +129,12 @@ func (s *BotService) sendObservatoryDetailNotice(chatID int64, msgID int, kind, 
 		if interval == "" {
 			interval = tr(s.cfg.Language, "node.default")
 		}
-		body += tr(s.cfg.Language, "monitor.interval", mdEsc(interval))
+		body += trh(s.cfg.Language, "monitor.interval", interval)
 		if len(record.RedactedFields) > 0 {
-			body += tr(s.cfg.Language, "monitor.hidden")
+			body += trh(s.cfg.Language, "monitor.hidden")
 		}
 	} else {
-		body += tr(s.cfg.Language, "monitor.notconfigured_detail")
+		body += trh(s.cfg.Language, "monitor.notconfigured_detail")
 	}
 	var rows [][]tgButton
 	if s.cfg.AllowMutations {
@@ -160,7 +160,7 @@ func (s *BotService) sendObservatoryDetailNotice(chatID int64, msgID int, kind, 
 
 func (s *BotService) offerObservatoryChange(chatID, adminID int64, msgID int, change observatoryChange) {
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), observatoryBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), observatoryBackMarkup(s.cfg.Language))
 		return
 	}
 	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
@@ -172,17 +172,17 @@ func (s *BotService) offerObservatoryChange(chatID, adminID int64, msgID int, ch
 		return
 	}
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.edit.invalid", mdEsc(err.Error())), observatoryBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.edit.invalid", err.Error()), observatoryBackMarkup(s.cfg.Language))
 		return
 	}
-	detail := tr(s.cfg.Language, "monitor.confirm.delete", mdEsc(change.Kind))
+	detail := trh(s.cfg.Language, "monitor.confirm.delete", change.Kind)
 	if change.Action == "field" {
 		value := change.Value
 		field := tr(s.cfg.Language, "monitor.edit_"+change.Field)
 		if change.Field == "url" {
 			value = tr(s.cfg.Language, "monitor.hidden_value")
 		}
-		detail = tr(s.cfg.Language, "monitor.confirm.field", mdEsc(change.Kind), mdEsc(field), mdEsc(value))
+		detail = trh(s.cfg.Language, "monitor.confirm.field", change.Kind, field, value)
 	} else if change.Action != "delete" {
 		selectors := change.Selectors
 		if change.Action == "put" {
@@ -192,7 +192,7 @@ func (s *BotService) offerObservatoryChange(chatID, adminID int64, msgID int, ch
 		if change.Action == "put" && change.ETag != "" {
 			key = "monitor.native.confirm_replace"
 		}
-		detail = tr(s.cfg.Language, key, mdEsc(change.Kind), mdEsc(strings.Join(stringList(selectors), ", ")))
+		detail = trh(s.cfg.Language, key, change.Kind, strings.Join(stringList(selectors), ", "))
 	}
 	s.queueGuidedRoutingChange(chatID, adminID, msgID, pendingRoutingChange{Observatory: &change}, detail)
 }
@@ -231,7 +231,7 @@ func (s *BotService) handleObservatoryCallback(cb *tgCallback) {
 		return
 	}
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), observatoryBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), observatoryBackMarkup(s.cfg.Language))
 		return
 	}
 	switch parts[1] {
@@ -255,15 +255,15 @@ func (s *BotService) handleObservatoryCallback(cb *tgCallback) {
 			step, prompt = "monitor-native", "monitor.native.prompt"
 		}
 		setBalancerWizard(chatID, balancerWizard{AdminID: cb.From.ID, Step: step, Tag: kind, ETag: etag, Expires: time.Now().Add(5 * time.Minute)})
-		var text string
+		var text htmlText
 		if parts[1] == "json" {
 			example := `{"subjectSelector":["proxy-"],"probeInterval":"1m","enableConcurrency":true}`
 			if kind == "burstObservatory" {
 				example = `{"subjectSelector":["proxy-"],"pingConfig":{"interval":"1m","sampling":4,"timeout":"5s"}}`
 			}
-			text = tr(s.cfg.Language, prompt, mdEsc(kind), example)
+			text = trh(s.cfg.Language, prompt, kind, example)
 		} else {
-			text = tr(s.cfg.Language, prompt)
+			text = trh(s.cfg.Language, prompt)
 		}
 		s.sendOrEdit(chatID, msgID, text, observatoryBackMarkup(s.cfg.Language))
 	case "delete":

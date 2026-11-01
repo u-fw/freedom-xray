@@ -60,12 +60,12 @@ func outboundBackMarkup(lang string) tgKeyboard {
 func (s *BotService) sendOutboundPage(chatID int64, msgID, offset int, notice string) {
 	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.error", mdEsc(err.Error())), routingPageBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.error", err.Error()), routingPageBackMarkup(s.cfg.Language))
 		return
 	}
 	records, err := outboundRecords(root)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.error", mdEsc(err.Error())), routingPageBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.error", err.Error()), routingPageBackMarkup(s.cfg.Language))
 		return
 	}
 	if offset < 0 {
@@ -78,9 +78,9 @@ func (s *BotService) sendOutboundPage(chatID int64, msgID, offset int, notice st
 	if end > len(records) {
 		end = len(records)
 	}
-	body := tr(s.cfg.Language, "outbound.list", len(records))
+	body := trh(s.cfg.Language, "outbound.list", len(records))
 	if notice != "" {
-		body += "\n" + mdEsc(notice) + "\n"
+		body += "\n" + esc(notice) + "\n"
 	}
 	var rows [][]tgButton
 	for _, record := range records[offset:end] {
@@ -134,11 +134,11 @@ func (s *BotService) sendOutboundDetail(chatID int64, msgID, index int, etag str
 	if record.Default {
 		state = tr(s.cfg.Language, "outbound.default")
 	}
-	body := tr(s.cfg.Language, "outbound.detail", record.Index, mdEsc(tag), mdEsc(record.Protocol), state)
+	body := trh(s.cfg.Language, "outbound.detail", record.Index, tag, record.Protocol, state)
 	if record.Endpoint != nil {
-		body += tr(s.cfg.Language, "outbound.endpoint", mdEsc(record.Endpoint.Address), record.Endpoint.Port)
+		body += trh(s.cfg.Language, "outbound.endpoint", record.Endpoint.Address, record.Endpoint.Port)
 	}
-	body += tr(s.cfg.Language, "outbound.hidden")
+	body += trh(s.cfg.Language, "outbound.hidden")
 	var rows [][]tgButton
 	protected := record.Tag != "" && record.Tag == networkAPITag(root)
 	if s.cfg.AllowMutations && !protected {
@@ -154,7 +154,7 @@ func (s *BotService) sendOutboundDetail(chatID int64, msgID, index int, etag str
 		}
 	}
 	if protected {
-		body += tr(s.cfg.Language, "routing.guide.protected")
+		body += trh(s.cfg.Language, "routing.guide.protected")
 	}
 	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "config.export.button"), nativeConfigExportCallback("outbound", index, etag))))
 	offset := ((index - 1) / routingPageSize) * routingPageSize
@@ -164,7 +164,7 @@ func (s *BotService) sendOutboundDetail(chatID int64, msgID, index int, etag str
 
 func (s *BotService) offerOutboundChange(chatID, adminID int64, msgID int, change outboundChange) {
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), outboundBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), outboundBackMarkup(s.cfg.Language))
 		return
 	}
 	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
@@ -188,19 +188,19 @@ func (s *BotService) offerOutboundChange(chatID, adminID int64, msgID int, chang
 		return
 	}
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.edit.invalid", mdEsc(err.Error())), outboundBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.edit.invalid", err.Error()), outboundBackMarkup(s.cfg.Language))
 		return
 	}
-	var body string
+	var body htmlText
 	switch change.Kind {
 	case "create":
-		body = tr(s.cfg.Language, "outbound.confirm.create", mdEsc(change.Tag), mdEsc(change.Protocol))
+		body = trh(s.cfg.Language, "outbound.confirm.create", change.Tag, change.Protocol)
 	case "address", "port":
-		body = tr(s.cfg.Language, "outbound.confirm.field", change.Index, mdEsc(tr(s.cfg.Language, "outbound.edit."+change.Kind)), mdEsc(before), mdEsc(change.Value))
+		body = trh(s.cfg.Language, "outbound.confirm.field", change.Index, tr(s.cfg.Language, "outbound.edit."+change.Kind), before, change.Value)
 	case "default":
-		body = tr(s.cfg.Language, "outbound.confirm.default", change.Index)
+		body = trh(s.cfg.Language, "outbound.confirm.default", change.Index)
 	case "delete":
-		body = tr(s.cfg.Language, "outbound.confirm.delete", change.Index)
+		body = trh(s.cfg.Language, "outbound.confirm.delete", change.Index)
 	}
 	s.queueGuidedRoutingChange(chatID, adminID, msgID, pendingRoutingChange{Outbound: &change}, body)
 }
@@ -223,7 +223,7 @@ func (s *BotService) handleOutboundInput(msg *tgMessage) bool {
 	}
 	if !s.cfg.AllowMutations {
 		clearOutboundWizard(msg.Chat.ID)
-		s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "manage.writesdisabled"))
+		s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "manage.writesdisabled"))
 		return true
 	}
 	value := strings.TrimSpace(msg.Text)
@@ -241,7 +241,7 @@ func (s *BotService) handleOutboundInput(msg *tgMessage) bool {
 		return true
 	}
 	if err != nil {
-		s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
+		s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "routing.guide.retry", err.Error()))
 		return true
 	}
 	clearOutboundWizard(msg.Chat.ID)
@@ -268,14 +268,14 @@ func (s *BotService) handleOutboundCallback(cb *tgCallback) {
 	}
 	if parts[1] == "add" && len(parts) == 2 {
 		if !s.cfg.AllowMutations {
-			s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), outboundBackMarkup(s.cfg.Language))
+			s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), outboundBackMarkup(s.cfg.Language))
 			return
 		}
 		rows := [][]tgButton{
 			newRow(newButton(tr(s.cfg.Language, "outbound.create.freedom"), "ob:new:freedom"), newButton(tr(s.cfg.Language, "outbound.create.blackhole"), "ob:new:blackhole")),
 			newRow(newButton(tr(s.cfg.Language, "outbound.back"), "ob:page:0")),
 		}
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "outbound.add_picker"), newKeyboard(rows...))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "outbound.add_picker"), newKeyboard(rows...))
 		return
 	}
 	if parts[1] == "new" && len(parts) == 3 {
@@ -294,7 +294,7 @@ func (s *BotService) handleOutboundCallback(cb *tgCallback) {
 		}
 		clearOtherRoutingInputs(chatID)
 		setOutboundWizard(chatID, outboundWizard{AdminID: cb.From.ID, Step: "create", Protocol: parts[2], ListETag: listETag, Expires: time.Now().Add(5 * time.Minute)})
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "outbound.tag_prompt", parts[2]), outboundBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "outbound.tag_prompt", parts[2]), outboundBackMarkup(s.cfg.Language))
 		return
 	}
 	if len(parts) != 4 {
@@ -318,7 +318,7 @@ func (s *BotService) handleOutboundCallback(cb *tgCallback) {
 		return
 	}
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), outboundBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), outboundBackMarkup(s.cfg.Language))
 		return
 	}
 	switch parts[1] {
@@ -329,7 +329,7 @@ func (s *BotService) handleOutboundCallback(cb *tgCallback) {
 		if parts[1] == "port" {
 			prompt = "outbound.port_prompt"
 		}
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, prompt), outboundBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, prompt), outboundBackMarkup(s.cfg.Language))
 	case "default":
 		listETag, err := outboundListETag(root)
 		if err != nil {

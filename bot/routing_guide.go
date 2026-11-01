@@ -112,11 +112,11 @@ func routingRuleValueLines(value any) []string {
 	return result
 }
 
-func routingRuleDetailText(lang string, record routingRuleRecord, root map[string]any) string {
-	var body strings.Builder
-	body.WriteString(tr(lang, "routing.guide.detail", record.Index, mdEsc(routingRuleTitle(record.Rule, record.Index))))
+func routingRuleDetailText(lang string, record routingRuleRecord, root map[string]any) htmlText {
+	var body htmlBuilder
+	body.Add(trh(lang, "routing.guide.detail", record.Index, routingRuleTitle(record.Rule, record.Index)))
 	if record.Protected {
-		body.WriteString(tr(lang, "routing.guide.protected"))
+		body.Add(trh(lang, "routing.guide.protected"))
 	}
 	ordered := []string{"type", "ruleTag", "inboundTag", "domain", "domains", "ip", "port", "network", "protocol", "source", "sourceIP", "sourcePort", "localIP", "localPort", "user", "vlessRoute", "process", "localOS", "outboundTag", "balancerTag"}
 	seen := map[string]bool{}
@@ -143,21 +143,21 @@ func routingRuleDetailText(lang string, record routingRuleRecord, root map[strin
 		if !ok {
 			continue
 		}
-		body.WriteString("\n*")
-		body.WriteString(mdEsc(routingFieldLabel(lang, field)))
+		body.Add("\n<b>")
+		body.Add(esc(routingFieldLabel(lang, field)))
 		if field == "domain" && record.Rule["domains"] != nil || field == "source" && record.Rule["sourceIP"] != nil {
-			body.WriteString(" ")
-			body.WriteString(mdEsc(tr(lang, "routing.guide.overridden")))
+			body.Add(" ")
+			body.Add(esc(tr(lang, "routing.guide.overridden")))
 		}
-		body.WriteString(":*\n")
+		body.Add(":</b>\n")
 		if !routingPublicFields[field] {
-			body.WriteString("• " + tr(lang, "routing.guide.hidden") + "\n")
+			body.Add("• ", trh(lang, "routing.guide.hidden"), "\n")
 			continue
 		}
 		for _, line := range routingRuleValueLines(value) {
-			body.WriteString("• ")
-			body.WriteString(mdEsc(line))
-			body.WriteString("\n")
+			body.Add("• ")
+			body.Add(esc(line))
+			body.Add("\n")
 		}
 	}
 	if tag, ok := record.Rule["outboundTag"].(string); ok {
@@ -166,24 +166,24 @@ func routingRuleDetailText(lang string, record routingRuleRecord, root map[strin
 			item, _ := getMap(entry)
 			if item["tag"] == tag {
 				if protocol, ok := item["protocol"].(string); ok && protocol != "" {
-					body.WriteString(tr(lang, "routing.guide.outboundprotocol", mdEsc(protocol)))
+					body.Add(trh(lang, "routing.guide.outboundprotocol", protocol))
 				}
 				break
 			}
 		}
 	}
-	return body.String()
+	return body.HTML()
 }
 
 func (s *BotService) sendRoutingPage(chatID int64, msgID, offset int, notice string) {
 	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.error", mdEsc(err.Error())), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.error", err.Error()), s.backToMainMarkup())
 		return
 	}
 	records, err := routingRuleRecords(root)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.error", mdEsc(err.Error())), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.error", err.Error()), s.backToMainMarkup())
 		return
 	}
 	if offset < 0 || len(records) == 0 {
@@ -202,20 +202,20 @@ func (s *BotService) sendRoutingPage(chatID int64, msgID, offset int, notice str
 	if strategy == "" {
 		strategy = "default"
 	}
-	var body strings.Builder
-	body.WriteString(tr(s.cfg.Language, "routing.guide.list", mdEsc(strategy), len(records)))
+	var body htmlBuilder
+	body.Add(trh(s.cfg.Language, "routing.guide.list", strategy, len(records)))
 	if script != "" {
-		body.WriteString(tr(s.cfg.Language, "routing.guide.script"))
+		body.Add(trh(s.cfg.Language, "routing.guide.script"))
 	}
 	if notice != "" {
-		body.WriteString("\n")
-		body.WriteString(mdEsc(notice))
-		body.WriteString("\n")
+		body.Add("\n")
+		body.Add(esc(notice))
+		body.Add("\n")
 	}
 	if len(records) == 0 {
-		body.WriteString(tr(s.cfg.Language, "routing.empty"))
+		body.Add(trh(s.cfg.Language, "routing.empty"))
 	} else {
-		body.WriteString(tr(s.cfg.Language, "routing.guide.page", offset+1, end, len(records)))
+		body.Add(trh(s.cfg.Language, "routing.guide.page", offset+1, end, len(records)))
 	}
 	rows := [][]tgButton{}
 	for _, record := range records[offset:end] {
@@ -251,7 +251,7 @@ func (s *BotService) sendRoutingPage(chatID int64, msgID, offset int, notice str
 		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "routing.guide.advanced"), "rt:advanced")))
 	}
 	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "common.refresh"), fmt.Sprintf("rt:page:%d", offset)), newButton(tr(s.cfg.Language, "menu.home"), "menu_main")))
-	s.sendOrEdit(chatID, msgID, body.String(), newKeyboard(rows...))
+	s.sendOrEdit(chatID, msgID, body.HTML(), newKeyboard(rows...))
 }
 
 func (s *BotService) sendRoutingRuleDetail(chatID int64, msgID int, ref routingRuleRef) {
@@ -319,7 +319,7 @@ func (s *BotService) sendRoutingMoreFields(chatID int64, msgID int, ref routingR
 		newRow(button("localPort"), button("vlessRoute")),
 		newRow(newButton(tr(s.cfg.Language, "common.back"), routingRefData("v", ref))),
 	}
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.guide.more_fields_text"), newKeyboard(rows...))
+	s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.guide.more_fields_text"), newKeyboard(rows...))
 }
 
 type routingTarget struct{ Kind, Tag, Protocol string }
@@ -422,9 +422,9 @@ func (s *BotService) sendRoutingTargets(cb *tgCallback, ref *routingRuleRef, off
 		back = routingRefData("v", *ref)
 	}
 	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "common.back"), back)))
-	body := tr(s.cfg.Language, "routing.guide.choose_target")
+	body := trh(s.cfg.Language, "routing.guide.choose_target")
 	if len(targets) == 0 {
-		body += "\n" + tr(s.cfg.Language, "routing.guide.no_targets")
+		body += "\n" + trh(s.cfg.Language, "routing.guide.no_targets")
 	}
 	s.sendOrEdit(chatID, msgID, body, newKeyboard(rows...))
 }
@@ -440,12 +440,12 @@ func (s *BotService) sendRoutingAdvanced(chatID int64, msgID int) {
 		newRow(newButton(tr(s.cfg.Language, "network.dns.put"), "routing_manage:dns_put")),
 		newRow(newButton(tr(s.cfg.Language, "routing.guide.back"), "rt:page:0")),
 	}
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.guide.advanced_text"), newKeyboard(rows...))
+	s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.guide.advanced_text"), newKeyboard(rows...))
 }
 
 func (s *BotService) sendRoutingAddPicker(chatID int64, msgID int) {
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), routingPageBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), routingPageBackMarkup(s.cfg.Language))
 		return
 	}
 	rows := [][]tgButton{
@@ -453,7 +453,7 @@ func (s *BotService) sendRoutingAddPicker(chatID int64, msgID int) {
 		newRow(newButton(tr(s.cfg.Language, "routing.field.port"), "rt:nf:port"), newButton(tr(s.cfg.Language, "routing.field.inboundTag"), "rt:nf:inboundTag")),
 		newRow(newButton(tr(s.cfg.Language, "routing.guide.back"), "rt:page:0")),
 	}
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.guide.add_picker"), newKeyboard(rows...))
+	s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.guide.add_picker"), newKeyboard(rows...))
 }
 
 func clearOtherRoutingInputs(chatID int64) {
@@ -522,7 +522,7 @@ func parseGuidedRoutingValue(field, text string) (any, error) {
 func (s *BotService) startGuidedRoutingInput(cb *tgCallback, ref routingRuleRef, field string, newRule bool) {
 	chatID, msgID := cb.Message.Chat.ID, cb.Message.MessageID
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), routingPageBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), routingPageBackMarkup(s.cfg.Language))
 		return
 	}
 	if !routingEditableFields[field] {
@@ -555,15 +555,15 @@ func (s *BotService) startGuidedRoutingInput(cb *tgCallback, ref routingRuleRef,
 	if len(values) > 800 {
 		values = truncateLabel(values, 800) + " …"
 	}
-	prompt := tr(s.cfg.Language, "routing.guide.input", mdEsc(routingFieldLabel(s.cfg.Language, field)), mdEsc(values))
+	prompt := trh(s.cfg.Language, "routing.guide.input", routingFieldLabel(s.cfg.Language, field), values)
 	if field == "domain" || field == "domains" {
-		prompt += "\n" + tr(s.cfg.Language, "routing.guide.domain_example")
+		prompt += "\n" + trh(s.cfg.Language, "routing.guide.domain_example")
 	}
 	if field == "ip" {
-		prompt += "\n" + tr(s.cfg.Language, "routing.guide.ip_example")
+		prompt += "\n" + trh(s.cfg.Language, "routing.guide.ip_example")
 	}
 	if field == "port" {
-		prompt += "\n" + tr(s.cfg.Language, "routing.guide.port_example")
+		prompt += "\n" + trh(s.cfg.Language, "routing.guide.port_example")
 	}
 	back := "rt:add"
 	if !newRule {
@@ -573,10 +573,10 @@ func (s *BotService) startGuidedRoutingInput(cb *tgCallback, ref routingRuleRef,
 	s.sendOrEdit(chatID, msgID, prompt, markup)
 }
 
-func (s *BotService) queueGuidedRoutingChange(chatID, adminID int64, msgID int, pending pendingRoutingChange, body string) {
+func (s *BotService) queueGuidedRoutingChange(chatID, adminID int64, msgID int, pending pendingRoutingChange, body htmlText) {
 	var token [8]byte
 	if _, err := rand.Read(token[:]); err != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "node.tokenerror"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "node.tokenerror"))
 		return
 	}
 	key := hex.EncodeToString(token[:])
@@ -608,7 +608,7 @@ func previewRoutingValue(value any) string {
 
 func (s *BotService) offerGuidedRoutingRuleChange(chatID, adminID int64, msgID int, change routingRuleEdit) {
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), routingPageBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), routingPageBackMarkup(s.cfg.Language))
 		return
 	}
 	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
@@ -635,23 +635,23 @@ func (s *BotService) offerGuidedRoutingRuleChange(chatID, adminID int64, msgID i
 		_, err = applyRoutingRuleEdit(root, change)
 	}
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.edit.invalid", mdEsc(err.Error())), routingPageBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.edit.invalid", err.Error()), routingPageBackMarkup(s.cfg.Language))
 		return
 	}
-	body := ""
+	var body htmlText
 	switch change.Kind {
 	case "field":
-		body = tr(s.cfg.Language, "routing.guide.confirm_field", change.Ref.Index, mdEsc(routingFieldLabel(s.cfg.Language, change.Field)), mdEsc(previewRoutingValue(before)), mdEsc(previewRoutingValue(change.Value)))
+		body = trh(s.cfg.Language, "routing.guide.confirm_field", change.Ref.Index, routingFieldLabel(s.cfg.Language, change.Field), previewRoutingValue(before), previewRoutingValue(change.Value))
 	case "target":
-		body = tr(s.cfg.Language, "routing.guide.confirm_target", change.Ref.Index, mdEsc(previewRoutingValue(before)), mdEsc(previewRoutingValue(change.Value)))
+		body = trh(s.cfg.Language, "routing.guide.confirm_target", change.Ref.Index, previewRoutingValue(before), previewRoutingValue(change.Value))
 	case "move":
 		direction := tr(s.cfg.Language, "routing.guide.up")
 		if change.Direction > 0 {
 			direction = tr(s.cfg.Language, "routing.guide.down")
 		}
-		body = tr(s.cfg.Language, "routing.guide.confirm_move", change.Ref.Index, mdEsc(direction))
+		body = trh(s.cfg.Language, "routing.guide.confirm_move", change.Ref.Index, direction)
 	case "delete":
-		body = tr(s.cfg.Language, "routing.guide.confirm_delete", change.Ref.Index)
+		body = trh(s.cfg.Language, "routing.guide.confirm_delete", change.Ref.Index)
 	}
 	s.queueGuidedRoutingChange(chatID, adminID, msgID, pendingRoutingChange{RuleEdit: &change}, body)
 }
@@ -678,7 +678,7 @@ func (s *BotService) handleGuidedRoutingInput(msg *tgMessage) bool {
 	}
 	if !s.cfg.AllowMutations {
 		clearGuidedRoutingWizard(chatID)
-		s.sendAlert(chatID, tr(s.cfg.Language, "manage.writesdisabled"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "manage.writesdisabled"))
 		return true
 	}
 	value, err := parseGuidedRoutingValue(state.Field, msg.Text)
@@ -686,7 +686,7 @@ func (s *BotService) handleGuidedRoutingInput(msg *tgMessage) bool {
 		if err == nil {
 			err = fmt.Errorf("a new rule needs a condition")
 		}
-		s.sendAlert(chatID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
+		s.sendAlert(chatID, trh(s.cfg.Language, "routing.guide.retry", err.Error()))
 		return true
 	}
 	if state.Step == "edit" {
@@ -701,7 +701,7 @@ func (s *BotService) handleGuidedRoutingInput(msg *tgMessage) bool {
 			return true
 		}
 		if e != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "routing.guide.retry", e.Error()))
+			s.sendAlert(chatID, trh(s.cfg.Language, "routing.guide.retry", e.Error()))
 			return true
 		}
 		clearGuidedRoutingWizard(chatID)
@@ -711,7 +711,7 @@ func (s *BotService) handleGuidedRoutingInput(msg *tgMessage) bool {
 	var id [6]byte
 	if _, err = rand.Read(id[:]); err != nil {
 		clearGuidedRoutingWizard(chatID)
-		s.sendAlert(chatID, tr(s.cfg.Language, "node.tokenerror"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "node.tokenerror"))
 		return true
 	}
 	state.Rule = map[string]any{"type": "field", "ruleTag": "route-" + hex.EncodeToString(id[:]), state.Field: value}
@@ -796,7 +796,7 @@ func (s *BotService) handleGuidedRoutingCallback(cb *tgCallback) {
 		rows := [][]tgButton{
 			newRow(newButton(tr(s.cfg.Language, "routing.guide.first"), "rt:npos:first"), newButton(tr(s.cfg.Language, "routing.guide.last"), "rt:npos:last")),
 			newRow(newButton(tr(s.cfg.Language, "common.cancel"), "rt:page:0"))}
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.guide.position"), newKeyboard(rows...))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.guide.position"), newKeyboard(rows...))
 		return
 	}
 	if action == "npos" && len(parts) == 3 {
@@ -829,11 +829,11 @@ func (s *BotService) handleGuidedRoutingCallback(cb *tgCallback) {
 			position = tr(s.cfg.Language, "routing.guide.first")
 		}
 		if _, err = applyGuidedRoutingAdd(root, change); err != nil {
-			s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.edit.invalid", mdEsc(err.Error())), routingPageBackMarkup(s.cfg.Language))
+			s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.edit.invalid", err.Error()), routingPageBackMarkup(s.cfg.Language))
 			return
 		}
 		clearGuidedRoutingWizard(chatID)
-		body := tr(s.cfg.Language, "routing.guide.confirm_add", mdEsc(routingFieldLabel(s.cfg.Language, state.Field)), mdEsc(previewRoutingValue(state.Rule[state.Field])), mdEsc(routingRuleTarget(state.Rule)), mdEsc(position))
+		body := trh(s.cfg.Language, "routing.guide.confirm_add", routingFieldLabel(s.cfg.Language, state.Field), previewRoutingValue(state.Rule[state.Field]), routingRuleTarget(state.Rule), position)
 		s.queueGuidedRoutingChange(chatID, cb.From.ID, msgID, pendingRoutingChange{Change: change, ExpectedRules: etag}, body)
 		return
 	}

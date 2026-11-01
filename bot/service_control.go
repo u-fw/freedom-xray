@@ -61,12 +61,12 @@ func (s *BotService) askServiceAction(cb *tgCallback, action string) {
 	}
 	chatID, msgID := cb.Message.Chat.ID, cb.Message.MessageID
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
 		return
 	}
 	var token [8]byte
 	if _, err := rand.Read(token[:]); err != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "node.tokenerror"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "node.tokenerror"))
 		return
 	}
 	key := hex.EncodeToString(token[:])
@@ -81,7 +81,7 @@ func (s *BotService) askServiceAction(cb *tgCallback, action string) {
 	markup := newKeyboard(newRow(
 		newButton(tr(s.cfg.Language, "common.confirm"), "service_confirm:"+key),
 		newButton(tr(s.cfg.Language, "common.cancel"), "menu_status")))
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "service.ask."+action), markup)
+	s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "service.ask."+action), markup)
 }
 
 func (s *BotService) resolveServiceAction(cb *tgCallback) {
@@ -97,15 +97,15 @@ func (s *BotService) resolveServiceAction(cb *tgCallback) {
 	}
 	pendingServiceActions.Unlock()
 	if ok && (pending.chatID != chatID || pending.adminID != cb.From.ID) {
-		s.sendAlert(chatID, tr(s.cfg.Language, "manage.owned"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "manage.owned"))
 		return
 	}
 	if !ok || pending.chatID != chatID || pending.adminID != cb.From.ID || time.Now().After(pending.expires) {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.expired"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.expired"), s.backToMainMarkup())
 		return
 	}
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
 		return
 	}
 	var err error
@@ -119,8 +119,8 @@ func (s *BotService) resolveServiceAction(cb *tgCallback) {
 		err = manageXrayService(s.cfg, pending.action)
 	}
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "service.failed", mdEsc(err.Error())), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "service.failed", err.Error()), s.backToMainMarkup())
 		return
 	}
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "service.done."+pending.action), s.backToMainMarkup())
+	s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "service.done."+pending.action), s.backToMainMarkup())
 }

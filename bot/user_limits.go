@@ -247,9 +247,9 @@ func setLimitCooldown(email string, now time.Time) {
 	limitCooldown.Unlock()
 }
 
-func (s *BotService) notifyAdmins(text string) {
+func (s *BotService) notifyAdmins(text htmlText) {
 	for _, adminID := range s.cfg.AdminIDs {
-		if _, err := s.tg.sendText(adminID, text, "Markdown", nil, false); err != nil {
+		if _, err := s.tg.sendText(adminID, string(text), "HTML", nil, false); err != nil {
 			log.Printf("[Limits] notify %d failed: %v", adminID, err)
 		}
 	}
@@ -370,7 +370,7 @@ func (s *BotService) enforceUserLimitsOnce() {
 		}
 		if ambiguityErr == nil && ambiguous[email] && limit.QuotaBytes > 0 && !limit.NotifiedAmbiguous {
 			markUserLimit(s.cfg.XrayConfigPath, email, func(l *userLimit) { l.NotifiedAmbiguous = true })
-			s.notifyAdmins(tr(lang, "limit.notify.ambiguous", mdCode(email)))
+			s.notifyAdmins(trh(lang, "limit.notify.ambiguous", email))
 		} else if ambiguityErr == nil && !ambiguous[email] && limit.NotifiedAmbiguous {
 			markUserLimit(s.cfg.XrayConfigPath, email, func(l *userLimit) { l.NotifiedAmbiguous = false })
 		}
@@ -396,7 +396,7 @@ func (s *BotService) enforceUserLimitsOnce() {
 			if err != nil {
 				log.Printf("[Limits] auto-suspend %s failed: %v", email, err)
 				setLimitCooldown(email, now)
-				s.notifyAdmins(tr(lang, "limit.enforce.failed", mdCode(email), mdEsc(err.Error())))
+				s.notifyAdmins(trh(lang, "limit.enforce.failed", email, err.Error()))
 				continue
 			}
 			if !suspended {
@@ -407,20 +407,20 @@ func (s *BotService) enforceUserLimitsOnce() {
 			switch action.Reason {
 			case "expired":
 				markUserLimit(s.cfg.XrayConfigPath, email, func(l *userLimit) { l.NotifiedExpired = true; l.NotifiedExpiry = true })
-				s.notifyAdmins(tr(lang, "limit.notify.expired", mdCode(email)))
+				s.notifyAdmins(trh(lang, "limit.notify.expired", email))
 			default:
 				markUserLimit(s.cfg.XrayConfigPath, email, func(l *userLimit) { l.NotifiedQuota = true; l.Notified80 = true })
-				s.notifyAdmins(tr(lang, "limit.notify.quota", mdCode(email), mdCode(FormatBytes(used))))
+				s.notifyAdmins(trh(lang, "limit.notify.quota", email, FormatBytes(used)))
 			}
 			continue
 		}
 		if action.Warn80 {
 			markUserLimit(s.cfg.XrayConfigPath, email, func(l *userLimit) { l.Notified80 = true })
-			s.notifyAdmins(tr(lang, "limit.notify.80", mdCode(email), mdCode(FormatBytes(used)), mdCode(FormatBytes(uint64(limit.QuotaBytes)))))
+			s.notifyAdmins(trh(lang, "limit.notify.80", email, FormatBytes(used), FormatBytes(uint64(limit.QuotaBytes))))
 		}
 		if action.WarnExpiry {
 			markUserLimit(s.cfg.XrayConfigPath, email, func(l *userLimit) { l.NotifiedExpiry = true })
-			s.notifyAdmins(tr(lang, "limit.notify.expiry", mdCode(email), mdCode(expiryLabel(limit, lang))))
+			s.notifyAdmins(trh(lang, "limit.notify.expiry", email, expiryLabel(limit, lang)))
 		}
 	}
 }
@@ -437,7 +437,7 @@ var userLimitWizards = struct {
 	items map[int64]userLimitWizard
 }{items: map[int64]userLimitWizard{}}
 
-func (s *BotService) beginUserLimitWizard(chatID, adminID int64, msgID int, email, kind, prompt string) {
+func (s *BotService) beginUserLimitWizard(chatID, adminID int64, msgID int, email, kind string, prompt htmlText) {
 	clearRoutingWizard(chatID)
 	userLimitWizards.Lock()
 	userLimitWizards.items[chatID] = userLimitWizard{Email: email, Kind: kind, AdminID: adminID, Expires: time.Now().Add(5 * time.Minute)}
@@ -465,7 +465,7 @@ func (s *BotService) handleUserLimitInput(msg *tgMessage) bool {
 	if strings.TrimSpace(msg.Text) == "/cancel" {
 		delete(userLimitWizards.items, chatID)
 		userLimitWizards.Unlock()
-		s.sendAlert(chatID, tr(s.cfg.Language, "limit.cancelled"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "limit.cancelled"))
 		return true
 	}
 	if msg.Command() != "" {
@@ -475,7 +475,7 @@ func (s *BotService) handleUserLimitInput(msg *tgMessage) bool {
 	delete(userLimitWizards.items, chatID)
 	userLimitWizards.Unlock()
 	if !s.cfg.AllowMutations {
-		s.sendAlert(chatID, tr(s.cfg.Language, "manage.disabled"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "manage.disabled"))
 		return true
 	}
 	value := strings.TrimSpace(msg.Text)
@@ -484,7 +484,7 @@ func (s *BotService) handleUserLimitInput(msg *tgMessage) bool {
 	case "quota":
 		bytes, clear, err := parseQuotaGB(value)
 		if err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "limit.quotainvalid"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "limit.quotainvalid"))
 			return true
 		}
 		err = updateUserLimits(s.cfg.XrayConfigPath, func(users map[string]userLimit) error {
@@ -504,19 +504,19 @@ func (s *BotService) handleUserLimitInput(msg *tgMessage) bool {
 			return nil
 		})
 		if err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "limit.savefailed", err.Error()))
+			s.sendAlert(chatID, trh(s.cfg.Language, "limit.savefailed", err.Error()))
 			return true
 		}
 		label := tr(s.cfg.Language, "limit.unlimited")
 		if !clear {
 			label = FormatBytes(uint64(bytes))
 		}
-		s.sendAlert(chatID, tr(s.cfg.Language, "limit.quotaset", state.Email, label))
+		s.sendAlert(chatID, trh(s.cfg.Language, "limit.quotaset", state.Email, label))
 		s.sendUserManageCard(chatID, 0, key)
 	case "expiry":
 		stamp, clear, err := parseExpiryInput(value, time.Now())
 		if err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "limit.expiryinvalid"))
+			s.sendAlert(chatID, trh(s.cfg.Language, "limit.expiryinvalid"))
 			return true
 		}
 		err = updateUserLimits(s.cfg.XrayConfigPath, func(users map[string]userLimit) error {
@@ -536,33 +536,33 @@ func (s *BotService) handleUserLimitInput(msg *tgMessage) bool {
 			return nil
 		})
 		if err != nil {
-			s.sendAlert(chatID, tr(s.cfg.Language, "limit.savefailed", err.Error()))
+			s.sendAlert(chatID, trh(s.cfg.Language, "limit.savefailed", err.Error()))
 			return true
 		}
 		label := tr(s.cfg.Language, "limit.never")
 		if !clear {
 			label = time.Unix(stamp, 0).UTC().Format("2006-01-02")
 		}
-		s.sendAlert(chatID, tr(s.cfg.Language, "limit.expiryset", state.Email, label))
+		s.sendAlert(chatID, trh(s.cfg.Language, "limit.expiryset", state.Email, label))
 		s.sendUserManageCard(chatID, 0, key)
 	default:
-		s.sendAlert(chatID, tr(s.cfg.Language, "limit.unknown"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "limit.unknown"))
 	}
 	return true
 }
 
 func (s *BotService) clearUserLimits(chatID int64, msgID int, key, email string) {
 	if !s.cfg.AllowMutations {
-		s.sendAlert(chatID, tr(s.cfg.Language, "manage.disabled"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "manage.disabled"))
 		return
 	}
 	limits, readErr := snapshotUserLimits(s.cfg.XrayConfigPath)
 	if readErr != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "limit.savefailed", readErr.Error()))
+		s.sendAlert(chatID, trh(s.cfg.Language, "limit.savefailed", readErr.Error()))
 		return
 	}
 	if _, ok := limits[email]; !ok {
-		s.sendAlert(chatID, tr(s.cfg.Language, "limit.none", email))
+		s.sendAlert(chatID, trh(s.cfg.Language, "limit.none", email))
 		s.sendUserManageCard(chatID, msgID, key)
 		return
 	}
@@ -571,10 +571,10 @@ func (s *BotService) clearUserLimits(chatID int64, msgID int, key, email string)
 		return nil
 	})
 	if err != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "limit.savefailed", err.Error()))
+		s.sendAlert(chatID, trh(s.cfg.Language, "limit.savefailed", err.Error()))
 		return
 	}
-	s.sendAlert(chatID, tr(s.cfg.Language, "limit.cleared", email))
+	s.sendAlert(chatID, trh(s.cfg.Language, "limit.cleared", email))
 	s.sendUserManageCard(chatID, msgID, key)
 }
 

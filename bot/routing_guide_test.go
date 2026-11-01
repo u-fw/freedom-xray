@@ -14,11 +14,12 @@ import (
 )
 
 type capturedTelegram struct {
-	mu     sync.Mutex
-	text   string
-	markup string
-	method string
-	count  int
+	mu        sync.Mutex
+	text      string
+	markup    string
+	method    string
+	parseMode string
+	count     int
 }
 
 func newCapturedRoutingBot(t *testing.T, cfg *BotConfig) (*BotService, *capturedTelegram) {
@@ -28,7 +29,7 @@ func newCapturedRoutingBot(t *testing.T, cfg *BotConfig) (*BotService, *captured
 		values := telegramRequestValues(t, r)
 		if values["text"] != "" {
 			capture.mu.Lock()
-			capture.text, capture.markup, capture.method = values["text"], values["reply_markup"], r.URL.Path
+			capture.text, capture.markup, capture.method, capture.parseMode = values["text"], values["reply_markup"], r.URL.Path, values["parse_mode"]
 			capture.count++
 			capture.mu.Unlock()
 		}

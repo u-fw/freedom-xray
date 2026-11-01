@@ -60,9 +60,9 @@ func routeTestBackMarkup(lang string) tgKeyboard {
 
 func (s *BotService) sendRouteTestPage(chatID, adminID int64, msgID int, notice string) {
 	clearOtherRoutingInputs(chatID)
-	body := tr(s.cfg.Language, "route.test.title")
+	body := trh(s.cfg.Language, "route.test.title")
 	if notice != "" {
-		body += "\n" + mdEsc(notice) + "\n"
+		body += "\n" + esc(notice) + "\n"
 	}
 	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
 	if err == nil {
@@ -70,18 +70,18 @@ func (s *BotService) sendRouteTestPage(chatID, adminID int64, msgID int, notice 
 	}
 	markup := routeTestBackMarkup(s.cfg.Language)
 	if errors.Is(err, errRoutingServiceDisabled) {
-		body += tr(s.cfg.Language, "route.test.disabled")
+		body += trh(s.cfg.Language, "route.test.disabled")
 		if s.cfg.AllowMutations {
 			markup.InlineKeyboard = append([][]tgButton{newRow(
 				newButton(tr(s.cfg.Language, "balancer.live.enable"), "rt:testenable"))}, markup.InlineKeyboard...)
 		}
 	} else if err != nil {
-		body += tr(s.cfg.Language, "route.test.failed", mdEsc(err.Error()))
+		body += trh(s.cfg.Language, "route.test.failed", err.Error())
 	} else {
 		routingWizards.Lock()
 		routingWizards.items[chatID] = routingWizard{AdminID: adminID, Kind: "route_test", Expires: time.Now().Add(10 * time.Minute)}
 		routingWizards.Unlock()
-		body += tr(s.cfg.Language, "route.test.prompt")
+		body += trh(s.cfg.Language, "route.test.prompt")
 	}
 	s.sendOrEdit(chatID, msgID, body, markup)
 }
@@ -120,7 +120,7 @@ func (s *BotService) handleRouteTestCallback(cb *tgCallback) {
 		return
 	}
 	clearOtherRoutingInputs(chatID)
-	s.queueGuidedRoutingChange(chatID, cb.From.ID, msgID, pendingRoutingChange{EnableRoutingAPI: true, ReturnRouteTest: true}, tr(s.cfg.Language, "route.test.enable_confirm"))
+	s.queueGuidedRoutingChange(chatID, cb.From.ID, msgID, pendingRoutingChange{EnableRoutingAPI: true, ReturnRouteTest: true}, trh(s.cfg.Language, "route.test.enable_confirm"))
 }
 
 func renewRouteTestWizard(chatID int64, expected routingWizard) (routingWizard, bool) {
@@ -158,7 +158,7 @@ func (s *BotService) handleRouteTestInput(msg *tgMessage, state routingWizard) b
 		raw, err = readTelegramJSONDocument(s.tg, msg.Document)
 		if err != nil {
 			if routeTestWizardCurrent(msg.Chat.ID, state) {
-				s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
+				s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "routing.guide.retry", err.Error()))
 			}
 			return true
 		}
@@ -166,7 +166,7 @@ func (s *BotService) handleRouteTestInput(msg *tgMessage, state routingWizard) b
 	input, err := parseRouteTestInput(raw, msg.Document != nil)
 	if err != nil {
 		if routeTestWizardCurrent(msg.Chat.ID, state) {
-			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
+			s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "routing.guide.retry", err.Error()))
 		}
 		return true
 	}
@@ -178,29 +178,29 @@ func (s *BotService) handleRouteTestInput(msg *tgMessage, state routingWizard) b
 	if !routeTestWizardCurrent(msg.Chat.ID, active) {
 		return true
 	}
-	body := tr(s.cfg.Language, "route.test.title")
+	body := trh(s.cfg.Language, "route.test.title")
 	if err != nil {
-		body += tr(s.cfg.Language, "route.test.failed", mdEsc(err.Error()))
+		body += trh(s.cfg.Language, "route.test.failed", err.Error())
 	} else {
-		body += tr(s.cfg.Language, "route.test.destination", mdEsc(result.Target), mdEsc(result.Network))
+		body += trh(s.cfg.Language, "route.test.destination", result.Target, result.Network)
 		if result.Matched {
-			body += tr(s.cfg.Language, "route.test.matched", mdEsc(result.OutboundTag))
+			body += trh(s.cfg.Language, "route.test.matched", result.OutboundTag)
 			if len(result.GroupTags) > 0 {
-				body += tr(s.cfg.Language, "route.test.groups", mdEsc(strings.Join(result.GroupTags, ", ")))
+				body += trh(s.cfg.Language, "route.test.groups", strings.Join(result.GroupTags, ", "))
 			}
 		} else {
-			body += tr(s.cfg.Language, "route.test.no_match")
+			body += trh(s.cfg.Language, "route.test.no_match")
 			if result.SavedDefaultOutbound != nil {
 				tag := result.SavedDefaultOutbound.Tag
 				if tag == "" {
 					tag = tr(s.cfg.Language, "routing.none")
 				}
-				body += tr(s.cfg.Language, "route.test.saved_default", mdEsc(tag))
+				body += trh(s.cfg.Language, "route.test.saved_default", tag)
 			}
 		}
-		body += tr(s.cfg.Language, "route.test.checked", mdEsc(result.CheckedAt.Format("2006-01-02 15:04:05 UTC")))
+		body += trh(s.cfg.Language, "route.test.checked", result.CheckedAt.Format("2006-01-02 15:04:05 UTC"))
 	}
-	body += tr(s.cfg.Language, "route.test.continue")
+	body += trh(s.cfg.Language, "route.test.continue")
 	s.sendOrEdit(msg.Chat.ID, 0, body, routeTestBackMarkup(s.cfg.Language))
 	return true
 }

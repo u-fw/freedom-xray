@@ -89,7 +89,7 @@ func (s *BotService) exportServerHost() string {
 func (s *BotService) sendUserExportMenu(chatID int64, msgID int, email string) {
 	nodes, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "export.loadfailed", err.Error()), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "export.loadfailed", err.Error()), s.backToMainMarkup())
 		return
 	}
 	entries := boundUserExportEntries(nodes, email)
@@ -113,9 +113,9 @@ func (s *BotService) sendUserExportMenu(chatID int64, msgID int, email string) {
 		newButton(tr(s.cfg.Language, "export.backuser"), "manage_user:"+key),
 		newButton(tr(s.cfg.Language, "export.userlist"), "menu_users"),
 	))
-	content := tr(s.cfg.Language, "export.menu.title", email, len(entries))
+	content := trh(s.cfg.Language, "export.menu.title", email, len(entries))
 	if len(entries) == 0 {
-		content = tr(s.cfg.Language, "export.menu.empty", email)
+		content = trh(s.cfg.Language, "export.menu.empty", email)
 	}
 	s.sendOrEdit(chatID, msgID, content, newKeyboard(rows...))
 }
@@ -131,22 +131,22 @@ func (s *BotService) handleUserExportCallback(cb *tgCallback, mode string) {
 		minParts = 3
 	}
 	if len(parts) != minParts {
-		s.sendAlert(chatID, tr(s.cfg.Language, "export.invalid"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "export.invalid"))
 		return
 	}
 	email := lookupManagedUserByKey(s.cfg.XrayConfigPath, parts[1])
 	if email == "" {
-		s.sendAlert(chatID, tr(s.cfg.Language, "export.usermissing"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "export.usermissing"))
 		return
 	}
 	nodes, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language, "export.readfailed", err.Error()))
+		s.sendAlert(chatID, trh(s.cfg.Language, "export.readfailed", err.Error()))
 		return
 	}
 	entries := boundUserExportEntries(nodes, email)
 	if len(entries) == 0 {
-		s.sendAlert(chatID, tr(s.cfg.Language, "export.noinbounds"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "export.noinbounds"))
 		return
 	}
 	if mode == "one" {
@@ -156,7 +156,7 @@ func (s *BotService) handleUserExportCallback(cb *tgCallback, mode string) {
 				return
 			}
 		}
-		s.sendAlert(chatID, tr(s.cfg.Language, "export.unassigned"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "export.unassigned"))
 		return
 	}
 	s.exportAllUserNodes(chatID, email, entries, mode == "qrs")
@@ -172,7 +172,7 @@ func (s *BotService) sendUserLink(chatID int64, item userExportEntry, email, uri
 		name := fmt.Sprintf("freedom-node-%s-%d.txt", userCallbackKey(item.Node.Tag)[:8], item.Node.SharePort())
 		if err := s.tg.sendDocument(chatID, name, []byte(uri+"\n"), tr(s.cfg.Language, "export.txtcaption", item.Node.Tag, item.Node.SharePort())); err != nil {
 			log.Printf("[Bot] VLESS TXT send failed for node %s: %v", item.Node.Tag, err)
-			s.sendAlert(chatID, tr(s.cfg.Language, "export.txtfail", item.Node.Tag, item.Node.Port, err.Error()))
+			s.sendAlert(chatID, trh(s.cfg.Language, "export.txtfail", item.Node.Tag, item.Node.Port, err.Error()))
 			return false
 		}
 		return true
@@ -181,7 +181,7 @@ func (s *BotService) sendUserLink(chatID int64, item userExportEntry, email, uri
 	// Markdown metacharacters. Never trim, reformat or Markdown-escape the URI.
 	if _, err := s.tg.sendText(chatID, payload, "", nil, true); err != nil {
 		log.Printf("[Bot] VLESS text send failed for node %s: %v", item.Node.Tag, err)
-		s.sendAlert(chatID, tr(s.cfg.Language, "export.linkfail", item.Node.Tag, item.Node.Port, err.Error()))
+		s.sendAlert(chatID, trh(s.cfg.Language, "export.linkfail", item.Node.Tag, item.Node.Port, err.Error()))
 		return false
 	}
 	return true
@@ -191,13 +191,13 @@ func (s *BotService) sendUserQR(chatID int64, item userExportEntry, email, uri s
 	png, err := GenerateQRCodePNG(uri, 512)
 	if err != nil {
 		log.Printf("[Bot] QR generation failed for %s URI bytes=%d: %v", item.Node.Tag, len(uri), err)
-		s.sendAlert(chatID, tr(s.cfg.Language, "export.qrfail", item.Node.Tag, item.Node.Port, len(uri), err.Error()))
+		s.sendAlert(chatID, trh(s.cfg.Language, "export.qrfail", item.Node.Tag, item.Node.Port, len(uri), err.Error()))
 		return false
 	}
 	name := fmt.Sprintf("freedom-qr-%s-%d.png", userCallbackKey(item.Node.Tag)[:8], item.Node.SharePort())
 	if err = s.tg.sendPhoto(chatID, name, png, tr(s.cfg.Language, "export.qrcaption", item.Node.Tag, item.Node.SharePort(), email)); err != nil {
 		log.Printf("[Bot] QR send failed for node %s: %v", item.Node.Tag, err)
-		s.sendAlert(chatID, tr(s.cfg.Language, "export.qrsendfail", item.Node.Tag, item.Node.Port, err.Error()))
+		s.sendAlert(chatID, trh(s.cfg.Language, "export.qrsendfail", item.Node.Tag, item.Node.Port, err.Error()))
 		return false
 	}
 	return true
@@ -215,7 +215,7 @@ func (s *BotService) exportIssueText(err error) string {
 func (s *BotService) exportOneUserNode(chatID int64, email string, item userExportEntry, host string) {
 	uri, err := validatedUserExportURI(item, host)
 	if err != nil {
-		s.sendAlert(chatID, s.exportIssueText(err))
+		s.sendAlert(chatID, esc(s.exportIssueText(err)))
 		return
 	}
 	if !s.sendUserLink(chatID, item, email, uri) {
@@ -246,13 +246,13 @@ func (s *BotService) exportAllUserNodes(chatID int64, email string, items []user
 		for _, issue := range issues {
 			localized = append(localized, s.localizedExportIssue(issue))
 		}
-		s.sendAlert(chatID, tr(s.cfg.Language, "export.noexportable", strings.Join(localized, "; ")))
+		s.sendAlert(chatID, trh(s.cfg.Language, "export.noexportable", strings.Join(localized, "; ")))
 		return
 	}
 	caption := tr(s.cfg.Language, "export.batchcaption", email, len(items)-len(issues), len(items))
 	if err := s.tg.sendDocument(chatID, "freedom-vless-"+userCallbackKey(email)+".txt", []byte(data), caption); err != nil {
 		log.Printf("[Bot] batch VLESS TXT failed for user %s: %v", email, err)
-		s.sendAlert(chatID, tr(s.cfg.Language, "export.batchfail", err.Error()))
+		s.sendAlert(chatID, trh(s.cfg.Language, "export.batchfail", err.Error()))
 		return
 	}
 	if len(issues) > 0 {
@@ -260,7 +260,7 @@ func (s *BotService) exportAllUserNodes(chatID int64, email string, items []user
 		for _, issue := range issues {
 			localized = append(localized, s.localizedExportIssue(issue))
 		}
-		s.sendAlert(chatID, tr(s.cfg.Language, "export.partial", strings.Join(localized, "\n")))
+		s.sendAlert(chatID, trh(s.cfg.Language, "export.partial", strings.Join(localized, "\n")))
 	}
 	if !includeQR {
 		return

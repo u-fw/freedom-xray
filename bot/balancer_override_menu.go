@@ -40,7 +40,7 @@ func (s *BotService) sendBalancerOverridePicker(chatID int64, msgID int, record 
 	if current == "" {
 		current = tr(s.cfg.Language, "balancer.override.auto")
 	}
-	body := tr(s.cfg.Language, "balancer.override.picker", mdEsc(record.Tag), mdEsc(current))
+	body := trh(s.cfg.Language, "balancer.override.picker", record.Tag, current)
 	var rows [][]tgButton
 	for _, target := range targets[offset:end] {
 		if target == status.Override {
@@ -75,7 +75,7 @@ func (s *BotService) handleBalancerOverrideCallback(cb *tgCallback) {
 		return
 	}
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), balancerBackMarkup(s.cfg.Language))
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), balancerBackMarkup(s.cfg.Language))
 		return
 	}
 	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
@@ -129,7 +129,7 @@ func (s *BotService) handleBalancerOverrideCallback(cb *tgCallback) {
 		label = tr(s.cfg.Language, "balancer.override.auto")
 	}
 	change := &balancerOverrideChange{Tag: record.Tag, StateETag: status.StateETag, Target: target}
-	body := tr(s.cfg.Language, "balancer.override.confirm", mdEsc(record.Tag), mdEsc(label))
+	body := trh(s.cfg.Language, "balancer.override.confirm", record.Tag, label)
 	s.queueGuidedRoutingChange(chatID, cb.From.ID, msgID, pendingRoutingChange{Override: change}, body)
 }
 

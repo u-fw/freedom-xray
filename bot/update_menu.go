@@ -16,11 +16,11 @@ var safeUpdateMutex sync.Mutex
 // Xray-core and rollback always retain a separate, time-limited confirmation.
 func (s *BotService) runSafeUpdates(chatID int64, msgID int, components []string) {
 	if !s.cfg.AllowUpdates {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "update.disabled"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "update.disabled"), s.backToMainMarkup())
 		return
 	}
 	if !safeUpdateMutex.TryLock() {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "update.busy"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "update.busy"), s.backToMainMarkup())
 		return
 	}
 	defer safeUpdateMutex.Unlock()
@@ -61,7 +61,7 @@ func (s *BotService) runSafeUpdates(chatID int64, msgID int, components []string
 	rows := newKeyboard(newRow(
 		newButton(tr(s.cfg.Language, "update.opencenter"), "menu_update_center"),
 		newButton(tr(s.cfg.Language, "common.main"), "menu_main")))
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "update.result", strings.Join(results, "\n\n")), rows)
+	s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "update.result", strings.Join(results, "\n\n")), rows)
 }
 
 type pendingUpdate struct {
@@ -79,30 +79,30 @@ var pendingUpdates = struct {
 
 func (s *BotService) showUpdatesMenu(chatID int64, msgID int) {
 	if !s.cfg.AllowUpdates {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "update.disabled.title"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "update.disabled.title"), s.backToMainMarkup())
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	var out strings.Builder
-	out.WriteString(tr(s.cfg.Language, "update.center.title"))
+	var out htmlBuilder
+	out.Add(trh(s.cfg.Language, "update.center.title"))
 	rows := [][]tgButton{}
 	for _, comp := range []string{"script", "bot", "core"} {
 		if comp == "core" && !s.cfg.AllowCoreUpdates {
-			out.WriteString(tr(s.cfg.Language, "update.core.disabled"))
+			out.Add(trh(s.cfg.Language, "update.core.disabled"))
 			continue
 		}
 		remote, err := remoteComponentVersion(ctx, comp)
 		label := componentLabel(comp)
 		current := currentComponentVersion(comp, s.cfg.XrayBinPath)
 		if err != nil {
-			out.WriteString(tr(s.cfg.Language, "update.fetchfailed", label, err.Error()))
+			out.Add(trh(s.cfg.Language, "update.fetchfailed", label, err.Error()))
 			continue
 		}
 		if comp == "script" && len(remote) > 12 {
-			out.WriteString(tr(s.cfg.Language, "update.row.commit", label, current, remote[:12]))
+			out.Add(trh(s.cfg.Language, "update.row.commit", label, current, remote[:12]))
 		} else {
-			out.WriteString(tr(s.cfg.Language, "update.row.upstream", label, current, remote))
+			out.Add(trh(s.cfg.Language, "update.row.upstream", label, current, remote))
 		}
 		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "update.update.now", label), "update_ask:"+comp)))
 	}
@@ -110,9 +110,9 @@ func (s *BotService) showUpdatesMenu(chatID int64, msgID int) {
 	if s.cfg.AllowCoreUpdates {
 		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "update.rollback"), "update_ask:core-rollback")))
 	}
-	out.WriteString(tr(s.cfg.Language, "update.note"))
+	out.Add(trh(s.cfg.Language, "update.note"))
 	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "common.main"), "menu_main")))
-	s.sendOrEdit(chatID, msgID, out.String(), newKeyboard(rows...))
+	s.sendOrEdit(chatID, msgID, out.HTML(), newKeyboard(rows...))
 }
 
 func componentLabel(comp string) string {
@@ -136,7 +136,7 @@ func (s *BotService) askUpdate(cb *tgCallback, comp string) {
 	chatID := cb.Message.Chat.ID
 	msgID := cb.Message.MessageID
 	if !s.cfg.AllowUpdates || ((comp == "core" || comp == "core-rollback") && !s.cfg.AllowCoreUpdates) {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "update.unauthorized"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "update.unauthorized"), s.backToMainMarkup())
 		return
 	}
 	if comp == "script" || comp == "bot" {
@@ -144,7 +144,7 @@ func (s *BotService) askUpdate(cb *tgCallback, comp string) {
 		return
 	}
 	if comp != "core" && comp != "core-rollback" {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "update.unsupported"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "update.unsupported"), s.backToMainMarkup())
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -155,12 +155,12 @@ func (s *BotService) askUpdate(cb *tgCallback, comp string) {
 		version, err = remoteComponentVersion(ctx, comp)
 	}
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "update.fetcherror", err.Error()), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "update.fetcherror", err.Error()), s.backToMainMarkup())
 		return
 	}
 	var nonce [8]byte
 	if _, err = rand.Read(nonce[:]); err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "update.tokenfailed"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "update.tokenfailed"), s.backToMainMarkup())
 		return
 	}
 	token := hex.EncodeToString(nonce[:])
@@ -176,7 +176,7 @@ func (s *BotService) askUpdate(cb *tgCallback, comp string) {
 	if comp == "core" || comp == "core-rollback" {
 		note = tr(s.cfg.Language, "update.corenote")
 	}
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "update.confirmbody", componentLabel(comp), version, currentComponentVersion(comp, s.cfg.XrayBinPath), note),
+	s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "update.confirmbody", componentLabel(comp), version, currentComponentVersion(comp, s.cfg.XrayBinPath), note),
 		newKeyboard(newRow(
 			newButton(tr(s.cfg.Language, "update.confirm"), "update_confirm:"+token),
 			newButton(tr(s.cfg.Language, "common.cancel"), "update_cancel:"+token),
@@ -197,33 +197,33 @@ func (s *BotService) resolveUpdate(cb *tgCallback, confirm bool) {
 	}
 	pendingUpdates.Unlock()
 	if ok && (pending.AdminID != cb.From.ID || pending.ChatID != chatID) {
-		s.sendAlert(chatID, tr(s.cfg.Language, "manage.owned"))
+		s.sendAlert(chatID, trh(s.cfg.Language, "manage.owned"))
 		return
 	}
 	if !ok || time.Now().After(pending.Deadline) {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "update.expired"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "update.expired"), s.backToMainMarkup())
 		return
 	}
 	if !confirm {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "update.cancelled"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "update.cancelled"), s.backToMainMarkup())
 		return
 	}
 	if !s.cfg.AllowUpdates || ((pending.Component == "core" || pending.Component == "core-rollback") && !s.cfg.AllowCoreUpdates) {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "update.permissions"), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "update.permissions"), s.backToMainMarkup())
 		return
 	}
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "update.verifying"), tgKeyboard{})
+	s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "update.verifying"), tgKeyboard{})
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	// Check a mutable upstream release label again before downloading.
 	if pending.Component == "core" || pending.Component == "bot" {
 		latest, err := remoteComponentVersion(ctx, pending.Component)
 		if err != nil {
-			s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "update.verifyfailed", err.Error()), s.backToMainMarkup())
+			s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "update.verifyfailed", err.Error()), s.backToMainMarkup())
 			return
 		}
 		if latest != pending.Version {
-			s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "update.changed"), s.backToMainMarkup())
+			s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "update.changed"), s.backToMainMarkup())
 			return
 		}
 	}
@@ -242,8 +242,8 @@ func (s *BotService) resolveUpdate(cb *tgCallback, confirm bool) {
 		err = fmt.Errorf("unknown update type")
 	}
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "update.failed", err.Error()), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "update.failed", err.Error()), s.backToMainMarkup())
 		return
 	}
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "update.resultprefix", result), s.backToMainMarkup())
+	s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "update.resultprefix", result), s.backToMainMarkup())
 }

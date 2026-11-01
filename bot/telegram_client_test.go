@@ -98,7 +98,7 @@ func TestTelegramClientOmitsEmptyReplyMarkup(t *testing.T) {
 	if id, err := tg.sendText(1, "plain", "", nil, true); err != nil || id != 7 {
 		t.Fatalf("send: %d %v", id, err)
 	}
-	if _, err := tg.sendText(1, "card", "Markdown", &keyboard, false); err != nil {
+	if _, err := tg.sendText(1, "card", "HTML", &keyboard, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := tg.editText(1, 7, "edited", "", nil); err != nil {
@@ -113,7 +113,7 @@ func TestTelegramClientOmitsEmptyReplyMarkup(t *testing.T) {
 	if _, ok := plain["reply_markup"]; ok || plain["parse_mode"] != "" || !strings.Contains(plain["link_preview_options"], `"is_disabled":true`) {
 		t.Fatalf("plain message sent unexpected options: %v", plain)
 	}
-	if card["parse_mode"] != "Markdown" || !strings.Contains(card["reply_markup"], `"callback_data":"menu_main"`) {
+	if card["parse_mode"] != "HTML" || !strings.Contains(card["reply_markup"], `"callback_data":"menu_main"`) {
 		t.Fatalf("card lost its keyboard or parse mode: %v", card)
 	}
 	if _, ok := edit["reply_markup"]; ok || edit["method"] != "editMessageText" || edit["message_id"] != "7" {

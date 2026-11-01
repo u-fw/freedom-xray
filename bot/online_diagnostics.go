@@ -186,7 +186,7 @@ func onlineProbeCandidates(configPath string) []string {
 // managed users. It separates "no active session" from "session exists but no
 // address was recorded", which is what a local relay or a client that is idle
 // between requests looks like from Xray's point of view.
-func (s *BotService) onlineProbeText() string {
+func (s *BotService) onlineProbeText() htmlText {
 	lang := s.cfg.Language
 	names := onlineProbeCandidates(s.cfg.XrayConfigPath)
 	if len(names) == 0 {
@@ -238,14 +238,14 @@ func (s *BotService) onlineProbeText() string {
 		counted[bindingOwner(email)] = true
 		sessionCount[bindingOwner(email)] += count
 	}
-	var out strings.Builder
-	out.WriteString(tr(lang, "online.doctor.probe"))
+	var out htmlBuilder
+	out.Add(trh(lang, "online.doctor.probe"))
 	if probeErr != nil && len(users) == 0 {
-		out.WriteString(tr(lang, "online.doctor.probeerror", mdEsc(truncateLabel(probeErr.Error(), 300))))
-		return out.String()
+		out.Add(trh(lang, "online.doctor.probeerror", truncateLabel(probeErr.Error(), 300)))
+		return out.HTML()
 	}
 	if probeErr != nil {
-		out.WriteString(tr(lang, "online.doctor.probewarn", mdEsc(truncateLabel(probeErr.Error(), 300))))
+		out.Add(trh(lang, "online.doctor.probewarn", truncateLabel(probeErr.Error(), 300)))
 	}
 	sawSessionsWithoutIP := false
 	for _, name := range sample {
@@ -257,33 +257,33 @@ func (s *BotService) onlineProbeText() string {
 				sawSessionsWithoutIP = true
 			}
 		}
-		out.WriteString(tr(lang, "online.doctor.proberow", mdCode(name), sessions, len(ipSet[name])))
+		out.Add(trh(lang, "online.doctor.proberow", name, sessions, len(ipSet[name])))
 	}
 	if len(names) > limit {
-		out.WriteString(tr(lang, "online.doctor.probemore", len(names)-limit))
+		out.Add(trh(lang, "online.doctor.probemore", len(names)-limit))
 	}
 	if sawSessionsWithoutIP {
-		out.WriteString(tr(lang, "online.doctor.hint.sessions"))
+		out.Add(trh(lang, "online.doctor.hint.sessions"))
 	}
-	return out.String()
+	return out.HTML()
 }
 
-func (s *BotService) onlineDiagnosticText() string {
+func (s *BotService) onlineDiagnosticText() htmlText {
 	lang := s.cfg.Language
-	var out strings.Builder
-	out.WriteString(tr(lang, "online.doctor.title"))
-	out.WriteString(tr(lang, "online.doctor.bot", mdCode(Version)))
+	var out htmlBuilder
+	out.Add(trh(lang, "online.doctor.title"))
+	out.Add(trh(lang, "online.doctor.bot", Version))
 
 	coreCtx, coreCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	core := onlineCoreVersion(coreCtx, s.cfg.XrayBinPath)
 	coreCancel()
-	out.WriteString(tr(lang, "online.doctor.core", mdCode(core)))
+	out.Add(trh(lang, "online.doctor.core", core))
 
-	out.WriteString(tr(lang, "online.doctor.policy"))
+	out.Add(trh(lang, "online.doctor.policy"))
 	levels, levelErr := inspectOnlinePolicy(s.cfg.XrayConfigPath)
 	missing := []string{}
 	if levelErr != nil {
-		out.WriteString(tr(lang, "online.doctor.policyerror", mdEsc(levelErr.Error())))
+		out.Add(trh(lang, "online.doctor.policyerror", levelErr.Error()))
 	} else {
 		limit := len(levels)
 		if limit > 12 {
@@ -294,29 +294,29 @@ func (s *BotService) onlineDiagnosticText() string {
 			if item.Enabled {
 				state = tr(lang, "online.doctor.on")
 			}
-			out.WriteString(tr(lang, "online.doctor.level", mdCode(item.Level), state, item.Clients))
+			out.Add(trh(lang, "online.doctor.level", item.Level, state, item.Clients))
 			if item.Clients > 0 && !item.Enabled {
 				missing = append(missing, item.Level)
 			}
 		}
 		if len(levels) > limit {
-			out.WriteString(tr(lang, "online.doctor.levels.truncated", len(levels)-limit))
+			out.Add(trh(lang, "online.doctor.levels.truncated", len(levels)-limit))
 		}
 	}
 	if len(missing) > 0 {
-		out.WriteString(tr(lang, "online.doctor.missing", mdCode(strings.Join(missing, ", "))))
+		out.Add(trh(lang, "online.doctor.missing", strings.Join(missing, ", ")))
 	}
 
-	out.WriteString(tr(lang, "online.doctor.api"))
+	out.Add(trh(lang, "online.doctor.api"))
 	apiCtx, apiCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	raw, apiErr := onlineAggregateRaw(apiCtx, s.cfg.XrayBinPath, s.cfg.StatsAPIServer)
 	apiCancel()
 	if apiErr != nil {
-		out.WriteString(tr(lang, "online.doctor.apifail", mdEsc(truncateLabel(apiErr.Error(), 300))))
+		out.Add(trh(lang, "online.doctor.apifail", truncateLabel(apiErr.Error(), 300)))
 	} else {
-		out.WriteString(tr(lang, "online.doctor.apiok", mdCode(raw)))
+		out.Add(trh(lang, "online.doctor.apiok", raw))
 	}
-	out.WriteString(s.onlineProbeText())
+	out.Add(s.onlineProbeText())
 
 	if store, err := loadTrafficStore(s.cfg.XrayConfigPath); err == nil {
 		live, recent := 0, 0
@@ -334,20 +334,20 @@ func (s *BotService) onlineDiagnosticText() string {
 		if store.OnlinePollAt > 0 {
 			polled = time.Unix(store.OnlinePollAt, 0).Format("2006-01-02 15:04:05")
 		}
-		out.WriteString(tr(lang, "online.doctor.store", live, recent, mdCode(polled)))
+		out.Add(trh(lang, "online.doctor.store", live, recent, polled))
 	}
 
 	switch {
 	case len(missing) > 0:
-		out.WriteString(tr(lang, "online.doctor.hint.missing"))
+		out.Add(trh(lang, "online.doctor.hint.missing"))
 	case apiErr != nil:
-		out.WriteString(tr(lang, "online.doctor.hint.apifail"))
+		out.Add(trh(lang, "online.doctor.hint.apifail"))
 	case onlineAggregateEmpty(raw):
-		out.WriteString(tr(lang, "online.doctor.hint.empty"))
+		out.Add(trh(lang, "online.doctor.hint.empty"))
 	default:
-		out.WriteString(tr(lang, "online.doctor.hint.data"))
+		out.Add(trh(lang, "online.doctor.hint.data"))
 	}
-	return out.String()
+	return out.HTML()
 }
 
 func (s *BotService) onlineDoctorMarkup() tgKeyboard {
@@ -373,7 +373,7 @@ func (s *BotService) sendOnlineDiagnostics(chatID int64, msgID int) {
 
 func (s *BotService) askOnlineRepair(chatID int64, msgID int) {
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "online.doctor.mutations"), s.onlineDoctorMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "online.doctor.mutations"), s.onlineDoctorMarkup())
 		return
 	}
 	markup := newKeyboard(
@@ -382,17 +382,17 @@ func (s *BotService) askOnlineRepair(chatID int64, msgID int) {
 			newButton(tr(s.cfg.Language, "common.cancel"), "online_repair_cancel"),
 		),
 	)
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "online.doctor.repairconfirm"), markup)
+	s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "online.doctor.repairconfirm"), markup)
 }
 
 func (s *BotService) doOnlineRepair(chatID int64, msgID int) {
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "online.doctor.mutations"), s.onlineDoctorMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "online.doctor.mutations"), s.onlineDoctorMarkup())
 		return
 	}
 	if err := ensureOnlineStatsPolicy(s.cfg); err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "online.doctor.repairfailed", mdEsc(err.Error())), s.onlineDoctorMarkup())
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "online.doctor.repairfailed", err.Error()), s.onlineDoctorMarkup())
 		return
 	}
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "online.doctor.repairdone"), s.onlineDoctorMarkup())
+	s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "online.doctor.repairdone"), s.onlineDoctorMarkup())
 }
