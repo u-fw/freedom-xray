@@ -98,6 +98,10 @@ func (s *BotService) resolveServiceAction(cb *tgbotapi.CallbackQuery) {
 		delete(pendingServiceActions.items, key)
 	}
 	pendingServiceActions.Unlock()
+	if ok && (pending.chatID != chatID || pending.adminID != cb.From.ID) {
+		s.sendAlert(chatID, tr(s.cfg.Language, "manage.owned"))
+		return
+	}
 	if !ok || pending.chatID != chatID || pending.adminID != cb.From.ID || time.Now().After(pending.expires) {
 		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.expired"), s.backToMainMarkup())
 		return

@@ -3,6 +3,7 @@ package main
 import (
  "crypto/rand"
  "encoding/hex"
+ "errors"
  "fmt"
  "log"
  "path/filepath"
@@ -31,6 +32,14 @@ type pendingNodeCreate struct {
  Request NodeCreateRequest
 }
 
+type pendingNodeDelete struct {
+ ChatID int64
+ AdminID int64
+ Expires time.Time
+ Tag string
+ ETag string
+}
+
 var nodeCreateStates=struct{
  sync.Mutex
  items map[int64]nodeCreateState
@@ -39,6 +48,10 @@ var pendingNodeCreates=struct{
  sync.Mutex
  items map[string]pendingNodeCreate
 }{items:map[string]pendingNodeCreate{}}
+var pendingNodeDeletes=struct{
+ sync.Mutex
+ items map[string]pendingNodeDelete
+}{items:map[string]pendingNodeDelete{}}
 
 func defaultPortForTemplate(template NodeTemplate) int {
  switch template {
@@ -183,9 +196,8 @@ func (s *BotService) handleNodeCreateInput(msg *tgbotapi.Message) bool {
  chatID:=msg.Chat.ID
  nodeCreateStates.Lock()
  state,ok:=nodeCreateStates.items[chatID]
- if ok&&(time.Now().After(state.Expires)||msg.From.ID!=state.AdminID){
-  delete(nodeCreateStates.items,chatID);ok=false
- }
+ if ok&&time.Now().After(state.Expires){delete(nodeCreateStates.items,chatID);ok=false}
+ if ok&&msg.From.ID!=state.AdminID{ok=false}
  nodeCreateStates.Unlock()
  if !ok{return false}
  if strings.TrimSpace(msg.Text)=="/cancel"||msg.Command()=="cancel" {
@@ -291,14 +303,15 @@ func (s *BotService) handleNodeCreateInput(msg *tgbotapi.Message) bool {
 }
 
 func (s *BotService) handleNodeCertSource(cb *tgbotapi.CallbackQuery) {
- if cb.Message==nil{return}
+ if cb.Message==nil||cb.Message.Chat==nil||cb.From==nil{return}
  chatID:=cb.Message.Chat.ID
  nodeCreateStates.Lock()
  state,ok:=nodeCreateStates.items[chatID]
- if ok&&(time.Now().After(state.Expires)||state.AdminID!=cb.From.ID||state.Step!="cert_source"){
-  delete(nodeCreateStates.items,chatID);ok=false
- }
+ if ok&&time.Now().After(state.Expires){delete(nodeCreateStates.items,chatID);ok=false}
+ otherOwner:=ok&&state.AdminID!=cb.From.ID
+ if ok&&(otherOwner||state.Step!="cert_source"){ok=false}
  nodeCreateStates.Unlock()
+ if otherOwner{s.sendAlert(chatID,tr(s.cfg.Language,"manage.owned"));return}
  if !ok{s.sendOrEdit(chatID,cb.Message.MessageID,tr(s.cfg.Language,"node.create.expired"),s.backToMainMarkup());return}
  source:=strings.TrimPrefix(cb.Data,"node_cert_source:")
  if source!="self"&&source!="existing"{return}
@@ -408,14 +421,15 @@ func (s *BotService) showNodeCreateSummary(chatID,adminID int64,msgID int,state 
 }
 
 func (s *BotService) confirmNodeCreate(cb *tgbotapi.CallbackQuery,confirm bool) {
- if cb.Message==nil{return}
+ if cb.Message==nil||cb.Message.Chat==nil||cb.From==nil{return}
  chatID:=cb.Message.Chat.ID;msgID:=cb.Message.MessageID
  token:=strings.TrimPrefix(strings.TrimPrefix(cb.Data,"node_create_confirm:"),"node_create_cancel:")
  pendingNodeCreates.Lock()
  item,ok:=pendingNodeCreates.items[token]
- if ok{delete(pendingNodeCreates.items,token)}
+ if ok&&item.ChatID==chatID&&item.AdminID==cb.From.ID{delete(pendingNodeCreates.items,token)}
  pendingNodeCreates.Unlock()
- if !ok||item.ChatID!=chatID||item.AdminID!=cb.From.ID||time.Now().After(item.Expires){
+ if ok&&(item.ChatID!=chatID||item.AdminID!=cb.From.ID){s.sendAlert(chatID,tr(s.cfg.Language,"manage.owned"));return}
+ if !ok||time.Now().After(item.Expires){
   s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.create.expired"),s.backToMainMarkup());return
  }
  if !confirm{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.create.cancelled"),s.backToMainMarkup());return}
@@ -428,12 +442,13 @@ func (s *BotService) confirmNodeCreate(cb *tgbotapi.CallbackQuery,confirm bool) 
  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.create.success",result),s.backToMainMarkup())
 }
 
-func (s *BotService) showNodeDeleteConfirm(chatID int64,msgID int,key string) {
+func (s *BotService) showNodeDeleteConfirm(chatID,adminID int64,msgID int,key string) {
+ if !s.cfg.AllowMutations{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.mutationsdisabled"),s.backToMainMarkup());return}
  nodes,err:=LoadXrayInbounds(s.cfg.XrayConfigPath)
  if err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.readfailure",err.Error()));return}
  node:=findManagedNodeByKey(nodes,key)
  if node==nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.missing"));return}
- report,err:=inspectNodeDeletion(s.cfg.XrayConfigPath,node.Tag)
+ report,etag,err:=inspectNodeDeletionForConfirmation(s.cfg.XrayConfigPath,node.Tag)
  if err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.delete.inspectfailed",err.Error()));return}
  text:=tr(s.cfg.Language,"node.delete.impact",mdCode(node.Tag),report.Port,report.Clients)
  if len(report.RoutingRules)>0 {
@@ -446,26 +461,37 @@ func (s *BotService) showNodeDeleteConfirm(chatID int64,msgID int,key string) {
  }
  if report.PublicPort>0{text+=tr(s.cfg.Language,"node.delete.publicport",report.PublicPort)}
  text+=tr(s.cfg.Language,"node.delete.note")
+ var raw [8]byte
+ if _,err:=rand.Read(raw[:]);err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.tokenerror"));return}
+ token:=hex.EncodeToString(raw[:])
+ pendingNodeDeletes.Lock()
+ for old,item:=range pendingNodeDeletes.items{if time.Now().After(item.Expires){delete(pendingNodeDeletes.items,old)}}
+ pendingNodeDeletes.items[token]=pendingNodeDelete{ChatID:chatID,AdminID:adminID,Expires:time.Now().Add(3*time.Minute),Tag:node.Tag,ETag:etag}
+ pendingNodeDeletes.Unlock()
  markup:=tgbotapi.NewInlineKeyboardMarkup(
   tgbotapi.NewInlineKeyboardRow(
-   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.delete.confirm"),"node_delete_confirm:"+key),
-   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.cancel"),"node_detail:"+key),
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.delete.confirm"),"node_delete_confirm:"+token),
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.cancel"),"node_delete_cancel:"+token),
   ),
  )
  s.sendOrEdit(chatID,msgID,text,markup)
 }
 
-func (s *BotService) confirmNodeDelete(cb *tgbotapi.CallbackQuery) {
- if cb.Message==nil{return}
+func (s *BotService) confirmNodeDelete(cb *tgbotapi.CallbackQuery,confirm bool) {
+ if cb.Message==nil||cb.Message.Chat==nil||cb.From==nil{return}
  chatID:=cb.Message.Chat.ID;msgID:=cb.Message.MessageID
+ token:=strings.TrimPrefix(strings.TrimPrefix(cb.Data,"node_delete_confirm:"),"node_delete_cancel:")
+ pendingNodeDeletes.Lock()
+ item,ok:=pendingNodeDeletes.items[token]
+ if ok&&item.ChatID==chatID&&item.AdminID==cb.From.ID{delete(pendingNodeDeletes.items,token)}
+ pendingNodeDeletes.Unlock()
+ if ok&&(item.ChatID!=chatID||item.AdminID!=cb.From.ID){s.sendAlert(chatID,tr(s.cfg.Language,"manage.owned"));return}
+ if !ok||time.Now().After(item.Expires){s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.expired"),s.backToMainMarkup());return}
+ if !confirm{s.sendNodeDetail(chatID,msgID,userCallbackKey(item.Tag));return}
  if !s.cfg.AllowMutations{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.mutationsdisabled"),s.backToMainMarkup());return}
- key:=strings.TrimPrefix(cb.Data,"node_delete_confirm:")
- nodes,err:=LoadXrayInbounds(s.cfg.XrayConfigPath)
- if err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.readfailure",err.Error()));return}
- node:=findManagedNodeByKey(nodes,key)
- if node==nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.missing"));return}
- result,err:=DeleteNode(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer,node.Tag)
+ result,err:=deleteNodeWithExpectedImpact(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer,item.Tag,item.ETag)
  if err!=nil{
+  if errors.Is(err,errNodeDeletionChanged){s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.delete.changed"),s.backToMainMarkup());return}
   log.Printf("[Bot] node delete failed: %v",err)
   s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.delete.failed",err.Error()),s.backToMainMarkup());return
  }

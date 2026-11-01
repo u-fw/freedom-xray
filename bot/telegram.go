@@ -263,7 +263,7 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 		log.Printf("[Bot] answer callback failed: %v", err)
 	}
 
-	if cb.Message == nil {
+	if cb.Message == nil || cb.Message.Chat == nil || cb.From == nil {
 		return
 	}
 
@@ -347,9 +347,11 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 	case strings.HasPrefix(data, "node_create_cancel:"):
 		s.confirmNodeCreate(cb, false)
 	case strings.HasPrefix(data, "node_delete_confirm:"):
-		s.confirmNodeDelete(cb)
+		s.confirmNodeDelete(cb, true)
+	case strings.HasPrefix(data, "node_delete_cancel:"):
+		s.confirmNodeDelete(cb, false)
 	case strings.HasPrefix(data, "node_delete:"):
-		s.showNodeDeleteConfirm(chatID, msgID, strings.TrimPrefix(data, "node_delete:"))
+		s.showNodeDeleteConfirm(chatID, cb.From.ID, msgID, strings.TrimPrefix(data, "node_delete:"))
 	case strings.HasPrefix(data, "node_detail:") || strings.HasPrefix(data, "node_advanced:") || strings.HasPrefix(data, "node_basic:") || strings.HasPrefix(data, "node_mode:") || strings.HasPrefix(data, "node_path:") || strings.HasPrefix(data, "node_public_port:") || strings.HasPrefix(data, "node_sni:") || strings.HasPrefix(data, "node_short_id:") || strings.HasPrefix(data, "node_xhttp_host:") || strings.HasPrefix(data, "node_xhttp_padding:") || strings.HasPrefix(data, "node_listen_port:") || strings.HasPrefix(data, "node_listen_address:") || strings.HasPrefix(data, "node_dest:") || strings.HasPrefix(data, "node_target:") || strings.HasPrefix(data, "node_reality_key:") || strings.HasPrefix(data, "node_mldsa:") || strings.HasPrefix(data, "node_decryption:") || strings.HasPrefix(data, "node_cert_pair:") || strings.HasPrefix(data, "node_alpn:"):
 		s.handleNodeCallback(cb)
 	case strings.HasPrefix(data, "node_confirm:"):

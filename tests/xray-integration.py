@@ -213,6 +213,9 @@ def main():
             assert host_preview["applied"] is False, host_preview
             assert (directory / "config.json").read_bytes() == original_config
             assert {node["tag"] for node in agent("nodes.list")} == {"raw", "cdn"}
+            node_deletion = agent("nodes.delete", {"tag": "raw"})
+            assert node_deletion["applied"] is False and len(node_deletion["preview"]["etag"]) == 24, node_deletion
+            assert (directory / "config.json").read_bytes() == original_config
             users = agent("users.list")
             assert {user["user"] for user in users} == {"alice", "bob"}, users
             assert ALICE_ID not in json.dumps(users) and BOB_ID not in json.dumps(users)

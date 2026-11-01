@@ -251,6 +251,10 @@ type agentNameInput struct {
 type agentTagInput struct {
 	Tag string `json:"tag"`
 }
+type agentNodeInput struct {
+	Tag  string `json:"tag"`
+	ETag string `json:"etag,omitempty"`
+}
 type agentPortInput struct {
 	Tag        string `json:"tag"`
 	PublicPort *int   `json:"public_port"`
@@ -415,7 +419,7 @@ func executeAgentOperation(cfg *BotConfig, operation agentOperation, raw []byte,
 	case "nodes.list":
 		return agentNodes(cfg.XrayConfigPath)
 	case "nodes.get", "nodes.delete":
-		var input agentTagInput
+		var input agentNodeInput
 		if err := decodeAgentInput(raw, &input); err != nil {
 			return nil, err
 		}
@@ -423,14 +427,21 @@ func executeAgentOperation(cfg *BotConfig, operation agentOperation, raw []byte,
 			return nil, err
 		}
 		if name == "nodes.delete" {
-			report, err := inspectNodeDeletion(cfg.XrayConfigPath, input.Tag)
+			report, etag, err := inspectNodeDeletionForConfirmation(cfg.XrayConfigPath, input.Tag)
 			if err != nil {
 				return nil, err
 			}
 			if !apply {
+				if input.ETag != "" && input.ETag != etag {
+					return nil, errNodeDeletionChanged
+				}
+				report.ETag = etag
 				return agentPreview(name, report), nil
 			}
-			return agentMessage(DeleteNode(cfg.XrayConfigPath, cfg.XrayBinPath, cfg.StatsAPIServer, input.Tag))
+			return agentMessage(deleteNodeWithExpectedImpact(cfg.XrayConfigPath, cfg.XrayBinPath, cfg.StatsAPIServer, input.Tag, input.ETag))
+		}
+		if input.ETag != "" {
+			return nil, errors.New("etag is only supported for node deletion")
 		}
 		nodes, err := agentNodes(cfg.XrayConfigPath)
 		if err != nil {

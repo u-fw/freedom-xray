@@ -34,16 +34,13 @@ func (s *BotService) beginUserWizard(chatID, adminID int64, msgID int, stage, us
 
 func (s *BotService) handleWizardMessage(msg *tgbotapi.Message) bool {
  chatID:=msg.Chat.ID
- if msg.Command()=="cancel" {
-  managementWizards.Lock();delete(managementWizards.states,chatID);managementWizards.Unlock()
-  s.sendAlert(chatID,tr(s.cfg.Language,"wizard.cancelled"))
-  return true
- }
  managementWizards.Lock()
  state,ok:=managementWizards.states[chatID]
- if ok && (time.Now().After(state.Expires)||msg.From.ID!=state.AdminID){delete(managementWizards.states,chatID);ok=false}
- if ok && msg.Command()=="" {delete(managementWizards.states,chatID)}
+ if ok && time.Now().After(state.Expires){delete(managementWizards.states,chatID);ok=false}
+ if ok && msg.From.ID!=state.AdminID{ok=false}
+ if ok && (msg.Command()==""||msg.Command()=="cancel") {delete(managementWizards.states,chatID)}
  managementWizards.Unlock()
+ if ok&&msg.Command()=="cancel" {s.sendAlert(chatID,tr(s.cfg.Language,"wizard.cancelled"));return true}
  if !ok||msg.Command()!=""{return false}
  input:=strings.TrimSpace(msg.Text)
  if !managedUserName.MatchString(input) {

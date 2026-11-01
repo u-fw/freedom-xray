@@ -320,14 +320,15 @@ func (s *BotService) offerNodeTLSPair(chatID,adminID int64,msgID int,change Node
 }
 
 func (s *BotService) confirmNodeChange(cb *tgbotapi.CallbackQuery,confirm bool){
- if cb.Message==nil{return}
+ if cb.Message==nil||cb.Message.Chat==nil||cb.From==nil{return}
  chatID:=cb.Message.Chat.ID;msgID:=cb.Message.MessageID
  token:=strings.TrimPrefix(strings.TrimPrefix(cb.Data,"node_confirm:"),"node_cancel:")
  pendingNodes.Lock()
  p,ok:=pendingNodes.items[token]
- if ok{delete(pendingNodes.items,token)}
+ if ok&&p.ChatID==chatID&&p.AdminID==cb.From.ID{delete(pendingNodes.items,token)}
  pendingNodes.Unlock()
- if !ok||p.ChatID!=chatID||p.AdminID!=cb.From.ID||time.Now().After(p.Expires){s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.expired"),s.backToMainMarkup());return}
+ if ok&&(p.ChatID!=chatID||p.AdminID!=cb.From.ID){s.sendAlert(chatID,tr(s.cfg.Language,"manage.owned"));return}
+ if !ok||time.Now().After(p.Expires){s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.expired"),s.backToMainMarkup());return}
  if !confirm{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.cancelled"),s.backToMainMarkup());return}
  if !s.cfg.AllowMutations{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.denied"),s.backToMainMarkup());return}
  var result string
@@ -555,8 +556,12 @@ func (s *BotService) handleNodePathInput(msg *tgbotapi.Message) bool {
 		nodePathWizards.Unlock()
 		return false
 	}
-	if time.Now().After(state.Expires) || state.AdminID != msg.From.ID {
+	if time.Now().After(state.Expires) {
 		delete(nodePathWizards.items, chatID)
+		nodePathWizards.Unlock()
+		return false
+	}
+	if state.AdminID != msg.From.ID {
 		nodePathWizards.Unlock()
 		return false
 	}

@@ -342,11 +342,12 @@ func (s *BotService) handleUserLimitInput(msg *tgbotapi.Message)bool{
  userLimitWizards.Lock()
  state,ok:=userLimitWizards.items[chatID]
  if !ok{userLimitWizards.Unlock();return false}
- if time.Now().After(state.Expires)||state.AdminID!=msg.From.ID {
+ if time.Now().After(state.Expires) {
   delete(userLimitWizards.items,chatID)
   userLimitWizards.Unlock()
   return false
  }
+ if state.AdminID!=msg.From.ID {userLimitWizards.Unlock();return false}
  if strings.TrimSpace(msg.Text)=="/cancel" {
   delete(userLimitWizards.items,chatID)
   userLimitWizards.Unlock()

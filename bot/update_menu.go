@@ -101,7 +101,7 @@ func componentLabel(comp string) string {
 }
 
 func (s *BotService) askUpdate(cb *tgbotapi.CallbackQuery,comp string) {
- if cb.Message==nil{return}
+ if cb.Message==nil||cb.Message.Chat==nil||cb.From==nil{return}
  chatID:=cb.Message.Chat.ID;msgID:=cb.Message.MessageID
  if !s.cfg.AllowUpdates || ((comp=="core"||comp=="core-rollback")&&!s.cfg.AllowCoreUpdates) {
   s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"update.unauthorized"),s.backToMainMarkup());return
@@ -135,14 +135,15 @@ func (s *BotService) askUpdate(cb *tgbotapi.CallbackQuery,comp string) {
 }
 
 func (s *BotService) resolveUpdate(cb *tgbotapi.CallbackQuery,confirm bool) {
- if cb.Message==nil{return}
+ if cb.Message==nil||cb.Message.Chat==nil||cb.From==nil{return}
  chatID:=cb.Message.Chat.ID;msgID:=cb.Message.MessageID
  token:=strings.TrimPrefix(strings.TrimPrefix(cb.Data,"update_confirm:"),"update_cancel:")
  pendingUpdates.Lock()
  pending,ok:=pendingUpdates.items[token]
- if ok {delete(pendingUpdates.items,token)}
+ if ok&&pending.ChatID==chatID&&pending.AdminID==cb.From.ID {delete(pendingUpdates.items,token)}
  pendingUpdates.Unlock()
- if !ok || time.Now().After(pending.Deadline) || pending.AdminID!=cb.From.ID || pending.ChatID!=chatID {
+ if ok&&(pending.AdminID!=cb.From.ID||pending.ChatID!=chatID){s.sendAlert(chatID,tr(s.cfg.Language,"manage.owned"));return}
+ if !ok || time.Now().After(pending.Deadline) {
   s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"update.expired"),s.backToMainMarkup());return
  }
  if !confirm{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"update.cancelled"),s.backToMainMarkup());return}

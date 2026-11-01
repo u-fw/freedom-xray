@@ -19,6 +19,7 @@ type capturedTelegram struct {
 	mu     sync.Mutex
 	text   string
 	markup string
+	method string
 }
 
 func newCapturedRoutingBot(t *testing.T, cfg *BotConfig) (*BotService, *capturedTelegram) {
@@ -30,7 +31,7 @@ func newCapturedRoutingBot(t *testing.T, cfg *BotConfig) (*BotService, *captured
 		}
 		if r.FormValue("text") != "" {
 			capture.mu.Lock()
-			capture.text, capture.markup = r.FormValue("text"), r.FormValue("reply_markup")
+			capture.text, capture.markup, capture.method = r.FormValue("text"), r.FormValue("reply_markup"), r.URL.Path
 			capture.mu.Unlock()
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -42,6 +43,12 @@ func newCapturedRoutingBot(t *testing.T, cfg *BotConfig) (*BotService, *captured
 		t.Fatal(err)
 	}
 	return &BotService{cfg: cfg, bot: bot}, capture
+}
+
+func (capture *capturedTelegram) lastMethod() string {
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	return capture.method
 }
 
 func (capture *capturedTelegram) card(t *testing.T) (string, tgbotapi.InlineKeyboardMarkup) {

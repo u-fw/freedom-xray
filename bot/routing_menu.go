@@ -232,6 +232,10 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 		delete(pendingRoutingChanges.items, key)
 	}
 	pendingRoutingChanges.Unlock()
+	if ok && (cb.From == nil || pending.ChatID != chatID || pending.AdminID != cb.From.ID) {
+		s.sendAlert(chatID, tr(s.cfg.Language, "manage.owned"))
+		return
+	}
 	if !ok || cb.From == nil || pending.ChatID != chatID || pending.AdminID != cb.From.ID || time.Now().After(pending.Expires) {
 		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.expired"), s.backToMainMarkup())
 		return

@@ -63,15 +63,16 @@ func (s *BotService) offerUserChange(chatID,adminID int64,messageID int,change U
 func scopeLabel(node,lang string) string {if node==""||node=="all"{return tr(lang,"manage.scope.all")};return node}
 
 func (s *BotService) resolveUserChange(cb *tgbotapi.CallbackQuery,confirm bool) {
- if cb.Message==nil{return}
+ if cb.Message==nil||cb.Message.Chat==nil||cb.From==nil{return}
  chatID:=cb.Message.Chat.ID
  msgID:=cb.Message.MessageID
  key:=strings.TrimPrefix(strings.TrimPrefix(cb.Data,"manage_confirm:"),"manage_cancel:")
  pendingUserChanges.Lock()
  request,ok:=pendingUserChanges.items[key]
- if ok {delete(pendingUserChanges.items,key)}
+ if ok&&request.ChatID==chatID&&request.AdminID==cb.From.ID {delete(pendingUserChanges.items,key)}
  pendingUserChanges.Unlock()
- if !ok || request.ChatID!=chatID || request.AdminID!=cb.From.ID || time.Now().After(request.ExpiresAt) {
+ if ok&&(request.ChatID!=chatID||request.AdminID!=cb.From.ID){s.sendAlert(chatID,tr(s.cfg.Language,"manage.owned"));return}
+ if !ok || time.Now().After(request.ExpiresAt) {
   s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"manage.expired"),s.backToMainMarkup());return
  }
  if !confirm {s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"manage.cancelled"),s.backToMainMarkup());return}

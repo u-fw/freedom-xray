@@ -568,6 +568,7 @@ func CreateNode(configPath,xrayBinary,statsServer string,req NodeCreateRequest)(
 
 type nodeDeletionReport struct {
 	Tag            string   `json:"tag"`
+	ETag           string   `json:"etag,omitempty"`
 	Port           int      `json:"port"`
 	Clients        int      `json:"clients"`
 	RoutingRules   []int    `json:"routing_rules"`
@@ -622,12 +623,21 @@ func inspectNodeDeletion(configPath,tag string)(nodeDeletionReport,error) {
 // suspended account still references the node, because restoring that account
 // would otherwise fail or silently drop its parked client.
 func DeleteNode(configPath,xrayBinary,statsServer,tag string)(string,error) {
+ return deleteNodeWithExpectedImpact(configPath,xrayBinary,statsServer,tag,"")
+}
+
+func deleteNodeWithExpectedImpact(configPath,xrayBinary,statsServer,tag,expected string)(string,error) {
  if tag==""||tag=="api-internal"{return "",errors.New("This inbound cannot be deleted")}
  sidecars:=[]configSidecar{
   metaSetClientEncryptionSidecar(configPath,tag,""),
   publicPortsDeleteSidecar(configPath,tag),
  }
  result,err:=commitManagedConfigTx(configPath,xrayBinary,statsServer,sidecars,func(root map[string]any)(string,error){
+  if expected!="" {
+   report,err:=inspectNodeDeletion(configPath,tag);if err!=nil{return "",errNodeDeletionChanged}
+   actual,err:=nodeDeletionFingerprint(root,report);if err!=nil{return "",err}
+   if actual!=expected{return "",errNodeDeletionChanged}
+  }
   store,_,err:=readSuspendedStore(configPath);if err!=nil{return "",err}
   var suspended []string
   for name,account:=range store.Users {
