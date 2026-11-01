@@ -709,7 +709,7 @@ func (s *BotService) sendStatusCard(chatID int64, msgID int) {
 	markup := newKeyboard(
 		newRow(
 			newButton(tr(s.cfg.Language, "common.refresh"), "menu_status"),
-			newButton(tr(s.cfg.Language, "common.back"), "menu_main"),
+			newButton(tr(s.cfg.Language, "menu.home"), "menu_main"),
 		),
 	)
 	if s.cfg.AllowMutations {
@@ -781,7 +781,7 @@ func (s *BotService) sendTrafficCard(chatID int64, msgID int) {
 		newRow(trafficActions...),
 		newRow(
 			newButton(tr(s.cfg.Language, "traffic.inbounds"), "menu_inbound_traffic"),
-			newButton(tr(s.cfg.Language, "common.back"), "menu_main"),
+			newButton(tr(s.cfg.Language, "menu.home"), "menu_main"),
 		),
 	}
 	if len(trafficMissing) > 0 {
@@ -835,7 +835,7 @@ func (s *BotService) doTrafficReset(chatID int64, msgID int) {
 	markup := newKeyboard(
 		newRow(
 			newButton(tr(s.cfg.Language, "traffic.view"), "menu_traffic"),
-			newButton(tr(s.cfg.Language, "common.back"), "menu_main"),
+			newButton(tr(s.cfg.Language, "menu.home"), "menu_main"),
 		),
 	)
 	s.sendOrEdit(chatID, msgID, text, markup)
@@ -942,7 +942,7 @@ func (s *BotService) sendNodesCardPage(chatID int64, msgID, offset int) {
 	if s.cfg.AllowMutations {
 		nodeRows = append(nodeRows, newRow(newButton(tr(s.cfg.Language, "node.create.button"), "node_new_menu")))
 	}
-	nodeRows = append(nodeRows, newRow(newButton(tr(s.cfg.Language, "common.refresh"), fmt.Sprintf("nodes_page:%d", offset)), newButton(tr(s.cfg.Language, "common.back"), "menu_main")))
+	nodeRows = append(nodeRows, newRow(newButton(tr(s.cfg.Language, "common.refresh"), fmt.Sprintf("nodes_page:%d", offset)), newButton(tr(s.cfg.Language, "menu.home"), "menu_main")))
 	s.sendOrEdit(chatID, msgID, sb.HTML(), newKeyboard(nodeRows...))
 }
 
@@ -1009,7 +1009,7 @@ func (s *BotService) sendUsersCardPage(chatID int64, msgID, offset int) {
 		}
 	}
 	rows = append(rows, newRow(
-		newButton(tr(s.cfg.Language, "common.back"), "menu_main"),
+		newButton(tr(s.cfg.Language, "menu.home"), "menu_main"),
 	))
 
 	text := trh(s.cfg.Language, "users.title")
@@ -1170,7 +1170,7 @@ func (s *BotService) broadcastReport() {
 func (s *BotService) backToMainMarkup() tgKeyboard {
 	return newKeyboard(
 		newRow(
-			newButton(tr(s.cfg.Language, "common.back"), "menu_main"),
+			newButton(tr(s.cfg.Language, "menu.home"), "menu_main"),
 		),
 	)
 }

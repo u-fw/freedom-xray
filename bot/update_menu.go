@@ -60,7 +60,7 @@ func (s *BotService) runSafeUpdates(chatID int64, msgID int, components []string
 	}
 	rows := newKeyboard(newRow(
 		newButton(tr(s.cfg.Language, "update.opencenter"), "menu_update_center"),
-		newButton(tr(s.cfg.Language, "common.main"), "menu_main")))
+		newButton(tr(s.cfg.Language, "menu.home"), "menu_main")))
 	s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "update.result", strings.Join(results, "\n\n")), rows)
 }
 
@@ -111,7 +111,7 @@ func (s *BotService) showUpdatesMenu(chatID int64, msgID int) {
 		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "update.rollback"), "update_ask:core-rollback")))
 	}
 	out.Add(trh(s.cfg.Language, "update.note"))
-	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "common.main"), "menu_main")))
+	rows = append(rows, toolsNavRow(s.cfg.Language))
 	s.sendOrEdit(chatID, msgID, out.HTML(), newKeyboard(rows...))
 }
 

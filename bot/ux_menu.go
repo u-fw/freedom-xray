@@ -16,6 +16,11 @@ func mainMenuMarkup(lang string) tgKeyboard {
 	)
 }
 
+// toolsNavRow leads back to the Tools card that lists a screen, or home.
+func toolsNavRow(lang string) []tgButton {
+	return newRow(newButton(tr(lang, "common.back"), "menu_tools"), newButton(tr(lang, "menu.home"), "menu_main"))
+}
+
 func (s *BotService) sendToolsCard(chatID int64, msgID int) {
 	lang := s.cfg.Language
 	markup := newKeyboard(
@@ -59,7 +64,8 @@ func (s *BotService) sendVersionCard(chatID int64, msgID int) {
 	body.Add(trh(s.cfg.Language, "version.note"))
 	keyboard := newKeyboard(
 		newRow(newButton(tr(s.cfg.Language, "version.updatecenter"), "menu_update_center")),
-		newRow(newButton(tr(s.cfg.Language, "version.refresh"), "menu_version"), newButton(tr(s.cfg.Language, "version.mainmenu"), "menu_main")),
+		newRow(newButton(tr(s.cfg.Language, "version.refresh"), "menu_version")),
+		toolsNavRow(s.cfg.Language),
 	)
 	s.sendOrEdit(chatID, msgID, body.HTML(), keyboard)
 }
@@ -68,7 +74,7 @@ func (s *BotService) sendHelpCard(chatID int64, msgID int) {
 	msg := trh(s.cfg.Language, "help.body")
 	markup := newKeyboard(
 		newRow(newButton(tr(s.cfg.Language, "menu.users"), "menu_users"), newButton(tr(s.cfg.Language, "help.update"), "menu_update_center")),
-		newRow(newButton(tr(s.cfg.Language, "menu.home"), "menu_main")),
+		toolsNavRow(s.cfg.Language),
 	)
 	s.sendOrEdit(chatID, msgID, msg, markup)
 }

@@ -221,20 +221,12 @@ func statsSwitchesMarkup(lang string, report statsSwitchReport, readErr error) t
 			newButton(tr(lang, "stats.repair"), "stats_repair_ask"),
 		))
 	}
-	rows = append(rows, newRow(
-		newButton(tr(lang, "common.refresh"), "menu_stats"),
-		newButton(tr(lang, "common.main"), "menu_main"),
-	))
+	rows = append(rows, newRow(newButton(tr(lang, "common.refresh"), "menu_stats")), toolsNavRow(lang))
 	return newKeyboard(rows...)
 }
 
 func statsSwitchesBackMarkup(lang string) tgKeyboard {
-	return newKeyboard(
-		newRow(
-			newButton(tr(lang, "common.refresh"), "menu_stats"),
-			newButton(tr(lang, "common.main"), "menu_main"),
-		),
-	)
+	return newKeyboard(newRow(newButton(tr(lang, "common.refresh"), "menu_stats")), toolsNavRow(lang))
 }
 
 func (s *BotService) sendStatsSwitches(chatID int64, msgID int) {
