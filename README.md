@@ -22,6 +22,7 @@ Run `sudo freedom` to open the terminal menu. The Telegram submenu can install t
 | Capability | Terminal | Telegram |
 | --- | --- | --- |
 | VLESS RAW/REALITY/Vision, XHTTP/REALITY and XHTTP/TLS/CDN | Create and manage | Create, manage and export |
+| Other inbound protocols | Native JSON through agent CLI | Inspect, edit listener, create or replace native JSON, delete |
 | Independent user identities and node assignments | Yes | Yes |
 | Add, rename, remove, suspend and restore users | Yes (Go manager required) | Yes |
 | Rotate user UUIDs | Yes | Yes |
@@ -36,11 +37,11 @@ Run `sudo freedom` to open the terminal menu. The Telegram submenu can install t
 | Bot and manager updates; Xray upgrades and rollback | Yes | Permission-gated |
 | Public subscription service and full web dashboard | Not provided | Not provided |
 
-User identities are kept separately from Xray inbounds in a local, permission-restricted `freedom-users.json`. A newly created user is **not** automatically granted access to every inbound. Assign access explicitly by node. Existing users are imported from Xray configuration without rotating their UUIDs. Conflicting identities are rejected rather than merged silently.
+VLESS user identities are kept separately from Xray inbounds in a local, permission-restricted `freedom-users.json`. A newly created user is **not** automatically granted access to every inbound. Assign access explicitly by node. Existing VLESS users are imported from Xray configuration without rotating their UUIDs. Conflicting identities are rejected rather than merged silently. Accounts in other inbound protocols remain in their native settings and are not managed by the VLESS user, quota, suspension or link workflows.
 
 Suspended users retain their UUID and previous bindings in the local `freedom-disabled-users.json` file (mode 0600). This file is not encrypted. If an inbound is deleted, restoring its former binding can fail.
 
-Traffic quotas and expiry dates are stored in `freedom-user-limits.json` (mode 0600) because Xray has no native quota fields. The Bot checks them once a minute while it is running and suspends a client through the same reversible suspension flow when its total traffic reaches the quota or its expiry date passes. Administrators receive an 80% warning, expiry warnings three days ahead, and final suspension notices. Enforcement requires `allow_mutations`, never suspends the last remaining client of an inbound, and restarts Xray once per enforced suspension. An unreadable traffic ledger prevents quota decisions, but does not prevent expiry enforcement. Raising the quota or resetting traffic does not re-enable an automatically suspended user; restore it explicitly after reviewing the limits.
+Traffic quotas and expiry dates are stored in `freedom-user-limits.json` (mode 0600) because Xray has no native quota fields. The Bot checks them once a minute while it is running and suspends a client through the same reversible suspension flow when its total traffic reaches the quota or its expiry date passes. Administrators receive an 80% warning, expiry warnings three days ahead, and final suspension notices. Enforcement requires `allow_mutations`, never suspends the last remaining client of an inbound, and restarts Xray once per enforced suspension. An unreadable or ambiguous traffic ledger prevents quota decisions, but does not prevent expiry enforcement. Raising the quota or resetting traffic does not re-enable an automatically suspended user; restore it explicitly after reviewing the limits.
 
 ### Bot commands
 

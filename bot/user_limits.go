@@ -29,6 +29,7 @@ type userLimit struct {
  NotifiedQuota bool `json:"notified_quota,omitempty"`
  NotifiedExpiry bool `json:"notified_expiry,omitempty"`
  NotifiedExpired bool `json:"notified_expired,omitempty"`
+ NotifiedAmbiguous bool `json:"notified_ambiguous,omitempty"`
 }
 
 func (l userLimit) empty() bool {return l.QuotaBytes<=0&&l.ExpiryUnix<=0}
@@ -243,6 +244,15 @@ func recheckAndSuspendLimitedUser(configPath,xrayBinary,statsServer,email string
  }else if counter,ok:=state.Users[email];ok {
   used=counter.TotalUp+counter.TotalDown
  }
+ if limit.QuotaBytes>0 {
+  if err=ensureTrafficAmbiguitiesLocked(configPath);err!=nil {
+   limit.QuotaBytes=0
+  }else if root,e:=decodeBindingMigrationConfig(configPath);e!=nil {
+   limit.QuotaBytes=0
+  }else if ambiguous,e:=trafficAmbiguities(configPath,root);e!=nil||ambiguous[email] {
+   limit.QuotaBytes=0
+  }
+ }
  action:=evaluateUserLimit(limit,used,now)
  if !action.Disable{return action,used,false,nil}
  if _,err=changeUserSuspensionLocked(configPath,xrayBinary,statsServer,UserChange{Kind:"disable",User:email});err!=nil{
@@ -271,22 +281,35 @@ func (s *BotService) enforceUserLimitsOnce(){
  }
  active:=map[string]bool{}
  for _,node:=range nodes {
+  if node.Protocol!="vless"{continue}
   for _,client:=range node.Clients {
    if client.Email!=""{active[bindingOwner(client.Email)]=true}
   }
  }
+ ambiguityErr:=ensureTrafficAmbiguities(s.cfg.XrayConfigPath)
+ var root map[string]any
+ if ambiguityErr==nil {root,ambiguityErr=decodeBindingMigrationConfig(s.cfg.XrayConfigPath)}
+ var ambiguous map[string]bool
+ if ambiguityErr==nil {ambiguous,ambiguityErr=trafficAmbiguities(s.cfg.XrayConfigPath,root)}
+ if ambiguityErr!=nil {log.Printf("[Limits] unable to verify traffic identities: %v",ambiguityErr)}
  now:=time.Now()
  lang:=s.cfg.Language
  for email,limit:=range limits {
   if limit.empty()||!active[email]{continue}
+  if ambiguityErr==nil&&ambiguous[email]&&limit.QuotaBytes>0&&!limit.NotifiedAmbiguous {
+   markUserLimit(s.cfg.XrayConfigPath,email,func(l *userLimit){l.NotifiedAmbiguous=true})
+   s.notifyAdmins(tr(lang,"limit.notify.ambiguous",mdCode(email)))
+  }else if ambiguityErr==nil&&!ambiguous[email]&&limit.NotifiedAmbiguous {
+   markUserLimit(s.cfg.XrayConfigPath,email,func(l *userLimit){l.NotifiedAmbiguous=false})
+  }
   used:=uint64(0)
   if counter,ok:=state.Users[email];ok{used=counter.TotalUp+counter.TotalDown}
   evaluatedLimit:=limit
-  if !trafficAvailable {evaluatedLimit.QuotaBytes=0}
+  if !trafficAvailable||ambiguityErr!=nil||ambiguous[email] {evaluatedLimit.QuotaBytes=0}
   action:=evaluateUserLimit(evaluatedLimit,used,now)
   // Usage below the warning threshold clears stale flags after a reset or a
   // raised quota, so the next threshold crossing notifies again.
-  if trafficAvailable&&limit.QuotaBytes>0&&used<uint64(limit.QuotaBytes)-uint64(limit.QuotaBytes)/5&&(limit.Notified80||limit.NotifiedQuota) {
+  if trafficAvailable&&ambiguityErr==nil&&!ambiguous[email]&&limit.QuotaBytes>0&&used<uint64(limit.QuotaBytes)-uint64(limit.QuotaBytes)/5&&(limit.Notified80||limit.NotifiedQuota) {
    markUserLimit(s.cfg.XrayConfigPath,email,func(l *userLimit){l.Notified80=false;l.NotifiedQuota=false})
   }
   if action.Disable {
@@ -446,6 +469,7 @@ func moveUserLimit(configPath,email,newName string)error{
    limit.NotifiedQuota=false
    limit.NotifiedExpiry=false
    limit.NotifiedExpired=false
+   limit.NotifiedAmbiguous=false
    users[newName]=limit
   }
   return nil

@@ -326,3 +326,65 @@ func TestWizardOwnerCannotBeDisplaced(t *testing.T) {
 	}
 	clearNodeCreateState(chat.ID)
 }
+
+func TestUserTrafficResetConfirmationCannotBeReplayed(t *testing.T) {
+	h := newBindingMigrationHarness(t, agentFixture, false)
+	cfg := DefaultConfig()
+	cfg.XrayConfigPath, cfg.XrayBinPath, cfg.AllowMutations = h.config, h.xray, true
+	s, capture := newCapturedRoutingBot(t, cfg)
+	chat, admin := &tgbotapi.Chat{ID: 9544, Type: "private"}, &tgbotapi.User{ID: 17}
+	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: "manage_traffic:" + userCallbackKey("alice")}
+	if err := saveTrafficStore(h.config, trafficStore{Users: map[string]trafficCounter{"alice": {TotalDown: 100}}}); err != nil {
+		t.Fatal(err)
+	}
+	ask := func() string {
+		t.Helper()
+		cb.Data = "manage_traffic:" + userCallbackKey("alice")
+		s.askUserTrafficReset(cb)
+		_, markup := capture.card(t)
+		for _, callback := range keyboardCallbacks(t, markup) {
+			if strings.HasPrefix(callback, "manage_traffic_confirm:") {
+				if callback == "manage_traffic_confirm:"+userCallbackKey("alice") {
+					t.Fatal("reset uses a predictable reusable callback")
+				}
+				return callback
+			}
+		}
+		t.Fatal("missing reset confirmation")
+		return ""
+	}
+	first := ask()
+	cb.Data, cb.From = first, &tgbotapi.User{ID: 18}
+	s.resolveUserTrafficReset(cb, true)
+	if !strings.HasSuffix(capture.lastMethod(), "/sendMessage") {
+		t.Fatal("another admin replaced the reset confirmation")
+	}
+	root, _ := decodeBindingMigrationConfig(h.config)
+	root["inbounds"].([]any)[0].(map[string]any)["settings"].(map[string]any)["clients"].([]any)[0].(map[string]any)["id"] = "33333333-3333-4333-8333-333333333333"
+	data, _ := json.Marshal(root)
+	if err := os.WriteFile(h.config, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cb.From = admin
+	s.resolveUserTrafficReset(cb, true)
+	state, _ := loadTrafficStore(h.config)
+	if state.Users["alice"].TotalDown != 100 {
+		t.Fatal("stale identity confirmation reset traffic")
+	}
+	valid := ask()
+	cb.Data = valid
+	s.resolveUserTrafficReset(cb, true)
+	state, _ = loadTrafficStore(h.config)
+	if state.Users["alice"].TotalDown != 0 {
+		t.Fatal("fresh reset confirmation did not reset traffic")
+	}
+	state.Users["alice"] = trafficCounter{TotalDown: 50}
+	if err := saveTrafficStore(h.config, state); err != nil {
+		t.Fatal(err)
+	}
+	s.resolveUserTrafficReset(cb, true)
+	state, _ = loadTrafficStore(h.config)
+	if state.Users["alice"].TotalDown != 50 {
+		t.Fatal("replayed confirmation reset new traffic")
+	}
+}

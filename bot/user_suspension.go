@@ -132,6 +132,10 @@ func changeUserSuspensionLocked(configPath,xrayBinary,statsServer string,change 
  store,oldState,err:=readSuspendedStore(configPath);if err!=nil{return "",err}
  var root map[string]any
  if err=json.Unmarshal(original,&root);err!=nil{return "",err}
+ if change.Kind=="enable" {
+  owners,err:=nativeAccountOwners(root);if err!=nil{return "",err}
+  if owners[change.User]{return "",errors.New("A non-VLESS account uses this statistics identity; change its email before restoring this user")}
+ }
  message,err:=applyUserSuspension(root,&store,change);if err!=nil{return "",err}
  next,err:=json.MarshalIndent(root,"","  ");if err!=nil{return "",err}
  next=append(next,10)
@@ -157,6 +161,7 @@ func changeUserSuspensionLocked(configPath,xrayBinary,statsServer string,change 
   if cfgErr!=nil || stateErr!=nil{return fmt.Errorf("Unable to restore files: config=%v, store=%v",cfgErr,stateErr)}
   return nil
  }
+ snapshotTrafficBestEffortLocked(configPath,xrayBinary,statsServer)
  if err=writeAtomically(statePath,newState,0600);err!=nil{
   if oldState==nil{_ = os.Remove(statePath)}
   return "",err
@@ -165,7 +170,6 @@ func changeUserSuspensionLocked(configPath,xrayBinary,statsServer string,change 
   if restoreErr:=restore();restoreErr!=nil{return "",fmt.Errorf("Failed to write config: %w; rollback failed: %v",err,restoreErr)}
   return "",err
  }
- snapshotTrafficBestEffortLocked(configPath,xrayBinary,statsServer)
  if err=runChecked("systemctl","restart","xray");err==nil{err=runChecked("systemctl","is-active","--quiet","xray")}
  if err!=nil {
   failure:=err

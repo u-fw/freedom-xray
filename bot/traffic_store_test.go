@@ -71,6 +71,7 @@ func TestTrafficCorruptFileNeverOverwritten(t *testing.T){
 func TestTrafficCollectorEndToEnd(t *testing.T) {
  dir:=t.TempDir()
  config:=filepath.Join(dir,"config.json")
+ if err:=os.WriteFile(config,[]byte(`{"inbounds":[]}`),0600);err!=nil{t.Fatal(err)}
  epoch:=filepath.Join(dir,"epoch.txt")
  userData:=filepath.Join(dir,"users.json")
  inboundData:=filepath.Join(dir,"inbounds.json")

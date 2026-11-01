@@ -58,6 +58,7 @@ func (s *BotService) handleWizardMessage(msg *tgbotapi.Message) bool {
  rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"wizard.createonly"),"manage_scope:unbound")))
  rows=append(rows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"wizard.assignall"),"manage_scope:all")))
  for _,n:=range nodes {
+  if n.Protocol!="vless"||n.Tag==""{continue}
   rows=append(rows,tgbotapi.NewInlineKeyboardRow(
    tgbotapi.NewInlineKeyboardButtonData(truncateLabel(n.Tag,48),"manage_scope:"+userCallbackKey(n.Tag)),
   ))
@@ -86,7 +87,7 @@ func (s *BotService) handleWizardScope(cb *tgbotapi.CallbackQuery) {
   nodes,err:=LoadXrayInbounds(s.cfg.XrayConfigPath)
   if err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"wizard.inboundread"));return}
   target=""
-  for _,n:=range nodes {if userCallbackKey(n.Tag)==key{target=n.Tag;break}}
+  for _,n:=range nodes {if n.Protocol=="vless"&&n.Tag!=""&&userCallbackKey(n.Tag)==key{target=n.Tag;break}}
   if target==""{s.sendAlert(chatID,tr(s.cfg.Language,"wizard.inboundchanged"));return}
  }
  s.offerUserChange(chatID,cb.From.ID,msgID,UserChange{Kind:"add",User:state.User,Node:target})

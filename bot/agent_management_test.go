@@ -41,6 +41,7 @@ func TestAgentContractAndSensitiveOutputGate(t *testing.T) {
 		{[]string{"version"}, "", 0, ""},
 		{[]string{"does.not.exist"}, "", 2, "unknown_operation"},
 		{[]string{"users.export"}, `{"user":"alice"}`, 3, "permission_denied"},
+		{[]string{"inbounds.get"}, `{"index":1,"etag":"012345678901234567890123"}`, 3, "permission_denied"},
 		{[]string{"nodes.get"}, "", 2, "invalid_request"},
 		{[]string{"version", "--apply"}, "", 2, "invalid_request"},
 	} {

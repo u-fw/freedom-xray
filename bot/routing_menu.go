@@ -28,6 +28,7 @@ type pendingRoutingChange struct {
 	Outbound         *outboundChange
 	DNS              *dnsChange
 	DNSHost          *dnsHostChange
+	NativeInbound    *nativeInboundChange
 	EnableRoutingAPI bool
 	LiveBalancerTag  string
 	LiveBalancerETag string
@@ -52,6 +53,7 @@ func clearRoutingWizard(chatID int64) {
 	clearBalancerWizard(chatID)
 	clearOutboundWizard(chatID)
 	clearDNSWizard(chatID)
+	clearNativeInboundWizard(chatID)
 }
 
 func (s *BotService) beginRoutingWizard(cb *tgbotapi.CallbackQuery) {
@@ -243,6 +245,8 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 	if !confirm {
 		if pending.EnableRoutingAPI {
 			s.returnToBalancerLive(chatID, msgID, pending.LiveBalancerTag, pending.LiveBalancerETag)
+		} else if pending.NativeInbound != nil {
+			s.sendNativeInboundPage(chatID, msgID, 0, "")
 		} else if pending.DNSHost != nil {
 			s.sendDNSHostsPage(chatID, msgID, 0, "")
 		} else if pending.DNS != nil {
@@ -283,6 +287,8 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 		}
 	} else if pending.EnableRoutingAPI {
 		message, err = enableRoutingService(s.cfg)
+	} else if pending.NativeInbound != nil {
+		message, err = changeNativeInboundConfig(s.cfg, *pending.NativeInbound)
 	} else if pending.DNSHost != nil {
 		message, err = changeDNSHostConfig(s.cfg, *pending.DNSHost)
 	} else if pending.DNS != nil {
@@ -312,6 +318,10 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 		message, err = changeRoutingConfig(s.cfg.XrayConfigPath, s.cfg.XrayBinPath, s.cfg.StatsAPIServer, pending.Change)
 	}
 	if err != nil {
+		if errors.Is(err, errNativeInboundChanged) || (pending.NativeInbound != nil && errors.Is(err, errNodeDeletionChanged)) {
+			s.sendNativeInboundPage(chatID, msgID, 0, tr(s.cfg.Language, "inbound.native.changed"))
+			return
+		}
 		if errors.Is(err, errDNSChanged) {
 			if pending.DNSHost != nil {
 				s.sendDNSHostsPage(chatID, msgID, 0, tr(s.cfg.Language, "dns.changed"))
@@ -339,6 +349,8 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 		markup := s.backToMainMarkup()
 		if pending.EnableRoutingAPI {
 			markup = balancerBackMarkup(s.cfg.Language)
+		} else if pending.NativeInbound != nil {
+			markup = nativeInboundBackMarkup(s.cfg.Language)
 		} else if pending.DNSHost != nil {
 			markup = dnsHostsBackMarkup(s.cfg.Language)
 		} else if pending.DNS != nil {
@@ -357,6 +369,10 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 	}
 	if pending.EnableRoutingAPI {
 		s.returnToBalancerLive(chatID, msgID, pending.LiveBalancerTag, pending.LiveBalancerETag)
+		return
+	}
+	if pending.NativeInbound != nil {
+		s.sendNativeInboundPage(chatID, msgID, 0, tr(s.cfg.Language, "inbound.native.done"))
 		return
 	}
 	if pending.DNSHost != nil {

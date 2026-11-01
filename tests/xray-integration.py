@@ -75,11 +75,11 @@ def main():
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
         ports = []
-        while len(ports) < 6:
+        while len(ports) < 9:
             port = unused_port()
             if port not in ports:
                 ports.append(port)
-        api_port, raw_port, cdn_port, alice_raw, alice_cdn, bob_raw = ports
+        api_port, raw_port, cdn_port, alice_raw, alice_cdn, bob_raw, socks_port, vmess_port, vmess_client = ports
         inbound = lambda tag, port, clients: {
             "tag": tag,
             "listen": "127.0.0.1",
@@ -102,6 +102,11 @@ def main():
                 inbound("raw", raw_port, [{"id": ALICE_ID, "email": "alice+cmF3"},
                                           {"id": BOB_ID, "email": "bob+cmF3"}]),
                 inbound("cdn", cdn_port, [{"id": ALICE_ID, "email": "alice+Y2Ru"}]),
+                {"tag": "socks-native", "listen": "127.0.0.1", "port": socks_port,
+                 "protocol": "socks", "settings": {"auth": "password", "udp": False,
+                 "accounts": [{"user": "native-test", "pass": "dummy-native-password"}]}},
+                {"tag": "vmess-native", "listen": "127.0.0.1", "port": vmess_port,
+                 "protocol": "vmess", "settings": {"clients": [{"id": ALICE_ID, "email": "alice"}]}},
             ],
             "outbounds": [{"protocol": "freedom", "tag": tag, "settings": {"domainStrategy": "UseIP",
                 "finalRules": [{"action": "allow", "network": "tcp", "ip": ["127.0.0.1/32"]}],
@@ -122,6 +127,13 @@ def main():
             server = start_xray(server_config, directory, "config")
             processes.append(server)
             wait_for_port(api_port, server)
+            wait_for_port(socks_port, server)
+            subprocess.run([
+                "curl", "-fsS", "--max-time", "10", "--noproxy", "",
+                "--socks5-hostname", f"127.0.0.1:{socks_port}",
+                "--proxy-user", "native-test:dummy-native-password",
+                f"http://127.0.0.1:{httpd.server_port}/", "-o", os.devnull,
+            ], check=True)
             for index, (socks_port, target_port, user_id) in enumerate([
                 (alice_raw, raw_port, ALICE_ID),
                 (alice_cdn, cdn_port, ALICE_ID),
@@ -144,6 +156,23 @@ def main():
                     "--socks5-hostname", f"127.0.0.1:{socks_port}",
                     f"http://127.0.0.1:{httpd.server_port}/", "-o", os.devnull,
                 ], check=True)
+            vmess_config = {
+                "log": {"loglevel": "info"},
+                "inbounds": [{"listen": "127.0.0.1", "port": vmess_client,
+                              "protocol": "socks", "settings": {"udp": False}}],
+                "outbounds": [{"protocol": "vmess", "settings": {"vnext": [{
+                    "address": "127.0.0.1", "port": vmess_port,
+                    "users": [{"id": ALICE_ID, "alterId": 0, "security": "auto"}],
+                }]}}],
+            }
+            vmess = start_xray(vmess_config, directory, "vmess-client")
+            processes.append(vmess)
+            wait_for_port(vmess_client, vmess)
+            subprocess.run([
+                "curl", "-fsS", "--max-time", "10", "--noproxy", "",
+                "--socks5-hostname", f"127.0.0.1:{vmess_client}",
+                f"http://127.0.0.1:{httpd.server_port}/", "-o", os.devnull,
+            ], check=True)
             subprocess.run([
                 "curl", "-fsS", "--max-time", "10", "--noproxy", "",
                 "--socks5-hostname", f"127.0.0.1:{alice_raw}",
@@ -212,12 +241,24 @@ def main():
             })
             assert host_preview["applied"] is False, host_preview
             assert (directory / "config.json").read_bytes() == original_config
-            assert {node["tag"] for node in agent("nodes.list")} == {"raw", "cdn"}
+            assert {node["tag"] for node in agent("nodes.list")} == {"raw", "cdn", "socks-native", "vmess-native"}
+            native_list = agent("inbounds.list")
+            native = next(item for item in native_list["inbounds"] if item["tag"] == "socks-native")
+            assert native["protocol"] == "socks" and "dummy-native-password" not in json.dumps(native_list), native_list
+            native_ref = {"index": native["index"], "etag": native["etag"]}
+            native_full = agent("inbounds.get", native_ref, "--include-sensitive")
+            assert native_full["settings"]["accounts"][0]["pass"] == "dummy-native-password"
+            native_patch = agent("inbounds.patch", {**native_ref, "field": "port", "value": "2200"})
+            assert native_patch["applied"] is False, native_patch
+            native_remove = agent("inbounds.remove", {**native_ref, "list_etag": native_list["list_etag"]})
+            assert native_remove["applied"] is False and len(native_remove["preview"]["etag"]) == 24, native_remove
             node_deletion = agent("nodes.delete", {"tag": "raw"})
             assert node_deletion["applied"] is False and len(node_deletion["preview"]["etag"]) == 24, node_deletion
             assert (directory / "config.json").read_bytes() == original_config
             users = agent("users.list")
             assert {user["user"] for user in users} == {"alice", "bob"}, users
+            alice = next(user for user in users if user["user"] == "alice")
+            assert alice["traffic_ambiguous"] and set(alice["nodes"]) == {"raw", "cdn"}, alice
             assert ALICE_ID not in json.dumps(users) and BOB_ID not in json.dumps(users)
 
             bot("-local-traffic-snapshot")
@@ -230,14 +271,32 @@ def main():
 
             with (directory / ".freedom-config.lock").open("w") as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX)
+                failed_reset = subprocess.run(
+                    [BOT, "-c", str(bot_config), "-local-user-traffic-reset-locked", "-local-user", "alice"],
+                    capture_output=True, text=True, timeout=40,
+                )
+            assert failed_reset.returncode != 0 and "shares this statistics identity" in failed_reset.stderr
+
+            vmess.terminate()
+            vmess.wait(timeout=5)
+            server.terminate()
+            server.wait(timeout=5)
+            server_config["inbounds"] = [item for item in server_config["inbounds"] if item["tag"] != "vmess-native"]
+            server = start_xray(server_config, directory, "config")
+            processes.append(server)
+            wait_for_port(api_port, server)
+            assert agent("users.get", {"user": "alice"})["traffic_ambiguous"]
+            with (directory / ".freedom-config.lock").open("w") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
                 bot("-local-user-traffic-reset-locked", "-local-user", "alice")
+            assert not agent("users.get", {"user": "alice"}).get("traffic_ambiguous", False)
             bot("-local-traffic-snapshot")
             after = json.loads(bot("-local-traffic-read"))
             assert after["users"]["alice"]["total_down"] == 0, after
             assert after["users"]["bob"]["total_down"] == before["users"]["bob"]["total_down"], after
             for binding in ("alice+cmF3", "alice+Y2Ru"):
                 assert after["bindings"][binding]["total_down"] == 0, after
-            print("Real Xray DNS host resolution, balancer routing and live status, per-binding traffic and isolated user reset passed")
+            print("Real Xray native inbounds, identity collision guard, DNS, balancing and isolated traffic reset passed")
         except Exception:
             for index, process in enumerate(processes):
                 process.terminate()

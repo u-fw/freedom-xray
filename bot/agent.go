@@ -35,6 +35,12 @@ var agentOperations = []agentOperation{
 	{"nodes.update", true, true, false, "Change an allowed inbound setting"},
 	{"nodes.delete", true, true, false, "Delete an inbound after checking suspended users"},
 	{"nodes.public-port", true, true, false, "Set or clear an XHTTP/TLS public port"},
+	{"inbounds.list", false, false, false, "List native inbound summaries and edit references"},
+	{"inbounds.get", true, false, true, "Export one native inbound including possible credentials"},
+	{"inbounds.add", true, true, false, "Create a native non-VLESS inbound"},
+	{"inbounds.replace", true, true, false, "Replace one native non-VLESS inbound"},
+	{"inbounds.patch", true, true, false, "Edit a native non-VLESS listener address or port"},
+	{"inbounds.remove", true, true, false, "Remove a native non-VLESS inbound after impact review"},
 	{"users.list", false, false, false, "List users, assignments, limits and totals"},
 	{"users.get", true, false, false, "Read one user without credentials"},
 	{"users.export", true, false, true, "Export credential-bearing VLESS links"},
@@ -300,12 +306,13 @@ func agentNodes(configPath string) ([]agentNodeSummary, error) {
 }
 
 type agentUserSummary struct {
-	User       string         `json:"user"`
-	Nodes      []string       `json:"nodes"`
-	Suspended  bool           `json:"suspended"`
-	Traffic    trafficCounter `json:"traffic"`
-	Limit      userLimit      `json:"limit"`
-	LastOnline int64          `json:"last_online,omitempty"`
+	User             string         `json:"user"`
+	Nodes            []string       `json:"nodes"`
+	Suspended        bool           `json:"suspended"`
+	Traffic          trafficCounter `json:"traffic"`
+	Limit            userLimit      `json:"limit"`
+	LastOnline       int64          `json:"last_online,omitempty"`
+	TrafficAmbiguous bool           `json:"traffic_ambiguous,omitempty"`
 }
 
 func agentUsers(configPath string) ([]agentUserSummary, error) {
@@ -338,11 +345,22 @@ func agentUsers(configPath string) ([]agentUserSummary, error) {
 	if err != nil {
 		return nil, err
 	}
+	root, err := decodeBindingMigrationConfig(configPath)
+	if err != nil {
+		return nil, err
+	}
+	ambiguous, err := trafficAmbiguities(configPath, root)
+	if err != nil {
+		return nil, err
+	}
 	result := make([]agentUserSummary, 0, len(names))
 	for _, name := range names {
-		item := agentUserSummary{User: name, Nodes: []string{}, Traffic: state.Users[name], Limit: limits[name], LastOnline: state.LastOnline[name]}
+		item := agentUserSummary{User: name, Nodes: []string{}, Traffic: state.Users[name], Limit: limits[name], LastOnline: state.LastOnline[name], TrafficAmbiguous: ambiguous[name]}
 		_, item.Suspended = suspended.Users[name]
 		for _, node := range nodes {
+			if node.Protocol != "vless" {
+				continue
+			}
 			for _, user := range node.Users {
 				if user == name {
 					item.Nodes = append(item.Nodes, node.Tag)
@@ -418,6 +436,35 @@ func executeAgentOperation(cfg *BotConfig, operation agentOperation, raw []byte,
 		return map[string]any{"applied": true, "host": host}, nil
 	case "nodes.list":
 		return agentNodes(cfg.XrayConfigPath)
+	case "inbounds.list":
+		root, err := decodeBindingMigrationConfig(cfg.XrayConfigPath)
+		if err != nil {
+			return nil, err
+		}
+		records, err := nativeInboundRecords(root)
+		if err != nil {
+			return nil, err
+		}
+		etag, err := nativeInboundListETag(root)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"list_etag": etag, "inbounds": records}, nil
+	case "inbounds.get":
+		var input agentNativeInboundInput
+		if err := decodeAgentInput(raw, &input); err != nil {
+			return nil, err
+		}
+		if input.Index < 1 || input.ETag == "" || input.ListETag != "" || input.ImpactETag != "" || input.Field != "" || input.Value != nil || len(input.Inbound) != 0 {
+			return nil, errors.New("inbound export requires index and etag")
+		}
+		root, err := decodeBindingMigrationConfig(cfg.XrayConfigPath)
+		if err != nil {
+			return nil, err
+		}
+		return lookupNativeInbound(root, input.Index, input.ETag)
+	case "inbounds.add", "inbounds.replace", "inbounds.patch", "inbounds.remove":
+		return agentNativeInboundChange(cfg, name, raw, apply)
 	case "nodes.get", "nodes.delete":
 		var input agentNodeInput
 		if err := decodeAgentInput(raw, &input); err != nil {

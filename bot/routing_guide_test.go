@@ -20,6 +20,7 @@ type capturedTelegram struct {
 	text   string
 	markup string
 	method string
+	count  int
 }
 
 func newCapturedRoutingBot(t *testing.T, cfg *BotConfig) (*BotService, *capturedTelegram) {
@@ -32,6 +33,7 @@ func newCapturedRoutingBot(t *testing.T, cfg *BotConfig) (*BotService, *captured
 		if r.FormValue("text") != "" {
 			capture.mu.Lock()
 			capture.text, capture.markup, capture.method = r.FormValue("text"), r.FormValue("reply_markup"), r.URL.Path
+			capture.count++
 			capture.mu.Unlock()
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -49,6 +51,12 @@ func (capture *capturedTelegram) lastMethod() string {
 	capture.mu.Lock()
 	defer capture.mu.Unlock()
 	return capture.method
+}
+
+func (capture *capturedTelegram) messageCount() int {
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	return capture.count
 }
 
 func (capture *capturedTelegram) card(t *testing.T) (string, tgbotapi.InlineKeyboardMarkup) {

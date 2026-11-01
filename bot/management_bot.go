@@ -132,6 +132,9 @@ func (s *BotService) sendUserManageCard(chatID int64,msgID int,key string) {
  var content strings.Builder
  var usedBytes uint64
  content.WriteString(tr(s.cfg.Language,"account.title",email))
+ if root,e:=decodeBindingMigrationConfig(s.cfg.XrayConfigPath);e==nil {
+  if ambiguous,e:=trafficAmbiguities(s.cfg.XrayConfigPath,root);e==nil&&ambiguous[email]{content.WriteString(tr(s.cfg.Language,"account.traffic_ambiguous"))}
+ }
  if state,e:=loadTrafficStore(s.cfg.XrayConfigPath);e==nil {
   if c,ok:=state.Users[email];ok {
    usedBytes=c.TotalUp+c.TotalDown
@@ -184,6 +187,7 @@ func (s *BotService) sendUserManageCard(chatID int64,msgID int,key string) {
   content.WriteString(tr(s.cfg.Language,"account.limits.none"))
  }
  for _,node:=range nodes {
+  if node.Protocol!="vless"||node.Tag==""{continue}
   present:=false
   for _,client:=range node.Clients{if bindingOwner(client.Email)==email{present=true;break}}
   mark:=tr(s.cfg.Language,"account.join");op:="a"
@@ -259,6 +263,7 @@ func (s *BotService) handleManagedUserCallback(cb *tgbotapi.CallbackQuery) {
   email:=lookupManagedUserByKey(s.cfg.XrayConfigPath,parts[2])
   if email==""{s.sendAlert(chatID,tr(s.cfg.Language,"manage.usermissing"));return}
   for _,node:=range nodes {
+   if node.Protocol!="vless"||node.Tag==""{continue}
    if userCallbackKey(node.Tag)!=parts[3] {continue}
    kind:="assign";if parts[1]=="r"{kind="unassign"}else if parts[1]!="a"{return}
    s.offerUserChange(chatID,cb.From.ID,msgID,UserChange{Kind:kind,User:email,Node:node.Tag})
@@ -272,30 +277,44 @@ func (s *BotService) handleManagedUserCallback(cb *tgbotapi.CallbackQuery) {
 // always supported this; without it a quota-suspended user could only be
 // restored after clearing the quota entirely.
 func (s *BotService) askUserTrafficReset(cb *tgbotapi.CallbackQuery) {
- if cb.Message==nil{return}
+ if cb.Message==nil||cb.Message.Chat==nil||cb.From==nil{return}
  chatID:=cb.Message.Chat.ID;msgID:=cb.Message.MessageID
  key:=strings.TrimPrefix(cb.Data,"manage_traffic:")
  email:=lookupManagedUserByKey(s.cfg.XrayConfigPath,key)
  if email==""{s.sendAlert(chatID,tr(s.cfg.Language,"manage.usermissing"));return}
  if !s.cfg.AllowMutations{s.sendAlert(chatID,tr(s.cfg.Language,"manage.disabled"));return}
+ identity,err:=managedUserIdentityFingerprint(s.cfg.XrayConfigPath,email)
+ if err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"traffic.userreset.failed",err.Error()));return}
+ var raw [8]byte
+ if _,err=rand.Read(raw[:]);err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.tokenerror"));return}
+ token:=hex.EncodeToString(raw[:])
+ pendingTrafficResets.Lock()
+ for old,item:=range pendingTrafficResets.items{if time.Now().After(item.Expires){delete(pendingTrafficResets.items,old)}}
+ pendingTrafficResets.items[token]=pendingTrafficReset{ChatID:chatID,AdminID:cb.From.ID,User:email,Identity:identity,Expires:time.Now().Add(3*time.Minute)}
+ pendingTrafficResets.Unlock()
  markup:=tgbotapi.NewInlineKeyboardMarkup(
   tgbotapi.NewInlineKeyboardRow(
-   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.confirm"),"manage_traffic_confirm:"+key),
-   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.cancel"),"manage_traffic_cancel:"+key),
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.confirm"),"manage_traffic_confirm:"+token),
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.cancel"),"manage_traffic_cancel:"+token),
   ),
  )
  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"traffic.userreset.confirm",mdCode(email)),markup)
 }
 
 func (s *BotService) resolveUserTrafficReset(cb *tgbotapi.CallbackQuery,confirm bool) {
- if cb.Message==nil{return}
+ if cb.Message==nil||cb.Message.Chat==nil||cb.From==nil{return}
  chatID:=cb.Message.Chat.ID;msgID:=cb.Message.MessageID
- key:=strings.TrimPrefix(strings.TrimPrefix(cb.Data,"manage_traffic_confirm:"),"manage_traffic_cancel:")
- email:=lookupManagedUserByKey(s.cfg.XrayConfigPath,key)
- if email==""{s.sendAlert(chatID,tr(s.cfg.Language,"manage.usermissing"));return}
+ token:=strings.TrimPrefix(strings.TrimPrefix(cb.Data,"manage_traffic_confirm:"),"manage_traffic_cancel:")
+ pendingTrafficResets.Lock()
+ item,ok:=pendingTrafficResets.items[token]
+ if ok&&item.ChatID==chatID&&item.AdminID==cb.From.ID{delete(pendingTrafficResets.items,token)}
+ pendingTrafficResets.Unlock()
+ if ok&&(item.ChatID!=chatID||item.AdminID!=cb.From.ID){s.sendAlert(chatID,tr(s.cfg.Language,"manage.owned"));return}
+ if !ok||time.Now().After(item.Expires){s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"manage.expired"),s.backToMainMarkup());return}
+ email,key:=item.User,userCallbackKey(item.User)
  if !confirm{s.sendUserManageCard(chatID,msgID,key);return}
  if !s.cfg.AllowMutations{s.sendAlert(chatID,tr(s.cfg.Language,"manage.disabled"));return}
- if err:=resetUserTraffic(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer,email);err!=nil{
+ if err:=resetUserTrafficWithIdentity(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer,email,item.Identity);err!=nil{
   log.Printf("[Bot] user traffic reset for %s failed: %v",email,err)
   s.sendAlert(chatID,tr(s.cfg.Language,"traffic.userreset.failed",err.Error()))
   s.sendUserManageCard(chatID,msgID,key)

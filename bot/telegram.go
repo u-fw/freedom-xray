@@ -187,6 +187,9 @@ func (s *BotService) handleMessage(msg *tgbotapi.Message) {
 	if s.handleUserLimitInput(msg) {
 		return
 	}
+	if s.handleNativeInboundInput(msg) {
+		return
+	}
 	if s.handleDNSInput(msg) {
 		return
 	}
@@ -319,6 +322,8 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 		s.handleDNSCallback(cb)
 	case strings.HasPrefix(data,"dh:"):
 		s.handleDNSHostCallback(cb)
+	case strings.HasPrefix(data,"ni:"):
+		s.handleNativeInboundCallback(cb)
 	case strings.HasPrefix(data, "routing_manage:"):
 		s.beginRoutingWizard(cb)
 	case strings.HasPrefix(data, "routing_confirm:"):
@@ -862,6 +867,18 @@ func (s *BotService) sendNodesCardPage(chatID int64, msgID, offset int) {
 		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language,"nodes.failure",mdEsc(err.Error())), s.backToMainMarkup())
 		return
 	}
+	var nativeNodes []nativeInboundRecord
+	if root, e := decodeBindingMigrationConfig(s.cfg.XrayConfigPath); e == nil {
+		if records, e := nativeInboundRecords(root); e == nil {
+			values, _ := nativeInboundValues(root)
+			for i, record := range records {
+				item, _ := getMap(values[i])
+				if item["tag"] != "api-internal" {
+					nativeNodes = append(nativeNodes, record)
+				}
+			}
+		}
+	}
 
 	var sb strings.Builder
 	sb.WriteString(tr(s.cfg.Language,"nodes.title"))
@@ -879,19 +896,33 @@ func (s *BotService) sendNodesCardPage(chatID int64, msgID, offset int) {
 			if sni == "" {
 				sni = "-"
 			}
-			sb.WriteString(fmt.Sprintf(tr(s.cfg.Language,"nodes.row"),
-				offset+i+1, mdEsc(n.Tag), n.SharePort(),
-				mdCode(strings.ToUpper(n.Protocol)), mdCode(strings.ToUpper(n.Network)),
-				mdCode(strings.ToUpper(n.Security)), mdCode(sni),
-				len(n.Clients),
-			))
+			if n.Protocol == "vless" {
+				sb.WriteString(fmt.Sprintf(tr(s.cfg.Language,"nodes.row"),
+					offset+i+1, mdEsc(n.Tag), n.SharePort(),
+					mdCode(strings.ToUpper(n.Protocol)), mdCode(strings.ToUpper(n.Network)),
+					mdCode(strings.ToUpper(n.Security)), mdCode(sni), len(n.Clients)))
+			} else {
+				port := "-"
+				if len(nativeNodes) == len(nodes) && nativeNodes[offset+i].Tag == safeInboundField(n.Tag) && nativeNodes[offset+i].Protocol == safeInboundField(n.Protocol) && nativeNodes[offset+i].Port != "" { port = nativeNodes[offset+i].Port }
+				sb.WriteString(fmt.Sprintf(tr(s.cfg.Language,"nodes.native_row"),
+					offset+i+1, mdEsc(n.Tag), mdCode(port), mdCode(strings.ToUpper(n.Protocol)),
+					mdCode(strings.ToUpper(n.Network)), mdCode(strings.ToUpper(n.Security)), mdCode(sni)))
+			}
 		}
 	}
 
 	var nodeRows [][]tgbotapi.InlineKeyboardButton
-	for _,node:=range nodes[offset:end] {
+	for i,node:=range nodes[offset:end] {
 		if node.Protocol=="vless" {
 			nodeRows=append(nodeRows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⚙ "+truncateLabel(node.Tag,40),"node_detail:"+userCallbackKey(node.Tag))))
+		}else{
+			callback:="ni:page:0"
+			if len(nativeNodes)==len(nodes) {
+				record:=nativeNodes[offset+i]
+				if record.Tag==safeInboundField(node.Tag)&&record.Protocol==safeInboundField(node.Protocol){callback=nativeInboundCallback("v",record.Index,record.ETag)}
+			}
+			name:=node.Tag;if name==""{name=tr(s.cfg.Language,"inbound.native.untagged")}
+			nodeRows=append(nodeRows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⚙ "+truncateLabel(name,40),callback)))
 		}
 	}
 	var pages []tgbotapi.InlineKeyboardButton
@@ -902,6 +933,7 @@ func (s *BotService) sendNodesCardPage(chatID int64, msgID, offset int) {
 	}
 	if end < len(nodes) { pages = append(pages,tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.next"),fmt.Sprintf("nodes_page:%d",end))) }
 	if len(pages) > 0 { nodeRows = append(nodeRows,pages) }
+	nodeRows = append(nodeRows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"inbound.native.button"),"ni:page:0")))
 	if s.cfg.AllowMutations { nodeRows = append(nodeRows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.create.button"),"node_new_menu"))) }
 	nodeRows = append(nodeRows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.refresh"),fmt.Sprintf("nodes_page:%d",offset)),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.back"),"menu_main")))
 	s.sendOrEdit(chatID, msgID, sb.String(), tgbotapi.NewInlineKeyboardMarkup(nodeRows...))
@@ -1143,6 +1175,9 @@ func (s *BotService) sendAlert(chatID int64, text string) {
 func sortedEmails(nodes []InboundDetails) []string {
 	set := make(map[string]bool)
 	for _, n := range nodes {
+		if n.Protocol != "vless" {
+			continue
+		}
 		for _, c := range n.Clients {
 			if c.Email != "" {
 				set[bindingOwner(c.Email)] = true

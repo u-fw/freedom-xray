@@ -340,6 +340,9 @@ func (s *BotService) sendNodeTemplatePicker(chatID int64,msgID int) {
    tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.create.xhttptls"),"node_new:"+string(NodeTemplateXHTTPTLS)),
   ),
   tgbotapi.NewInlineKeyboardRow(
+   tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"inbound.native.button"),"ni:page:0"),
+  ),
+  tgbotapi.NewInlineKeyboardRow(
    tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.back"),"menu_nodes"),
   ),
  )

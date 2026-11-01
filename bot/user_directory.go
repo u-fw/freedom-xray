@@ -215,6 +215,11 @@ func changeDirectoryUser(configPath,xrayBinary,statsServer string,change UserCha
  var root map[string]any
  if err=json.Unmarshal(original,&root);err!=nil{return "",err}
  directory,oldDirectory,err:=loadUserDirectory(configPath,root);if err!=nil{return "",err}
+ if change.Kind=="add"||change.Kind=="rename"||change.Kind=="assign" {
+  target:=change.User;if change.Kind=="rename"{target=change.NewName}
+  owners,err:=nativeAccountOwners(root);if err!=nil{return "",err}
+  if owners[target]{return "",errors.New("A non-VLESS account uses this statistics identity; choose a distinct username or change its email first")}
+ }
  if change.Kind=="add"||change.Kind=="rename" {
   disabled,_,err:=readSuspendedStore(configPath);if err!=nil{return "",err}
   target:=change.User
@@ -256,13 +261,16 @@ func changeDirectoryUser(configPath,xrayBinary,statsServer string,change UserCha
   if len(errs)>0{return errors.New(strings.Join(errs,"; "))}
   return nil
  }
+ if configChanged {snapshotTrafficBestEffortLocked(configPath,xrayBinary,statsServer)}
+ if change.Kind=="rename" {
+  if err=copyTrafficAmbiguityLocked(configPath,change.User,change.NewName);err!=nil{return "",fmt.Errorf("preserving traffic ambiguity: %w",err)}
+ }
  if err=writeAtomically(path,nextDir,0600);err!=nil{return "",err}
  if configChanged {
   if err=writeAtomically(configPath,nextConfig,st.Mode().Perm());err!=nil{
    if recovery:=restore();recovery!=nil{return "",fmt.Errorf("%v; restore failed:%v",err,recovery)}
    return "",err
   }
-  snapshotTrafficBestEffortLocked(configPath,xrayBinary,statsServer)
   if err=runChecked("systemctl","restart","xray");err==nil{
    err=runChecked("systemctl","is-active","--quiet","xray")
   }
@@ -278,11 +286,15 @@ func changeDirectoryUser(configPath,xrayBinary,statsServer string,change UserCha
  if change.Kind=="delete"{
   if err=purgeTrafficUserLocked(configPath,change.User);err!=nil{
    cleanupErrors=append(cleanupErrors,fmt.Errorf("deleting historical statistics: %w",err))
+  }else if err=moveTrafficAmbiguityLocked(configPath,change.User,"");err!=nil{
+   cleanupErrors=append(cleanupErrors,fmt.Errorf("clearing traffic ambiguity: %w",err))
   }
  }
  if change.Kind=="rename"{
   if err=renameTrafficStoreLocked(configPath,change.User,change.NewName);err!=nil{
    cleanupErrors=append(cleanupErrors,fmt.Errorf("migrating historical statistics: %w",err))
+  }else if err=moveTrafficAmbiguityLocked(configPath,change.User,change.NewName);err!=nil{
+   cleanupErrors=append(cleanupErrors,fmt.Errorf("migrating traffic ambiguity: %w",err))
   }
  }
  if change.Kind=="delete"||change.Kind=="rename" {

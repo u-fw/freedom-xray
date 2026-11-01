@@ -110,6 +110,7 @@ func applyTrafficSnapshot(state *trafficStore,users []UserTraffic,inbounds []Inb
 func snapshotTrafficLocked(configPath,xrayBinary,statsServer string) (trafficStore,error) {
  state,err:=loadTrafficStore(configPath)
  if err!=nil{return state,err}
+ if err=ensureTrafficAmbiguitiesLocked(configPath);err!=nil{return state,fmt.Errorf("Cannot verify cross-protocol traffic identities: %w",err)}
  before:=xrayStatsEpoch()
  ctx,cancel:=context.WithTimeout(context.Background(),10*time.Second)
  defer cancel()
@@ -364,6 +365,9 @@ func resetUserTraffic(configPath,xrayBinary,statsServer,email string)error{
 // The terminal menu already holds the same configuration lock.
 func resetUserTrafficLocked(configPath,xrayBinary,statsServer,email string)error{
  if !managedUserName.MatchString(email){return errors.New("Invalid user identifier")}
+ root,err:=decodeBindingMigrationConfig(configPath);if err!=nil{return err}
+ owners,err:=nativeAccountOwners(root);if err!=nil{return err}
+ if owners[email]{return errors.New("A non-VLESS account shares this statistics identity; change its email before resetting")}
  state,err:=loadTrafficStore(configPath);if err!=nil{return err}
  aliases,err:=bindingEmailAliases(configPath,state,email)
  if err!=nil{return err}
@@ -393,7 +397,8 @@ func resetUserTrafficLocked(configPath,xrayBinary,statsServer,email string)error
   }
   resetAliases=append(resetAliases,alias)
  }
- return resetTrafficUserLocked(configPath,email)
+ if err=resetTrafficUserLocked(configPath,email);err!=nil{return err}
+ return clearTrafficAmbiguityLocked(configPath,email)
 }
 
 func resetTrafficAllUsersLocked(configPath string)error {

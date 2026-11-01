@@ -252,6 +252,7 @@ func commitManagedConfigTxLocked(configPath,xrayBinary,statsServer string,sideca
   }
  }
 
+ snapshotTrafficBestEffortLocked(configPath,xrayBinary,statsServer)
  for _,s:=range staged {
   if !s.changed||s.written{continue}
   if err=writeSidecar(s);err!=nil{
@@ -263,7 +264,6 @@ func commitManagedConfigTxLocked(configPath,xrayBinary,statsServer string,sideca
   rollbackConfigAndSidecars(configPath,original,stat,staged)
   return "",err
  }
- snapshotTrafficBestEffortLocked(configPath,xrayBinary,statsServer)
  if err=runChecked("systemctl","restart","xray");err==nil {
   err=runChecked("systemctl","is-active","--quiet","xray")
  }
