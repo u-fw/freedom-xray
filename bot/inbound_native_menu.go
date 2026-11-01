@@ -169,6 +169,7 @@ func (s *BotService) sendNativeInboundDetail(chatID int64, msgID, index int, eta
 				tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "inbound.native.delete"), nativeInboundCallback("delete", index, etag))))
 		}
 	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "inbound.native.export"), nativeInboundCallback("export", index, etag))))
 	offset := ((index - 1) / nodesPerPage) * nodesPerPage
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "inbound.native.back"), fmt.Sprintf("ni:page:%d", offset)), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.backlist"), "menu_nodes")))
 	s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))
@@ -282,7 +283,20 @@ func (s *BotService) handleNativeInboundInput(msg *tgbotapi.Message) bool {
 	}
 	change := nativeInboundChange{Kind: state.Kind, Index: state.Index, ETag: state.ETag, ListETag: state.ListETag, Value: strings.TrimSpace(msg.Text)}
 	if state.Kind == "add" || state.Kind == "replace" {
-		value, err := decodeNetworkObject([]byte(msg.Text))
+		input := []byte(msg.Text)
+		if msg.Document != nil {
+			var err error
+			input, err = readNativeInboundDocument(s.bot, msg.Document)
+			if err != nil {
+				s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
+				return true
+			}
+		}
+		if len(input) > nativeInboundJSONLimit {
+			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", "JSON document exceeds 1 MiB"))
+			return true
+		}
+		value, err := decodeNetworkObject(input)
 		if err != nil {
 			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
 			return true
@@ -315,6 +329,10 @@ func (s *BotService) handleNativeInboundCallback(cb *tgbotapi.CallbackQuery) {
 	}
 	chatID, msgID := cb.Message.Chat.ID, cb.Message.MessageID
 	parts := strings.Split(cb.Data, ":")
+	if len(parts) == 3 && (parts[1] == "exconfirm" || parts[1] == "excancel") {
+		s.resolveNativeInboundExport(cb, parts[2], parts[1] == "exconfirm")
+		return
+	}
 	if len(parts) == 3 && parts[1] == "page" {
 		offset, err := strconv.Atoi(parts[2])
 		if err == nil {
@@ -359,6 +377,11 @@ func (s *BotService) handleNativeInboundCallback(cb *tgbotapi.CallbackQuery) {
 	if parts[1] == "v" {
 		clearRoutingWizard(chatID)
 		s.sendNativeInboundDetail(chatID, msgID, index, parts[3])
+		return
+	}
+	if parts[1] == "export" {
+		clearRoutingWizard(chatID)
+		s.askNativeInboundExport(cb, index, parts[3])
 		return
 	}
 	if !s.cfg.AllowMutations {
