@@ -41,6 +41,12 @@ var agentOperations = []agentOperation{
 	{"inbounds.replace", true, true, false, "Replace one native non-VLESS inbound"},
 	{"inbounds.patch", true, true, false, "Edit a native non-VLESS listener address or port"},
 	{"inbounds.remove", true, true, false, "Remove a native non-VLESS inbound after impact review"},
+	{"inbounds.clients.list", true, false, false, "List VMess or Trojan inbound clients without credentials"},
+	{"inbounds.clients.export", true, false, true, "Export one VMess or Trojan client including credentials"},
+	{"inbounds.clients.add", true, true, false, "Create a VMess or Trojan client with a generated credential"},
+	{"inbounds.clients.patch", true, true, false, "Change a VMess or Trojan client email or policy level"},
+	{"inbounds.clients.rotate", true, true, false, "Rotate a VMess or Trojan client credential"},
+	{"inbounds.clients.remove", true, true, false, "Remove a VMess or Trojan client after routing impact review"},
 	{"users.list", false, false, false, "List users, assignments, limits and totals"},
 	{"users.get", true, false, false, "Read one user without credentials"},
 	{"users.export", true, false, true, "Export credential-bearing VLESS links"},
@@ -465,6 +471,8 @@ func executeAgentOperation(cfg *BotConfig, operation agentOperation, raw []byte,
 		return lookupNativeInbound(root, input.Index, input.ETag)
 	case "inbounds.add", "inbounds.replace", "inbounds.patch", "inbounds.remove":
 		return agentNativeInboundChange(cfg, name, raw, apply)
+	case "inbounds.clients.list", "inbounds.clients.export", "inbounds.clients.add", "inbounds.clients.patch", "inbounds.clients.rotate", "inbounds.clients.remove":
+		return agentNativeClients(cfg, name, raw, apply)
 	case "nodes.get", "nodes.delete":
 		var input agentNodeInput
 		if err := decodeAgentInput(raw, &input); err != nil {

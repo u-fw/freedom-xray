@@ -12,12 +12,13 @@ import (
 )
 
 type nativeInboundWizard struct {
-	AdminID  int64
-	Kind     string
-	Index    int
-	ETag     string
-	ListETag string
-	Expires  time.Time
+	AdminID     int64
+	Kind        string
+	Index       int
+	ClientIndex int
+	ETag        string
+	ListETag    string
+	Expires     time.Time
 }
 
 var nativeInboundWizards = struct {
@@ -154,6 +155,9 @@ func (s *BotService) sendNativeInboundDetail(chatID int64, msgID, index int, eta
 		}
 	default:
 		body += tr(s.cfg.Language, "inbound.native.unmanaged")
+		if record.Protocol == "vmess" || record.Protocol == "trojan" {
+			rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "inbound.client.open"), nativeClientCallback("list", index, 0, etag))))
+		}
 		if s.cfg.AllowMutations {
 			if !strings.EqualFold(record.Protocol, "tun") {
 				rows = append(rows, tgbotapi.NewInlineKeyboardRow(
@@ -259,6 +263,9 @@ func (s *BotService) handleNativeInboundInput(msg *tgbotapi.Message) bool {
 	state, ok := getNativeInboundWizard(msg.Chat.ID, msg.From.ID)
 	if !ok {
 		return false
+	}
+	if strings.HasPrefix(state.Kind, "client.") {
+		return s.handleNativeClientInput(msg, state)
 	}
 	if msg.Command() == "cancel" {
 		clearNativeInboundWizard(msg.Chat.ID)

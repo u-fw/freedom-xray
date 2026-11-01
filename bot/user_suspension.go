@@ -137,6 +137,7 @@ func changeUserSuspensionLocked(configPath,xrayBinary,statsServer string,change 
   if owners[change.User]{return "",errors.New("A non-VLESS account uses this statistics identity; change its email before restoring this user")}
  }
  message,err:=applyUserSuspension(root,&store,change);if err!=nil{return "",err}
+ if err=ensureTrafficAmbiguitiesLocked(configPath);err!=nil{return "",fmt.Errorf("preserving traffic ambiguity: %w",err)}
  next,err:=json.MarshalIndent(root,"","  ");if err!=nil{return "",err}
  next=append(next,10)
  newState,err:=json.MarshalIndent(store,"","  ");if err!=nil{return "",err}

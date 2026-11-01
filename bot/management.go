@@ -229,6 +229,9 @@ func commitManagedConfigTxLocked(configPath,xrayBinary,statsServer string,sideca
  decoder:=json.NewDecoder(bytes.NewReader(original));decoder.UseNumber()
  if err=decoder.Decode(&root);err!=nil{return "",err}
  msg,err:=apply(root);if err!=nil{return "",err}
+ // Do not remove the evidence of a live identity collision unless its
+ // ambiguity marker was durably saved. Counter sampling may still be best effort.
+ if err=ensureTrafficAmbiguitiesLocked(configPath);err!=nil{return "",fmt.Errorf("preserving traffic ambiguity: %w",err)}
  next,err:=json.MarshalIndent(root,"","  ");if err!=nil{return "",err}
  next=append(next,'\n')
  staged,err:=stageConfigSidecars(sidecars);if err!=nil{return "",err}

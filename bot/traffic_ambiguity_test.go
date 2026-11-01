@@ -158,6 +158,31 @@ func TestReplacingConflictingNativeAccountMarksOldTrafficBeforeRestart(t *testin
 	}
 }
 
+func TestNativeChangeCannotDiscardUnrecordedTrafficAmbiguity(t *testing.T) {
+	for _, email := range []string{"alice", "separate"} {
+		t.Run(email, func(t *testing.T) {
+			root := rootWithNativeAccount(t, email)
+			data, _ := json.Marshal(root)
+			h := newBindingMigrationHarness(t, string(data), false)
+			if err := os.Mkdir(trafficDBPath(h.config), 0700); err != nil {
+				t.Fatal(err)
+			}
+			cfg := DefaultConfig()
+			cfg.XrayConfigPath, cfg.XrayBinPath = h.config, h.xray
+			records, _ := nativeInboundRecords(root)
+			replacement := map[string]any{"tag": "trojan-node", "protocol": "trojan", "listen": "127.0.0.1", "port": json.Number("31001"), "settings": map[string]any{"clients": []any{map[string]any{"email": "new-native", "password": "dummy-password"}}}}
+			_, err := changeNativeInboundConfig(cfg, nativeInboundChange{Kind: "replace", Index: 2, ETag: records[1].ETag, Inbound: replacement})
+			if email == "alice" {
+				if err == nil || !strings.Contains(err.Error(), "preserving traffic ambiguity") || string(mustReadFile(t, h.config)) != string(data) || h.restartCount(t) != 0 {
+					t.Fatalf("lost unrecorded ambiguity: %v", err)
+				}
+			} else if err != nil || h.restartCount(t) != 1 {
+				t.Fatalf("unrelated traffic database failure blocked non-conflicting change: %v", err)
+			}
+		})
+	}
+}
+
 func TestAmbiguousTrafficDoesNotPreventExpiryEnforcement(t *testing.T) {
 	root := rootWithNativeAccount(t, "alice")
 	data, _ := json.Marshal(root)

@@ -142,6 +142,17 @@ func ensureTrafficAmbiguitiesLocked(configPath string) error {
 	if err != nil {
 		return err
 	}
+	var collisions []string
+	for owner := range owners {
+		_, managed := directory.Users[owner]
+		_, parked := suspended.Users[owner]
+		if managed || parked {
+			collisions = append(collisions, owner)
+		}
+	}
+	if len(collisions) == 0 {
+		return nil
+	}
 	db, err := openTrafficDB(configPath)
 	if err != nil {
 		return err
@@ -151,10 +162,8 @@ func ensureTrafficAmbiguitiesLocked(configPath string) error {
 	if err != nil {
 		return err
 	}
-	for owner := range owners {
-		_, managed := directory.Users[owner]
-		_, parked := suspended.Users[owner]
-		if (managed || parked) && !marked[owner] {
+	for _, owner := range collisions {
+		if !marked[owner] {
 			if _, err := db.Exec("INSERT OR IGNORE INTO meta(key,value) VALUES(?,?)", nativeTrafficAmbiguityPrefix+owner, "1"); err != nil {
 				return err
 			}

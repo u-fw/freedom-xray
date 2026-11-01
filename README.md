@@ -23,6 +23,7 @@ Run `sudo freedom` to open the terminal menu. The Telegram submenu can install t
 | --- | --- | --- |
 | VLESS RAW/REALITY/Vision, XHTTP/REALITY and XHTTP/TLS/CDN | Create and manage | Create, manage and export |
 | Other inbound protocols | Native JSON through agent CLI | Inspect, edit listener, create or replace native JSON, delete |
+| VMess and Trojan inbound accounts | Agent CLI: list, add, edit, rotate, export and delete | Guided account management and credential export |
 | Independent user identities and node assignments | Yes | Yes |
 | Add, rename, remove, suspend and restore users | Yes (Go manager required) | Yes |
 | Rotate user UUIDs | Yes | Yes |
@@ -37,7 +38,7 @@ Run `sudo freedom` to open the terminal menu. The Telegram submenu can install t
 | Bot and manager updates; Xray upgrades and rollback | Yes | Permission-gated |
 | Public subscription service and full web dashboard | Not provided | Not provided |
 
-VLESS user identities are kept separately from Xray inbounds in a local, permission-restricted `freedom-users.json`. A newly created user is **not** automatically granted access to every inbound. Assign access explicitly by node. Existing VLESS users are imported from Xray configuration without rotating their UUIDs. Conflicting identities are rejected rather than merged silently. Accounts in other inbound protocols remain in their native settings and are not managed by the VLESS user, quota, suspension or link workflows.
+VLESS user identities are kept separately from Xray inbounds in a local, permission-restricted `freedom-users.json`. A newly created user is **not** automatically granted access to every inbound. Assign access explicitly by node. Existing VLESS users are imported from Xray configuration without rotating their UUIDs. Conflicting identities are rejected rather than merged silently. VMess and Trojan accounts can be managed within their inbound, but are not part of the VLESS user, quota, suspension or connection-link workflows. Their credential export is a native client JSON object, not a ready-made connection link.
 
 Suspended users retain their UUID and previous bindings in the local `freedom-disabled-users.json` file (mode 0600). This file is not encrypted. If an inbound is deleted, restoring its former binding can fail.
 

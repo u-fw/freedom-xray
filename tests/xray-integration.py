@@ -299,7 +299,81 @@ def main():
             assert after["users"]["bob"]["total_down"] == before["users"]["bob"]["total_down"], after
             for binding in ("alice+cmF3", "alice+Y2Ru"):
                 assert after["bindings"][binding]["total_down"] == 0, after
-            print("Real Xray native inbounds, identity collision guard, DNS, balancing and isolated traffic reset passed")
+
+            # The test controls isolated Xray processes itself. A temporary
+            # systemctl stub lets the manager's guarded apply path run without
+            # touching any host service, then we start the resulting config.
+            stub_dir = directory / "test-bin"
+            stub_dir.mkdir()
+            systemctl = stub_dir / "systemctl"
+            systemctl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            systemctl.chmod(0o700)
+            os.environ["PATH"] = str(stub_dir) + os.pathsep + os.environ.get("PATH", "")
+            native_ports = []
+            while len(native_ports) < 4:
+                port = unused_port()
+                if port not in native_ports and port not in ports:
+                    native_ports.append(port)
+            native_vmess_port, native_trojan_port, vmess_socks, trojan_socks = native_ports
+            server_config["inbounds"] += [
+                {"tag": "generated-vmess", "listen": "127.0.0.1", "port": native_vmess_port,
+                 "protocol": "vmess", "settings": {"clients": None, "users": []}},
+                {"tag": "generated-trojan", "listen": "127.0.0.1", "port": native_trojan_port,
+                 "protocol": "trojan", "settings": {"clients": None, "users": []}},
+            ]
+            (directory / "config.json").write_text(json.dumps(server_config), encoding="utf-8")
+            credentials = {}
+            for protocol in ("vmess", "trojan"):
+                def client_ref():
+                    entry = next(item for item in agent("inbounds.list")["inbounds"]
+                                 if item["tag"] == "generated-" + protocol)
+                    return {"index": entry["index"], "etag": entry["etag"]}
+
+                ref = client_ref()
+                add = {**ref, "value": "native-" + protocol}
+                assert not agent("inbounds.clients.add", add)["applied"]
+                assert agent("inbounds.clients.add", add, "--apply")["applied"]
+                ref = client_ref()
+                clients = agent("inbounds.clients.list", ref)
+                assert len(clients["clients"]) == 1 and clients["clients"][0]["email"] == "native-" + protocol
+                client_ref_data = {**ref, "client_index": 1}
+                original = agent("inbounds.clients.export", client_ref_data, "--include-sensitive")
+                secret_field = "id" if protocol == "vmess" else "password"
+                assert original[secret_field] not in json.dumps(clients)
+                assert agent("inbounds.clients.rotate", client_ref_data, "--apply")["applied"]
+                ref = client_ref()
+                client_ref_data = {**ref, "client_index": 1}
+                rotated = agent("inbounds.clients.export", client_ref_data, "--include-sensitive")
+                assert rotated[secret_field] != original[secret_field]
+                credentials[protocol] = rotated[secret_field]
+                assert agent("inbounds.clients.patch", {**client_ref_data, "field": "level", "value": "5"}, "--apply")["applied"]
+                ref = client_ref()
+                rename = {**ref, "client_index": 1, "field": "email", "value": "renamed-" + protocol}
+                impact = agent("inbounds.clients.patch", rename)["preview"]
+                assert agent("inbounds.clients.patch", {**rename, "routing_etag": impact["routing_etag"]}, "--apply")["applied"]
+
+            server.terminate()
+            server.wait(timeout=5)
+            server_config = json.loads((directory / "config.json").read_text(encoding="utf-8"))
+            server = start_xray(server_config, directory, "config")
+            processes.append(server)
+            wait_for_port(native_vmess_port, server)
+            wait_for_port(native_trojan_port, server)
+            for protocol, listen_port, target_port in (("vmess", vmess_socks, native_vmess_port), ("trojan", trojan_socks, native_trojan_port)):
+                if protocol == "vmess":
+                    settings = {"vnext": [{"address": "127.0.0.1", "port": target_port,
+                                           "users": [{"id": credentials[protocol], "alterId": 0, "security": "auto"}]}]}
+                else:
+                    settings = {"address": "127.0.0.1", "port": target_port, "password": credentials[protocol]}
+                config = {"log": {"loglevel": "info"},
+                          "inbounds": [{"listen": "127.0.0.1", "port": listen_port, "protocol": "socks"}],
+                          "outbounds": [{"protocol": protocol, "settings": settings}]}
+                process = start_xray(config, directory, "generated-client-" + protocol)
+                processes.append(process)
+                wait_for_port(listen_port, process)
+                subprocess.run(["curl", "-fsS", "--max-time", "10", "--noproxy", "", "--socks5-hostname",
+                                f"127.0.0.1:{listen_port}", f"http://127.0.0.1:{httpd.server_port}/", "-o", os.devnull], check=True)
+            print("Real Xray native client CRUD and authenticated VMess/Trojan traffic, DNS, balancing and isolated traffic reset passed")
         except Exception:
             for index, process in enumerate(processes):
                 process.terminate()

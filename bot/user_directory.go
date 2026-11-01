@@ -233,6 +233,7 @@ func changeDirectoryUser(configPath,xrayBinary,statsServer string,change UserCha
   perNodeEmails=marker!="0"
  }
  message,err:=applyDirectoryUserChange(root,&directory,change,perNodeEmails);if err!=nil{return "",err}
+ if err=ensureTrafficAmbiguitiesLocked(configPath);err!=nil{return "",fmt.Errorf("preserving traffic ambiguity: %w",err)}
  nextConfig,err:=json.MarshalIndent(root,"","  ");if err!=nil{return "",err}
  nextConfig=append(nextConfig,10)
  nextDir,err:=json.MarshalIndent(directory,"","  ");if err!=nil{return "",err}
