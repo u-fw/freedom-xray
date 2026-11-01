@@ -111,6 +111,125 @@ type agentNetworkInput struct {
 	DNS      json.RawMessage `json:"dns,omitempty"`
 }
 
+type agentBalancerInput struct {
+	Tag      string          `json:"tag,omitempty"`
+	ETag     string          `json:"etag,omitempty"`
+	Field    string          `json:"field,omitempty"`
+	Value    json.RawMessage `json:"value,omitempty"`
+	Balancer json.RawMessage `json:"balancer,omitempty"`
+}
+
+func agentBalancerChange(cfg *BotConfig, operation string, raw []byte, apply bool) (any, error) {
+	var input agentBalancerInput
+	if err := decodeAgentInput(raw, &input); err != nil {
+		return nil, err
+	}
+	change := balancerChange{Tag: input.Tag, ETag: input.ETag}
+	switch operation {
+	case "balancers.put":
+		if input.Field != "" || len(input.Value) > 0 {
+			return nil, errors.New("put accepts balancer, optional tag and etag")
+		}
+		item, err := decodeNetworkObject(input.Balancer)
+		if err != nil {
+			return nil, err
+		}
+		change.Kind, change.Balancer = "put", item
+		if change.Tag == "" {
+			change.Tag, _ = item["tag"].(string)
+		}
+	case "balancers.patch":
+		if input.Tag == "" || input.ETag == "" || input.Field == "" || len(input.Value) == 0 || len(input.Balancer) > 0 {
+			return nil, errors.New("patch requires tag, etag, field and value")
+		}
+		value, err := decodeRoutingEditValue(input.Value)
+		if err != nil {
+			return nil, fmt.Errorf("invalid field value: %w", err)
+		}
+		change.Kind, change.Field, change.Value = "patch", input.Field, value
+	case "balancers.delete":
+		if input.Tag == "" || input.ETag == "" || input.Field != "" || len(input.Value) > 0 || len(input.Balancer) > 0 {
+			return nil, errors.New("delete requires tag and etag")
+		}
+		change.Kind = "delete"
+	default:
+		return nil, errors.New("unknown balancer operation")
+	}
+	if !apply {
+		root, err := decodeBindingMigrationConfig(cfg.XrayConfigPath)
+		if err != nil {
+			return nil, err
+		}
+		message, err := applyBalancerChange(root, change)
+		if err != nil {
+			return nil, err
+		}
+		return agentPreview(operation, message), nil
+	}
+	return agentMessage(changeBalancerConfig(cfg, change))
+}
+
+type agentObservatoryInput struct {
+	Kind      string          `json:"kind"`
+	ETag      string          `json:"etag,omitempty"`
+	Config    json.RawMessage `json:"config,omitempty"`
+	Selectors json.RawMessage `json:"selectors,omitempty"`
+	Field     string          `json:"field,omitempty"`
+	Value     *string         `json:"value,omitempty"`
+}
+
+func agentObservatoryChange(cfg *BotConfig, operation string, raw []byte, apply bool) (any, error) {
+	var input agentObservatoryInput
+	if err := decodeAgentInput(raw, &input); err != nil {
+		return nil, err
+	}
+	change := observatoryChange{Kind: input.Kind, ETag: input.ETag}
+	switch operation {
+	case "observatories.put":
+		if len(input.Selectors) > 0 || input.Field != "" || input.Value != nil {
+			return nil, errors.New("put accepts kind, optional etag and config")
+		}
+		config, err := decodeNetworkObject(input.Config)
+		if err != nil {
+			return nil, err
+		}
+		change.Action, change.Config = "put", config
+	case "observatories.selectors":
+		if input.ETag == "" || len(input.Selectors) == 0 || len(input.Config) > 0 || input.Field != "" || input.Value != nil {
+			return nil, errors.New("selectors requires kind, etag and selectors")
+		}
+		selectors, err := decodeRoutingEditValue(input.Selectors)
+		if err != nil {
+			return nil, fmt.Errorf("invalid selectors: %w", err)
+		}
+		change.Action, change.Selectors = "selectors", selectors
+	case "observatories.patch":
+		if input.ETag == "" || input.Field == "" || input.Value == nil || len(input.Config) > 0 || len(input.Selectors) > 0 {
+			return nil, errors.New("patch requires kind, etag, field and value")
+		}
+		change.Action, change.Field, change.Value = "field", input.Field, *input.Value
+	case "observatories.delete":
+		if input.ETag == "" || len(input.Config) > 0 || len(input.Selectors) > 0 || input.Field != "" || input.Value != nil {
+			return nil, errors.New("delete requires kind and etag")
+		}
+		change.Action = "delete"
+	default:
+		return nil, errors.New("unknown observatory operation")
+	}
+	if !apply {
+		root, err := decodeBindingMigrationConfig(cfg.XrayConfigPath)
+		if err != nil {
+			return nil, err
+		}
+		message, err := applyObservatoryChange(root, change)
+		if err != nil {
+			return nil, err
+		}
+		return agentPreview(operation, message), nil
+	}
+	return agentMessage(changeObservatoryConfig(cfg, change))
+}
+
 func agentNetworkChange(cfg *BotConfig, operation string, raw []byte, apply bool) (any, error) {
 	var input agentNetworkInput
 	if err := decodeAgentInput(raw, &input); err != nil {

@@ -144,22 +144,26 @@ func applyNetworkChange(root map[string]any, change networkChange) (string, erro
 
 func changeNetworkConfig(cfg *BotConfig, change networkChange) (string, error) {
 	message, err := commitManagedConfig(cfg.XrayConfigPath, cfg.XrayBinPath, cfg.StatsAPIServer, func(root map[string]any) (string, error) { return applyNetworkChange(root, change) })
+	return message, sanitizeNetworkChangeError(err)
+}
+
+func sanitizeNetworkChangeError(err error) error {
 	if err == nil {
-		return message, nil
+		return nil
 	}
 	// Core diagnostics can echo credential-bearing input. Preserve the outcome
 	// and rollback status without forwarding those diagnostics to Telegram/JSON.
 	switch {
 	case strings.HasPrefix(err.Error(), "Xray configuration validation failed:"):
-		return "", errors.New("Xray rejected the candidate configuration; the existing configuration was not changed")
+		return errors.New("Xray rejected the candidate configuration; the existing configuration was not changed")
 	case strings.HasPrefix(err.Error(), "Xray restart failed ("):
-		return "", errors.New("Xray restart failed and configuration restoration also failed; inspect backups and service status immediately")
+		return errors.New("Xray restart failed and configuration restoration also failed; inspect backups and service status immediately")
 	case strings.HasPrefix(err.Error(), "Original configuration restored, but Xray restart failed:"):
-		return "", errors.New("The original configuration was restored, but Xray could not be restarted; inspect service status")
+		return errors.New("The original configuration was restored, but Xray could not be restarted; inspect service status")
 	case strings.HasPrefix(err.Error(), "New configuration failed startup verification"):
-		return "", errors.New("The new configuration failed startup verification and was rolled back")
+		return errors.New("The new configuration failed startup verification and was rolled back")
 	default:
-		return "", err
+		return err
 	}
 }
 

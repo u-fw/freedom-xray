@@ -72,6 +72,15 @@ var agentOperations = []agentOperation{
 	{"routing.add", true, true, false, "Add a named Xray routing rule"},
 	{"routing.update", true, true, false, "Replace a named Xray routing rule"},
 	{"routing.delete", true, true, false, "Delete a named Xray routing rule"},
+	{"balancers.list", false, false, false, "Read balancers and edit references; extensions hidden unless requested"},
+	{"balancers.put", true, true, false, "Create or replace one native balancer"},
+	{"balancers.patch", true, true, false, "Change a balancer selector, strategy or fallback"},
+	{"balancers.delete", true, true, false, "Delete an unreferenced balancer"},
+	{"observatories.list", false, false, false, "Inspect health-check monitors and edit references"},
+	{"observatories.put", true, true, false, "Create or replace a native health-check monitor"},
+	{"observatories.selectors", true, true, false, "Change a monitor's outbound selectors"},
+	{"observatories.patch", true, true, false, "Change a monitor's probe interval or URL"},
+	{"observatories.delete", true, true, false, "Delete an unused health-check monitor"},
 	{"outbounds.list", false, false, false, "List outbound tags and protocols without credentials"},
 	{"outbounds.get", true, false, true, "Export one native outbound including possible credentials"},
 	{"outbounds.put", true, true, false, "Add or replace a native outbound"},
@@ -618,6 +627,26 @@ func executeAgentOperation(cfg *BotConfig, operation agentOperation, raw []byte,
 		return agentRoutingRuleEdit(cfg, name, raw, apply)
 	case "routing.add", "routing.update", "routing.delete":
 		return agentRoutingChange(cfg, name, raw, apply)
+	case "balancers.list":
+		root, err := decodeBindingMigrationConfig(cfg.XrayConfigPath)
+		if err != nil {
+			return nil, err
+		}
+		records, err := balancerRecords(root)
+		if err != nil || includeSensitive {
+			return records, err
+		}
+		return redactBalancerRecords(records), nil
+	case "balancers.put", "balancers.patch", "balancers.delete":
+		return agentBalancerChange(cfg, name, raw, apply)
+	case "observatories.list":
+		root, err := decodeBindingMigrationConfig(cfg.XrayConfigPath)
+		if err != nil {
+			return nil, err
+		}
+		return observatoryRecords(root, includeSensitive)
+	case "observatories.put", "observatories.selectors", "observatories.patch", "observatories.delete":
+		return agentObservatoryChange(cfg, name, raw, apply)
 	case "outbounds.list", "dns.inspect":
 		outbounds, dns, err := networkSummary(cfg.XrayConfigPath)
 		if err != nil {

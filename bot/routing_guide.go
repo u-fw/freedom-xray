@@ -238,6 +238,7 @@ func (s *BotService) sendRoutingPage(chatID int64, msgID, offset int, notice str
 	if len(pages) > 0 {
 		rows = append(rows, pages)
 	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.button"), "bl:page:0")))
 	if s.cfg.AllowMutations {
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.add"), "rt:add"),

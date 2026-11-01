@@ -23,6 +23,8 @@ type pendingRoutingChange struct {
 	Network       *networkChange
 	Host          *string
 	RuleEdit      *routingRuleEdit
+	Balancer      *balancerChange
+	Observatory   *observatoryChange
 	ExpectedRules string
 	Expires       time.Time
 }
@@ -41,6 +43,7 @@ func clearRoutingWizard(chatID int64) {
 	delete(routingWizards.items, chatID)
 	routingWizards.Unlock()
 	clearGuidedRoutingWizard(chatID)
+	clearBalancerWizard(chatID)
 }
 
 func (s *BotService) beginRoutingWizard(cb *tgbotapi.CallbackQuery) {
@@ -56,6 +59,7 @@ func (s *BotService) beginRoutingWizard(cb *tgbotapi.CallbackQuery) {
 	if kind != "add" && kind != "update" && kind != "delete" && kind != "outbound_put" && kind != "outbound_delete" && kind != "dns_put" && kind != "server_host" {
 		return
 	}
+	clearRoutingWizard(chatID)
 	clearNodeCreateState(chatID)
 	nodePathWizards.Lock()
 	delete(nodePathWizards.items, chatID)
@@ -225,7 +229,15 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 		return
 	}
 	if !confirm {
-		if pending.RuleEdit != nil {
+		if pending.Observatory != nil {
+			s.sendObservatoryPage(chatID, msgID, "")
+		} else if pending.Balancer != nil {
+			if pending.Balancer.ETag != "" {
+				s.sendBalancerDetail(chatID, msgID, userCallbackKey(pending.Balancer.Tag), pending.Balancer.ETag)
+			} else {
+				s.sendBalancerPage(chatID, msgID, 0, "")
+			}
+		} else if pending.RuleEdit != nil {
 			s.sendRoutingRuleDetail(chatID, msgID, pending.RuleEdit.Ref)
 		} else if pending.ExpectedRules != "" {
 			s.sendRoutingPage(chatID, msgID, 0, "")
@@ -249,6 +261,10 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 			}
 			message = tr(s.cfg.Language, "serverhost.done", mdEsc(host))
 		}
+	} else if pending.Observatory != nil {
+		message, err = changeObservatoryConfig(s.cfg, *pending.Observatory)
+	} else if pending.Balancer != nil {
+		message, err = changeBalancerConfig(s.cfg, *pending.Balancer)
 	} else if pending.RuleEdit != nil {
 		message, err = changeRoutingRule(s.cfg, *pending.RuleEdit)
 	} else if pending.ExpectedRules != "" {
@@ -268,19 +284,35 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 		message, err = changeRoutingConfig(s.cfg.XrayConfigPath, s.cfg.XrayBinPath, s.cfg.StatsAPIServer, pending.Change)
 	}
 	if err != nil {
+		if errors.Is(err, errObservatoryChanged) {
+			s.sendObservatoryPage(chatID, msgID, tr(s.cfg.Language, "monitor.changed"))
+			return
+		}
+		if errors.Is(err, errBalancerChanged) {
+			s.sendBalancerPage(chatID, msgID, 0, tr(s.cfg.Language, "balancer.changed"))
+			return
+		}
 		if errors.Is(err, errRoutingRuleChanged) {
 			s.sendRoutingPage(chatID, msgID, 0, tr(s.cfg.Language, "routing.guide.changed"))
 			return
 		}
 		markup := s.backToMainMarkup()
-		if pending.RuleEdit != nil || pending.ExpectedRules != "" {
+		if pending.Observatory != nil {
+			markup = observatoryBackMarkup(s.cfg.Language)
+		} else if pending.Balancer != nil {
+			markup = balancerBackMarkup(s.cfg.Language)
+		} else if pending.RuleEdit != nil || pending.ExpectedRules != "" {
 			markup = routingPageBackMarkup(s.cfg.Language)
 		}
 		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.edit.failed", mdEsc(err.Error())), markup)
 		return
 	}
 	markup := s.backToMainMarkup()
-	if pending.RuleEdit != nil || pending.ExpectedRules != "" {
+	if pending.Observatory != nil {
+		markup = observatoryBackMarkup(s.cfg.Language)
+	} else if pending.Balancer != nil {
+		markup = balancerBackMarkup(s.cfg.Language)
+	} else if pending.RuleEdit != nil || pending.ExpectedRules != "" {
 		markup = routingPageBackMarkup(s.cfg.Language)
 	}
 	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.edit.done", mdEsc(message)), markup)

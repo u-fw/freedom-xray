@@ -187,6 +187,9 @@ func (s *BotService) handleMessage(msg *tgbotapi.Message) {
 	if s.handleUserLimitInput(msg) {
 		return
 	}
+	if s.handleBalancerInput(msg) {
+		return
+	}
 	if s.handleGuidedRoutingInput(msg) {
 		return
 	}
@@ -300,6 +303,10 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 		s.sendRoutingCard(chatID, msgID)
 	case strings.HasPrefix(data,"rt:"):
 		s.handleGuidedRoutingCallback(cb)
+	case strings.HasPrefix(data,"bl:"):
+		s.handleBalancerCallback(cb)
+	case strings.HasPrefix(data,"mo:"):
+		s.handleObservatoryCallback(cb)
 	case strings.HasPrefix(data, "routing_manage:"):
 		s.beginRoutingWizard(cb)
 	case strings.HasPrefix(data, "routing_confirm:"):

@@ -102,13 +102,17 @@ def main():
                                           {"id": BOB_ID, "email": "bob+cmF3"}]),
                 inbound("cdn", cdn_port, [{"id": ALICE_ID, "email": "alice+Y2Ru"}]),
             ],
-            "outbounds": [{"protocol": "freedom", "tag": "direct", "settings": {
+            "outbounds": [{"protocol": "freedom", "tag": tag, "settings": {
                 "finalRules": [{"action": "allow", "network": "tcp", "ip": ["127.0.0.1/32"]}],
-            }}],
+            }} for tag in ("direct", "direct2")],
             "routing": {"rules": [{"type": "field", "inboundTag": ["api-internal"],
                                    "outboundTag": "api"},
                                   {"type": "field", "domain": ["domain:example.com"],
-                                   "outboundTag": "direct"}]},
+                                   "outboundTag": "direct"},
+                                  {"type": "field", "ip": ["127.0.0.1/32"],
+                                   "balancerTag": "pool"}],
+                        "balancers": [{"tag": "pool", "selector": ["direct"],
+                                       "strategy": {"type": "roundRobin"}}]},
         }
         processes = []
         try:
@@ -171,6 +175,14 @@ def main():
             })
             assert route_preview["applied"] is False, route_preview
             assert (directory / "config.json").read_bytes() == original_config
+            balancers = agent("balancers.list")
+            assert balancers[0]["tag"] == "pool" and balancers[0]["balancer"]["selector"] == ["direct"], balancers
+            balance_preview = agent("balancers.patch", {
+                "tag": "pool", "etag": balancers[0]["etag"],
+                "field": "selector", "value": ["direct2"],
+            })
+            assert balance_preview["applied"] is False, balance_preview
+            assert (directory / "config.json").read_bytes() == original_config
             assert {node["tag"] for node in agent("nodes.list")} == {"raw", "cdn"}
             users = agent("users.list")
             assert {user["user"] for user in users} == {"alice", "bob"}, users
@@ -193,7 +205,7 @@ def main():
             assert after["users"]["bob"]["total_down"] == before["users"]["bob"]["total_down"], after
             for binding in ("alice+cmF3", "alice+Y2Ru"):
                 assert after["bindings"][binding]["total_down"] == 0, after
-            print("Real Xray per-binding traffic and isolated user reset passed")
+            print("Real Xray balancer routing, per-binding traffic and isolated user reset passed")
         except Exception:
             for index, process in enumerate(processes):
                 process.terminate()

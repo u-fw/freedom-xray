@@ -1,0 +1,232 @@
+package main
+
+import (
+	"errors"
+	"strings"
+	"time"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+)
+
+func observatoryShort(kind string) string {
+	if kind == "observatory" {
+		return "o"
+	}
+	if kind == "burstObservatory" {
+		return "b"
+	}
+	return ""
+}
+
+func observatoryKind(short string) string {
+	if short == "o" {
+		return "observatory"
+	}
+	if short == "b" {
+		return "burstObservatory"
+	}
+	return ""
+}
+
+func observatoryRef(record observatoryRecord) string {
+	if !record.Configured {
+		return "new"
+	}
+	return record.ETag
+}
+
+func observatoryCallback(action, kind, ref string) string {
+	return "mo:" + action + ":" + observatoryShort(kind) + ":" + ref
+}
+
+func observatoryBackMarkup(lang string) tgbotapi.InlineKeyboardMarkup {
+	return tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData(tr(lang, "monitor.back"), "mo:page"),
+		tgbotapi.NewInlineKeyboardButtonData(tr(lang, "balancer.back"), "bl:page:0")))
+}
+
+func (s *BotService) sendObservatoryPage(chatID int64, msgID int, notice string) {
+	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
+	if err != nil {
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.error", mdEsc(err.Error())), balancerBackMarkup(s.cfg.Language))
+		return
+	}
+	records, err := observatoryRecords(root, false)
+	if err != nil {
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.error", mdEsc(err.Error())), balancerBackMarkup(s.cfg.Language))
+		return
+	}
+	body := tr(s.cfg.Language, "monitor.list")
+	if notice != "" {
+		body += "\n" + mdEsc(notice) + "\n"
+	}
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, record := range records {
+		state := tr(s.cfg.Language, "monitor.notconfigured")
+		if record.Configured {
+			state = tr(s.cfg.Language, "monitor.configured")
+		}
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(record.Kind+" · "+state, observatoryCallback("v", record.Kind, observatoryRef(record)))))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.back"), "bl:page:0")))
+	s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))
+}
+
+func currentObservatoryRecord(root map[string]any, kind, ref string) (observatoryRecord, error) {
+	records, err := observatoryRecords(root, false)
+	if err != nil {
+		return observatoryRecord{}, err
+	}
+	for _, record := range records {
+		if record.Kind == kind && observatoryRef(record) == ref {
+			return record, nil
+		}
+	}
+	return observatoryRecord{}, errObservatoryChanged
+}
+
+func (s *BotService) sendObservatoryDetail(chatID int64, msgID int, kind, ref string) {
+	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
+	if err != nil {
+		s.sendObservatoryPage(chatID, msgID, tr(s.cfg.Language, "monitor.changed"))
+		return
+	}
+	record, err := currentObservatoryRecord(root, kind, ref)
+	if err != nil {
+		s.sendObservatoryPage(chatID, msgID, tr(s.cfg.Language, "monitor.changed"))
+		return
+	}
+	body := tr(s.cfg.Language, "monitor.detail", mdEsc(kind))
+	if record.Configured {
+		body += tr(s.cfg.Language, "monitor.selectors", mdEsc(strings.Join(stringList(record.Config["subjectSelector"]), "\n")))
+		config, _ := readObservatory(root, kind)
+		interval, _ := config["probeInterval"].(string)
+		if kind == "burstObservatory" {
+			ping, _ := getMap(config["pingConfig"])
+			interval, _ = ping["interval"].(string)
+		}
+		if interval == "" {
+			interval = tr(s.cfg.Language, "node.default")
+		}
+		body += tr(s.cfg.Language, "monitor.interval", mdEsc(interval))
+		if len(record.RedactedFields) > 0 {
+			body += tr(s.cfg.Language, "monitor.hidden")
+		}
+	} else {
+		body += tr(s.cfg.Language, "monitor.notconfigured_detail")
+	}
+	var rows [][]tgbotapi.InlineKeyboardButton
+	if s.cfg.AllowMutations {
+		label := tr(s.cfg.Language, "monitor.edit")
+		if !record.Configured {
+			label = tr(s.cfg.Language, "monitor.create")
+		}
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(label, observatoryCallback("edit", kind, ref))))
+		if record.Configured {
+			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "monitor.edit_interval"), observatoryCallback("interval", kind, ref)),
+				tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "monitor.edit_url"), observatoryCallback("url", kind, ref))))
+			rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "monitor.delete"), observatoryCallback("delete", kind, ref))))
+		}
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "monitor.back"), "mo:page"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.back"), "bl:page:0")))
+	s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))
+}
+
+func (s *BotService) offerObservatoryChange(chatID, adminID int64, msgID int, change observatoryChange) {
+	if !s.cfg.AllowMutations {
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), observatoryBackMarkup(s.cfg.Language))
+		return
+	}
+	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
+	if err == nil {
+		_, err = applyObservatoryChange(root, change)
+	}
+	if errors.Is(err, errObservatoryChanged) {
+		s.sendObservatoryPage(chatID, msgID, tr(s.cfg.Language, "monitor.changed"))
+		return
+	}
+	if err != nil {
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.edit.invalid", mdEsc(err.Error())), observatoryBackMarkup(s.cfg.Language))
+		return
+	}
+	detail := tr(s.cfg.Language, "monitor.confirm.delete", mdEsc(change.Kind))
+	if change.Action == "field" {
+		value := change.Value
+		if change.Field == "url" {
+			value = tr(s.cfg.Language, "monitor.hidden_value")
+		}
+		detail = tr(s.cfg.Language, "monitor.confirm.field", mdEsc(change.Kind), mdEsc(change.Field), mdEsc(value))
+	} else if change.Action != "delete" {
+		selectors := change.Selectors
+		if change.Action == "put" {
+			selectors = change.Config["subjectSelector"]
+		}
+		detail = tr(s.cfg.Language, "monitor.confirm.put", mdEsc(change.Kind), mdEsc(strings.Join(stringList(selectors), ", ")))
+	}
+	s.queueGuidedRoutingChange(chatID, adminID, msgID, pendingRoutingChange{Observatory: &change}, detail)
+}
+
+func (s *BotService) handleObservatoryCallback(cb *tgbotapi.CallbackQuery) {
+	if cb.Message == nil || cb.Message.Chat == nil || cb.From == nil {
+		return
+	}
+	chatID, msgID := cb.Message.Chat.ID, cb.Message.MessageID
+	parts := strings.Split(cb.Data, ":")
+	if len(parts) == 2 && parts[1] == "page" {
+		clearRoutingWizard(chatID)
+		s.sendObservatoryPage(chatID, msgID, "")
+		return
+	}
+	if len(parts) != 4 {
+		return
+	}
+	kind, ref := observatoryKind(parts[2]), parts[3]
+	if kind == "" {
+		return
+	}
+	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
+	if err != nil {
+		s.sendObservatoryPage(chatID, msgID, tr(s.cfg.Language, "monitor.changed"))
+		return
+	}
+	_, err = currentObservatoryRecord(root, kind, ref)
+	if err != nil {
+		s.sendObservatoryPage(chatID, msgID, tr(s.cfg.Language, "monitor.changed"))
+		return
+	}
+	if parts[1] == "v" {
+		clearRoutingWizard(chatID)
+		s.sendObservatoryDetail(chatID, msgID, kind, ref)
+		return
+	}
+	if !s.cfg.AllowMutations {
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), observatoryBackMarkup(s.cfg.Language))
+		return
+	}
+	switch parts[1] {
+	case "edit", "interval", "url":
+		if parts[1] != "edit" && ref == "new" {
+			return
+		}
+		clearOtherRoutingInputs(chatID)
+		etag := ref
+		if etag == "new" {
+			etag = ""
+		}
+		step, prompt := "monitor-selectors", "monitor.selector_prompt"
+		if parts[1] == "interval" {
+			step, prompt = "monitor-interval", "monitor.interval_prompt"
+		}
+		if parts[1] == "url" {
+			step, prompt = "monitor-url", "monitor.url_prompt"
+		}
+		setBalancerWizard(chatID, balancerWizard{AdminID: cb.From.ID, Step: step, Tag: kind, ETag: etag, Expires: time.Now().Add(5 * time.Minute)})
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, prompt), observatoryBackMarkup(s.cfg.Language))
+	case "delete":
+		if ref == "new" {
+			return
+		}
+		s.offerObservatoryChange(chatID, cb.From.ID, msgID, observatoryChange{Kind: kind, Action: "delete", ETag: ref})
+	}
+}
