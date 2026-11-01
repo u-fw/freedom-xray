@@ -193,6 +193,11 @@ def main():
             })
             assert outbound_preview["applied"] is False, outbound_preview
             assert (directory / "config.json").read_bytes() == original_config
+            dns = agent("dns.view")
+            assert dns["configured"] is False and dns["servers"] == [], dns
+            dns_preview = agent("dns.server.add", {"etag": dns["etag"], "value": "localhost"})
+            assert dns_preview["applied"] is False, dns_preview
+            assert (directory / "config.json").read_bytes() == original_config
             assert {node["tag"] for node in agent("nodes.list")} == {"raw", "cdn"}
             users = agent("users.list")
             assert {user["user"] for user in users} == {"alice", "bob"}, users

@@ -284,6 +284,69 @@ func agentOutboundChange(cfg *BotConfig, operation string, raw []byte, apply boo
 	return agentMessage(changeOutboundConfig(cfg, change))
 }
 
+type agentDNSInput struct {
+	ETag   string  `json:"etag"`
+	Index  int     `json:"index,omitempty"`
+	Value  *string `json:"value,omitempty"`
+	Field  string  `json:"field,omitempty"`
+	Switch *bool   `json:"enabled,omitempty"`
+}
+
+func agentDNSChange(cfg *BotConfig, operation string, raw []byte, apply bool) (any, error) {
+	var input agentDNSInput
+	if err := decodeAgentInput(raw, &input); err != nil {
+		return nil, err
+	}
+	if input.ETag == "" {
+		return nil, errors.New("DNS etag is required")
+	}
+	change := dnsChange{ETag: input.ETag, Index: input.Index, Field: input.Field}
+	switch operation {
+	case "dns.server.add", "dns.server.update":
+		if input.Value == nil || input.Field != "" || input.Switch != nil || (operation == "dns.server.add" && input.Index != 0) || (operation == "dns.server.update" && input.Index < 1) {
+			return nil, errors.New("server operation requires etag, value and update index")
+		}
+		change.Kind, change.Value = "add", *input.Value
+		if operation == "dns.server.update" {
+			change.Kind = "update"
+		}
+	case "dns.server.remove":
+		if input.Index < 1 || input.Value != nil || input.Field != "" || input.Switch != nil {
+			return nil, errors.New("remove requires etag and index")
+		}
+		change.Kind = "delete"
+	case "dns.server.move":
+		if input.Index < 1 || input.Value == nil || input.Field != "" || input.Switch != nil {
+			return nil, errors.New("move requires etag, index and direction")
+		}
+		change.Kind, change.Value = "move", *input.Value
+	case "dns.strategy":
+		if input.Value == nil || input.Index != 0 || input.Field != "" || input.Switch != nil {
+			return nil, errors.New("strategy requires etag and value")
+		}
+		change.Kind, change.Value = "strategy", *input.Value
+	case "dns.flag":
+		if input.Switch == nil || input.Field == "" || input.Index != 0 || input.Value != nil {
+			return nil, errors.New("flag requires etag, field and enabled")
+		}
+		change.Kind, change.Switch = "flag", *input.Switch
+	default:
+		return nil, errors.New("unknown DNS operation")
+	}
+	if !apply {
+		root, err := decodeBindingMigrationConfig(cfg.XrayConfigPath)
+		if err != nil {
+			return nil, err
+		}
+		message, err := applyDNSChange(root, change)
+		if err != nil {
+			return nil, err
+		}
+		return agentPreview(operation, message), nil
+	}
+	return agentMessage(changeDNSConfig(cfg, change))
+}
+
 func agentNetworkChange(cfg *BotConfig, operation string, raw []byte, apply bool) (any, error) {
 	var input agentNetworkInput
 	if err := decodeAgentInput(raw, &input); err != nil {

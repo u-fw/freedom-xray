@@ -187,6 +187,9 @@ func (s *BotService) handleMessage(msg *tgbotapi.Message) {
 	if s.handleUserLimitInput(msg) {
 		return
 	}
+	if s.handleDNSInput(msg) {
+		return
+	}
 	if s.handleOutboundInput(msg) {
 		return
 	}
@@ -312,6 +315,8 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 		s.handleObservatoryCallback(cb)
 	case strings.HasPrefix(data,"ob:"):
 		s.handleOutboundCallback(cb)
+	case strings.HasPrefix(data,"dn:"):
+		s.handleDNSCallback(cb)
 	case strings.HasPrefix(data, "routing_manage:"):
 		s.beginRoutingWizard(cb)
 	case strings.HasPrefix(data, "routing_confirm:"):

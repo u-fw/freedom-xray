@@ -91,6 +91,13 @@ var agentOperations = []agentOperation{
 	{"outbounds.put", true, true, false, "Add or replace a native outbound"},
 	{"outbounds.delete", true, true, false, "Delete an unreferenced non-default outbound"},
 	{"dns.inspect", false, false, false, "Read a DNS configuration summary"},
+	{"dns.view", false, false, false, "Read redacted DNS servers, switches and an edit reference"},
+	{"dns.server.add", true, true, false, "Add a DNS server"},
+	{"dns.server.update", true, true, false, "Change a DNS server address"},
+	{"dns.server.remove", true, true, false, "Remove an unreferenced DNS server"},
+	{"dns.server.move", true, true, false, "Change the priority of a DNS server"},
+	{"dns.strategy", true, true, false, "Set the DNS query strategy"},
+	{"dns.flag", true, true, false, "Set one DNS cache or fallback switch"},
 	{"dns.get", false, false, true, "Export native DNS settings including possible credentials"},
 	{"dns.put", true, true, false, "Replace the native Xray DNS configuration"},
 	{"backup.config", false, false, true, "Export the credential-bearing Xray configuration only"},
@@ -660,6 +667,14 @@ func executeAgentOperation(cfg *BotConfig, operation agentOperation, raw []byte,
 		return outboundRecords(root)
 	case "outbounds.create", "outbounds.endpoint", "outbounds.default", "outbounds.remove":
 		return agentOutboundChange(cfg, name, raw, apply)
+	case "dns.view":
+		root, err := decodeBindingMigrationConfig(cfg.XrayConfigPath)
+		if err != nil {
+			return nil, err
+		}
+		return dnsView(root)
+	case "dns.server.add", "dns.server.update", "dns.server.remove", "dns.server.move", "dns.strategy", "dns.flag":
+		return agentDNSChange(cfg, name, raw, apply)
 	case "outbounds.list", "dns.inspect":
 		outbounds, dns, err := networkSummary(cfg.XrayConfigPath)
 		if err != nil {

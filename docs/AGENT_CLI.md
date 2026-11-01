@@ -89,6 +89,13 @@ Most traffic reads initialize or migrate the local SQLite ledger on first use, w
 | `outbounds.put` | `{"outbound":{"tag":"block2","protocol":"blackhole"}}` | Add or replace a native Xray outbound; validated by the installed core. |
 | `outbounds.delete` | `{"tag":"block2"}` | Delete an unreferenced non-default outbound. |
 | `dns.inspect`, `dns.get` | — | Summary or full native DNS object; `dns.get` requires sensitive opt-in. |
+| `dns.view` | — | Redacted server addresses, strategy, switches and a DNS configuration `etag`. |
+| `dns.server.add` | `{"etag":"<etag>","value":"1.1.1.1"}` | Append a DNS server; can create the DNS object if absent. |
+| `dns.server.update` | `{"etag":"<etag>","index":1,"value":"8.8.8.8"}` | Change one server address while retaining its other settings. |
+| `dns.server.move` | `{"etag":"<etag>","index":2,"value":"up"}` | Move a server one position `up` or `down`. |
+| `dns.server.remove` | `{"etag":"<etag>","index":1}` | Remove a DNS server if its tag is unreferenced. |
+| `dns.strategy` | `{"etag":"<etag>","value":"UseIPv4"}` | Change the global query strategy; an empty value clears it. |
+| `dns.flag` | `{"etag":"<etag>","field":"disableCache","enabled":true}` | Set an allowlisted DNS switch to the specified Boolean value. |
 | `dns.put` | `{"dns":{"servers":["1.1.1.1"]}}` | Replace the entire native DNS object. |
 | `backup.config` | — | Export only Xray config.json, including credentials; sensitive opt-in required. It is not a complete backup of Bot settings, certificates, the ledger or sidecars. |
 | `service.start`, `service.stop`, `service.restart` | — | Control Xray; stop/restart snapshot traffic best-effort first. |
@@ -103,6 +110,8 @@ For `routing.rule.*`, first call `routing.rules` and copy the selected rule's 1-
 `balancers.list` and `observatories.list` return `etag` values based on complete native objects, including redacted fields. Supply that value for every update or deletion; stale operations are rejected. Selector values match outbound tag prefixes. Selectors that could match the internal API tag are refused, and a referenced balancer cannot be deleted. `leastPing` and `leastLoad` require an existing `observatory` or `burstObservatory` covering the selected outbounds; health checks periodically send requests via those outbounds. The guided Bot flow creates a monitor using Xray's default probe URL; the local CLI can set a custom URL. Creating the other monitor type requires first removing the existing type; a monitor required by a balancer cannot be removed until its strategy is changed. Strategy-specific settings and other native fields are retained by individual field edits.
 
 `outbounds.inspect` returns the 1-based `index`, `etag` and `list_etag` from the full outbound objects. An address or port edit and a delete require the selected object's reference; creating or changing the default also checks the whole list. Supported endpoint editing covers the unique server in VLESS, VMess, Trojan, Shadowsocks, SOCKS and HTTP outbounds, including their flat and legacy single-server forms. Multi-server legacy layouts and other protocols remain accessible through native outbound JSON rather than the guided endpoint editor. Credentials and transport settings are not returned by `outbounds.inspect` and are preserved during endpoint edits.
+
+`dns.view` returns an `etag` based on the entire native DNS object, even though URL paths, queries and credentials are hidden. Supply the current reference to every guided DNS operation; updates, moves and deletions use a 1-based server index. Changing an object server's address preserves its per-server settings. Allowlisted flags are `disableCache`, `disableFallback`, `disableFallbackIfMatch`, `enableParallelQuery` and `useSystemHosts`; support depends on the installed Xray version. With a DNS script, server deletion and changes to built-in ordering, strategy or flags are refused because the script controls query behavior and may reference servers dynamically. Full native DNS configuration, including static hosts and advanced server settings, remains available through `dns.get` and `dns.put`.
 
 ## Node inputs
 
