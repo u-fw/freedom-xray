@@ -91,11 +91,13 @@ var agentOperations = []agentOperation{
 	{"routing.update", true, true, false, "Replace a named Xray routing rule"},
 	{"routing.delete", true, true, false, "Delete a named Xray routing rule"},
 	{"balancers.list", false, false, false, "Read balancers and edit references; extensions hidden unless requested"},
+	{"balancers.get", true, false, true, "Export one native balancer including strategy settings"},
 	{"balancers.live", true, false, false, "Read live preferred targets and overrides from Xray"},
 	{"balancers.put", true, true, false, "Create or replace one native balancer"},
 	{"balancers.patch", true, true, false, "Change a balancer selector, strategy or fallback"},
 	{"balancers.delete", true, true, false, "Delete an unreferenced balancer"},
 	{"observatories.list", false, false, false, "Inspect health-check monitors and edit references"},
+	{"observatories.get", true, false, true, "Export one native health-check monitor including probe URLs"},
 	{"observatories.put", true, true, false, "Create or replace a native health-check monitor"},
 	{"observatories.selectors", true, true, false, "Change a monitor's outbound selectors"},
 	{"observatories.patch", true, true, false, "Change a monitor's probe interval or URL"},
@@ -746,6 +748,8 @@ func executeAgentOperation(cfg *BotConfig, operation agentOperation, raw []byte,
 			return records, err
 		}
 		return redactBalancerRecords(records), nil
+	case "balancers.get", "observatories.get":
+		return agentNativeBalancingGet(cfg, name, raw)
 	case "balancers.put", "balancers.patch", "balancers.delete":
 		return agentBalancerChange(cfg, name, raw, apply)
 	case "balancers.live":

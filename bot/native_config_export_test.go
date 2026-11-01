@@ -17,12 +17,26 @@ func nativeNetworkExportFixture(t *testing.T) map[string]any {
 	root["outbounds"] = append(root["outbounds"].([]any), map[string]any{"tag": "proxy", "protocol": "trojan", "settings": map[string]any{"address": "proxy.example.com", "port": json.Number("443"), "password": "original-export-secret"}})
 	root["dns"] = map[string]any{"servers": []any{"https://dns.example.com/query?token=original-export-secret"}}
 	root["routing"].(map[string]any)["rules"] = []any{map[string]any{"type": "field", "domain": []any{"domain:example.com"}, "outboundTag": "direct", "customExtension": "original-export-secret"}}
+	root["routing"].(map[string]any)["balancers"] = []any{map[string]any{"tag": "pool", "selector": []any{"direct"}, "strategy": map[string]any{"type": "random", "settings": map[string]any{"customExtension": "original-export-secret"}}}}
+	root["observatory"] = map[string]any{"subjectSelector": []any{"direct"}, "probeInterval": "1m", "probeURL": "https://probe.example.com/check?token=original-export-secret"}
 	return root
 }
 
 func networkExportReference(t *testing.T, root map[string]any, kind string) (int, string) {
 	t.Helper()
 	switch kind {
+	case "balancer":
+		records, err := balancerRecords(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return 1, records[0].ETag
+	case "monitor":
+		etag, err := routingRuleETag(root["observatory"].(map[string]any))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return 1, etag
 	case "dns":
 		etag, err := dnsETag(root)
 		if err != nil {
@@ -47,7 +61,7 @@ func networkExportReference(t *testing.T, root map[string]any, kind string) (int
 }
 
 func TestNativeNetworkExportsAreRedactedUntilConfirmedAndRejectStaleObjects(t *testing.T) {
-	for _, kind := range []string{"outbound", "dns", "rule"} {
+	for _, kind := range []string{"outbound", "dns", "rule", "balancer", "monitor"} {
 		t.Run(kind, func(t *testing.T) {
 			root := nativeNetworkExportFixture(t)
 			fixture, _ := json.Marshal(root)
@@ -57,6 +71,10 @@ func TestNativeNetworkExportsAreRedactedUntilConfirmedAndRejectStaleObjects(t *t
 			s, capture := newNativeDocumentBot(t, cfg, nil)
 			index, etag := networkExportReference(t, root, kind)
 			switch kind {
+			case "balancer":
+				s.sendBalancerDetail(9580, 1, userCallbackKey("pool"), etag)
+			case "monitor":
+				s.sendObservatoryDetail(9580, 1, "observatory", etag)
 			case "outbound":
 				s.sendOutboundDetail(9580, 1, index, etag)
 			case "dns":
@@ -80,6 +98,11 @@ func TestNativeNetworkExportsAreRedactedUntilConfirmedAndRejectStaleObjects(t *t
 			s.handleCallback(cb)
 			confirm := nativeExportCallback(t, capture)
 			switch kind {
+			case "balancer":
+				_, item, _ := findBalancer(root, "pool")
+				item["strategy"].(map[string]any)["settings"] = map[string]any{"customExtension": "changed-export-secret"}
+			case "monitor":
+				root["observatory"].(map[string]any)["probeURL"] = "https://probe.example.com/check?token=changed-export-secret"
 			case "outbound":
 				root["outbounds"].([]any)[2].(map[string]any)["settings"].(map[string]any)["password"] = "changed-export-secret"
 			case "dns":

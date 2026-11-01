@@ -119,6 +119,10 @@ func applyObservatoryChange(root map[string]any, change observatoryChange) (stri
 				if !ok {
 					return "", errors.New("invalid balancer object")
 				}
+				item, err = normalizeBalancerObject(item)
+				if err != nil {
+					return "", err
+				}
 				strategy := strings.ToLower(balancerStrategy(item))
 				fallback, _ := item["fallbackTag"].(string)
 				if strategy == "leastping" || strategy == "leastload" || fallback != "" {
@@ -135,20 +139,20 @@ func applyObservatoryChange(root map[string]any, change observatoryChange) (stri
 	var candidate map[string]any
 	switch change.Action {
 	case "put":
-		candidate = change.Config
-		if candidate == nil {
-			return "", errors.New("observatory configuration must be an object")
+		candidate, err = normalizeObservatoryObject(change.Config)
+		if err != nil {
+			return "", err
 		}
 	case "selectors":
-		candidate = make(map[string]any, len(current))
-		for key, value := range current {
-			candidate[key] = value
+		candidate, err = normalizeObservatoryObject(current)
+		if err != nil {
+			return "", err
 		}
 		candidate["subjectSelector"] = change.Selectors
 	case "field":
-		candidate = make(map[string]any, len(current))
-		for key, value := range current {
-			candidate[key] = value
+		candidate, err = normalizeObservatoryObject(current)
+		if err != nil {
+			return "", err
 		}
 		switch change.Field {
 		case "interval":

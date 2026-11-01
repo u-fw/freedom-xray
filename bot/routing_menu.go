@@ -313,7 +313,7 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 		} else if pending.Outbound != nil {
 			s.sendOutboundPage(chatID, msgID, 0, "")
 		} else if pending.Observatory != nil {
-			s.sendObservatoryPage(chatID, msgID, "")
+			s.returnObservatoryDetail(chatID, msgID, pending.Observatory.Kind, "")
 		} else if pending.Balancer != nil {
 			if pending.Balancer.ETag != "" {
 				s.sendBalancerDetail(chatID, msgID, userCallbackKey(pending.Balancer.Tag), pending.Balancer.ETag)
@@ -486,15 +486,23 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 		s.sendDNSHostsPage(chatID, msgID, 0, tr(s.cfg.Language, "dns.hosts.done"))
 		return
 	}
+	if pending.Balancer != nil {
+		if pending.Balancer.Kind == "delete" {
+			s.sendBalancerPage(chatID, msgID, 0, tr(s.cfg.Language, "balancer.done"))
+		} else {
+			s.returnBalancerDetail(chatID, msgID, pending.Balancer.Tag, tr(s.cfg.Language, "balancer.done"))
+		}
+		return
+	}
+	if pending.Observatory != nil {
+		s.returnObservatoryDetail(chatID, msgID, pending.Observatory.Kind, tr(s.cfg.Language, "monitor.done"))
+		return
+	}
 	markup := s.backToMainMarkup()
 	if pending.DNS != nil {
 		markup = dnsBackMarkup(s.cfg.Language)
 	} else if pending.Outbound != nil {
 		markup = outboundBackMarkup(s.cfg.Language)
-	} else if pending.Observatory != nil {
-		markup = observatoryBackMarkup(s.cfg.Language)
-	} else if pending.Balancer != nil {
-		markup = balancerBackMarkup(s.cfg.Language)
 	} else if pending.RuleEdit != nil || pending.ExpectedRules != "" {
 		markup = routingPageBackMarkup(s.cfg.Language)
 	}

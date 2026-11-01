@@ -261,6 +261,8 @@ def main():
             assert (directory / "config.json").read_bytes() == original_config
             balancers = agent("balancers.list")
             assert balancers[0]["tag"] == "pool" and balancers[0]["balancer"]["selector"] == ["direct"], balancers
+            full_balancer = agent("balancers.get", {"tag": "pool", "etag": balancers[0]["etag"]}, "--include-sensitive")
+            assert full_balancer["strategy"]["type"] == "roundRobin", full_balancer
             live = agent("balancers.live", {"tag": "pool"})
             assert live["tag"] == "pool" and set(live["selected"]) == {"direct", "direct2"}, live
             balance_preview = agent("balancers.patch", {
@@ -353,6 +355,28 @@ def main():
             systemctl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             systemctl.chmod(0o700)
             os.environ["PATH"] = str(stub_dir) + os.pathsep + os.environ.get("PATH", "")
+
+            # Exercise native monitoring and strategy settings through the same
+            # guarded CLI apply path; no host service is touched by this stub.
+            monitor_config = {"subjectSelector": ["direct"], "probeInterval": "1m",
+                              "probeURL": f"http://127.0.0.1:{httpd.server_address[1]}/", "enableConcurrency": True}
+            assert agent("observatories.put", {"kind": "observatory", "config": monitor_config}, "--apply")["applied"]
+            monitor = next(item for item in agent("observatories.list") if item["kind"] == "observatory")
+            exported_monitor = agent("observatories.get", {"kind": "observatory", "etag": monitor["etag"]}, "--include-sensitive")
+            assert exported_monitor == monitor_config, exported_monitor
+            assert "127.0.0.1" not in json.dumps(monitor["config"]), monitor
+            current_balancer = agent("balancers.list")[0]
+            advanced_balancer = {"tag": "pool", "selector": ["direct"], "strategy": {
+                "type": "leastLoad", "settings": {"expected": 1, "maxRTT": "2s",
+                                                    "tolerance": 0.3, "baselines": ["100ms"],
+                                                    "costs": [{"match": "direct", "value": 1}]}}}
+            assert not agent("balancers.put", {"etag": current_balancer["etag"], "balancer": advanced_balancer})["applied"]
+            assert agent("balancers.put", {"etag": current_balancer["etag"], "balancer": advanced_balancer}, "--apply")["applied"]
+            current_balancer = agent("balancers.list")[0]
+            assert agent("balancers.get", {"tag": "pool", "etag": current_balancer["etag"]}, "--include-sensitive") == advanced_balancer
+            # Return the test's round-robin configuration before exercising traffic.
+            assert agent("balancers.put", {"etag": current_balancer["etag"], "balancer": full_balancer}, "--apply")["applied"]
+            assert agent("observatories.delete", {"kind": "observatory", "etag": monitor["etag"]}, "--apply")["applied"]
             native_ports = []
             while len(native_ports) < 4:
                 port = unused_port()

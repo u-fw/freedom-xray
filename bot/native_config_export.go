@@ -40,6 +40,17 @@ func nativeConfigExportObject(root map[string]any, kind string, index int, etag 
 		return lookupOutbound(root, index, etag)
 	case "rule":
 		return lookupRoutingRule(root, routingRuleRef{Index: index, ETag: etag})
+	case "balancer":
+		records, err := balancerRecords(root)
+		if err != nil {
+			return nil, err
+		}
+		if index < 1 || index > len(records) || records[index-1].ETag != etag {
+			return nil, errBalancerChanged
+		}
+		return records[index-1].Balancer, nil
+	case "monitor":
+		return lookupObservatory(root, observatoryKindAtIndex(index), etag)
 	case "section":
 		if index < 1 || index > len(xraySectionNames) {
 			return nil, errors.New("unknown section")
@@ -69,6 +80,27 @@ func nativeConfigExportObject(root map[string]any, kind string, index int, etag 
 
 func (s *BotService) returnNativeConfigExport(chatID int64, msgID int, pending nativeConfigExport, changed bool) {
 	switch pending.Kind {
+	case "balancer":
+		if !changed {
+			root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
+			if err == nil {
+				object, err := nativeConfigExportObject(root, pending.Kind, pending.Index, pending.ETag)
+				if err == nil {
+					item, _ := getMap(object)
+					tag, _ := item["tag"].(string)
+					s.sendBalancerDetail(chatID, msgID, userCallbackKey(tag), pending.ETag)
+					return
+				}
+			}
+		}
+		s.sendBalancerPage(chatID, msgID, 0, tr(s.cfg.Language, "balancer.changed"))
+	case "monitor":
+		kind := observatoryKindAtIndex(pending.Index)
+		if changed || kind == "" {
+			s.sendObservatoryPage(chatID, msgID, tr(s.cfg.Language, "monitor.changed"))
+		} else {
+			s.sendObservatoryDetail(chatID, msgID, kind, pending.ETag)
+		}
 	case "section":
 		if changed || pending.Index < 1 || pending.Index > len(xraySectionNames) {
 			s.sendXraySectionsPage(chatID, msgID, tr(s.cfg.Language, "xray.section.changed"))
@@ -154,6 +186,8 @@ func (s *BotService) askNativeConfigExport(cb *tgbotapi.CallbackQuery, kind stri
 		label = tr(s.cfg.Language, "config.export.kind.dns")
 	} else if kind == "section" {
 		label = tr(s.cfg.Language, "xray.section."+xraySectionNames[index-1])
+	} else if kind == "monitor" {
+		label = observatoryKindAtIndex(index)
 	} else {
 		label = tr(s.cfg.Language, "config.export.kind."+kind, index)
 	}

@@ -117,29 +117,8 @@ func lookupXraySection(root map[string]any, name, etag string) (any, bool, error
 	return value, present, err
 }
 
-func normalizeXraySectionFields(object map[string]any, canonical []string) error {
-	seen := map[string]bool{}
-	for key := range object {
-		folded := strings.ToLower(key)
-		if seen[folded] {
-			return errors.New("ambiguous JSON field casing")
-		}
-		seen[folded] = true
-	}
-	for _, name := range canonical {
-		for key, value := range object {
-			if key != name && strings.EqualFold(key, name) {
-				delete(object, key)
-				object[name] = value
-				break
-			}
-		}
-	}
-	return nil
-}
-
 func validatePolicyStatisticsFields(object map[string]any, flags []string) error {
-	if err := normalizeXraySectionFields(object, flags); err != nil {
+	if err := normalizeNativeObjectFields(object, flags); err != nil {
 		return err
 	}
 	for _, name := range flags {
@@ -153,7 +132,7 @@ func validatePolicyStatisticsFields(object map[string]any, flags []string) error
 }
 
 func validateFakeDNSPool(pool map[string]any) error {
-	if err := normalizeXraySectionFields(pool, []string{"ipPool", "poolSize"}); err != nil {
+	if err := normalizeNativeObjectFields(pool, []string{"ipPool", "poolSize"}); err != nil {
 		return err
 	}
 	text, ok := pool["ipPool"].(string)
@@ -207,7 +186,7 @@ func decodeXraySectionValue(name string, raw []byte) (any, error) {
 		if name == "policy" {
 			canonical = []string{"levels", "system"}
 		}
-		if err := normalizeXraySectionFields(object, canonical); err != nil {
+		if err := normalizeNativeObjectFields(object, canonical); err != nil {
 			return nil, err
 		}
 		if name == "policy" {

@@ -47,6 +47,17 @@ func getBalancerWizard(chatID, adminID int64) (balancerWizard, bool) {
 	return state, ok && state.AdminID == adminID
 }
 
+func consumeBalancerWizard(chatID int64, expected balancerWizard) bool {
+	balancerWizards.Lock()
+	defer balancerWizards.Unlock()
+	current, ok := balancerWizards.items[chatID]
+	if !ok || current != expected {
+		return false
+	}
+	delete(balancerWizards.items, chatID)
+	return time.Now().Before(current.Expires)
+}
+
 func balancerBackMarkup(lang string) tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
 		tgbotapi.NewInlineKeyboardButtonData(tr(lang, "balancer.back"), "bl:page:0"),
@@ -187,7 +198,9 @@ func (s *BotService) sendBalancerPage(chatID int64, msgID, offset int, notice st
 		rows = append(rows, pages)
 	}
 	if s.cfg.AllowMutations {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.add"), "bl:add")))
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.add"), "bl:add"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.native.add"), "bl:jsonnew")))
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "monitor.button"), "mo:page")))
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.refresh"), fmt.Sprintf("bl:page:%d", offset)), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.back"), "rt:page:0")))
@@ -195,6 +208,26 @@ func (s *BotService) sendBalancerPage(chatID int64, msgID, offset int, notice st
 }
 
 func (s *BotService) sendBalancerDetail(chatID int64, msgID int, key, etag string) {
+	s.sendBalancerDetailNotice(chatID, msgID, key, etag, "")
+}
+
+func (s *BotService) returnBalancerDetail(chatID int64, msgID int, tag, notice string) {
+	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
+	if err == nil {
+		records, err := balancerRecords(root)
+		if err == nil {
+			for _, record := range records {
+				if record.Tag == tag {
+					s.sendBalancerDetailNotice(chatID, msgID, userCallbackKey(tag), record.ETag, notice)
+					return
+				}
+			}
+		}
+	}
+	s.sendBalancerPage(chatID, msgID, 0, tr(s.cfg.Language, "balancer.changed"))
+}
+
+func (s *BotService) sendBalancerDetailNotice(chatID int64, msgID int, key, etag, notice string) {
 	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
 	if err != nil {
 		s.sendBalancerPage(chatID, msgID, 0, tr(s.cfg.Language, "balancer.changed"))
@@ -217,6 +250,9 @@ func (s *BotService) sendBalancerDetail(chatID int64, msgID int, key, etag strin
 		matchedText = tr(s.cfg.Language, "balancer.no_match")
 	}
 	body := tr(s.cfg.Language, "balancer.detail", mdEsc(record.Tag), mdEsc(selectors), mdEsc(balancerStrategy(item)), mdEsc(fallback), mdEsc(matchedText))
+	if notice != "" {
+		body = mdEsc(notice) + "\n\n" + body
+	}
 	body += balancerWarnings(s.cfg.Language, root, item)
 	redacted := redactBalancerRecords([]balancerRecord{record})[0]
 	if len(redacted.RedactedFields) > 0 {
@@ -231,6 +267,13 @@ func (s *BotService) sendBalancerDetail(chatID int64, msgID int, key, etag strin
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.edit.fallback"), balancerCallback("fallback", record.Tag, record.ETag)),
 			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.delete"), balancerCallback("delete", record.Tag, record.ETag))))
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.native.edit"), balancerCallback("json", record.Tag, record.ETag))))
+	}
+	if s.cfg.AllowSensitiveBackup {
+		index, _, err := findBalancer(root, record.Tag)
+		if err == nil && index >= 0 {
+			rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "config.export.button"), nativeConfigExportCallback("balancer", index+1, record.ETag))))
+		}
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.back"), "bl:page:0"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.home"), "menu_main")))
 	s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))
@@ -297,7 +340,11 @@ func (s *BotService) offerBalancerChange(chatID, adminID int64, msgID int, chang
 	var detail string
 	switch change.Kind {
 	case "put":
-		detail = tr(s.cfg.Language, "balancer.confirm.create", mdEsc(change.Tag), mdEsc(strings.Join(stringList(change.Balancer["selector"]), ", ")))
+		key := "balancer.confirm.create"
+		if change.ETag != "" {
+			key = "balancer.native.confirm_replace"
+		}
+		detail = tr(s.cfg.Language, key, mdEsc(change.Tag), mdEsc(strings.Join(stringList(change.Balancer["selector"]), ", ")))
 	case "patch":
 		field := change.Field
 		switch field {
@@ -330,9 +377,13 @@ func (s *BotService) handleBalancerInput(msg *tgbotapi.Message) bool {
 		return false
 	}
 	if msg.Command() == "cancel" {
-		clearBalancerWizard(msg.Chat.ID)
+		if !consumeBalancerWizard(msg.Chat.ID, state) {
+			return true
+		}
 		if strings.HasPrefix(state.Step, "monitor-") {
-			s.sendObservatoryPage(msg.Chat.ID, 0, tr(s.cfg.Language, "wizard.cancelled"))
+			s.returnObservatoryDetail(msg.Chat.ID, 0, state.Tag, tr(s.cfg.Language, "wizard.cancelled"))
+		} else if state.ETag != "" {
+			s.returnBalancerDetail(msg.Chat.ID, 0, state.Tag, tr(s.cfg.Language, "wizard.cancelled"))
 		} else {
 			s.sendBalancerPage(msg.Chat.ID, 0, 0, tr(s.cfg.Language, "wizard.cancelled"))
 		}
@@ -345,6 +396,9 @@ func (s *BotService) handleBalancerInput(msg *tgbotapi.Message) bool {
 		clearBalancerWizard(msg.Chat.ID)
 		s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "manage.writesdisabled"))
 		return true
+	}
+	if state.Step == "native-create" || state.Step == "native-replace" || state.Step == "monitor-native" {
+		return s.handleNativeBalancingInput(msg, state)
 	}
 	value := strings.TrimSpace(msg.Text)
 	if state.Step == "monitor-interval" || state.Step == "monitor-url" {
@@ -465,14 +519,18 @@ func (s *BotService) handleBalancerCallback(cb *tgbotapi.CallbackQuery) {
 		}
 		return
 	}
-	if parts[1] == "add" && len(parts) == 2 {
+	if (parts[1] == "add" || parts[1] == "jsonnew") && len(parts) == 2 {
 		if !s.cfg.AllowMutations {
 			s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), balancerBackMarkup(s.cfg.Language))
 			return
 		}
 		clearOtherRoutingInputs(chatID)
-		setBalancerWizard(chatID, balancerWizard{AdminID: cb.From.ID, Step: "new-tag", Expires: time.Now().Add(5 * time.Minute)})
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "balancer.tag_prompt"), balancerBackMarkup(s.cfg.Language))
+		step, prompt := "new-tag", "balancer.tag_prompt"
+		if parts[1] == "jsonnew" {
+			step, prompt = "native-create", "balancer.native.create_prompt"
+		}
+		setBalancerWizard(chatID, balancerWizard{AdminID: cb.From.ID, Step: step, Expires: time.Now().Add(5 * time.Minute)})
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, prompt), balancerBackMarkup(s.cfg.Language))
 		return
 	}
 	if len(parts) < 4 {
@@ -502,6 +560,13 @@ func (s *BotService) handleBalancerCallback(cb *tgbotapi.CallbackQuery) {
 		return
 	}
 	switch parts[1] {
+	case "json":
+		if len(parts) != 4 {
+			return
+		}
+		clearOtherRoutingInputs(chatID)
+		setBalancerWizard(chatID, balancerWizard{AdminID: cb.From.ID, Step: "native-replace", Tag: record.Tag, ETag: record.ETag, Expires: time.Now().Add(5 * time.Minute)})
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "balancer.native.replace_prompt", mdEsc(record.Tag)), balancerBackMarkup(s.cfg.Language))
 	case "enable":
 		if len(parts) != 4 {
 			return

@@ -240,14 +240,17 @@ func applyBalancerChange(root map[string]any, change balancerChange) (string, er
 	var candidate map[string]any
 	switch change.Kind {
 	case "put":
-		candidate = change.Balancer
-		if candidate == nil || candidate["tag"] != change.Tag {
+		candidate, err = normalizeBalancerObject(change.Balancer)
+		if err != nil {
+			return "", err
+		}
+		if candidate["tag"] != change.Tag {
 			return "", errors.New("balancer tag does not match")
 		}
 	case "patch":
-		candidate = make(map[string]any, len(existing))
-		for key, value := range existing {
-			candidate[key] = value
+		candidate, err = normalizeBalancerObject(existing)
+		if err != nil {
+			return "", err
 		}
 		switch change.Field {
 		case "selector":

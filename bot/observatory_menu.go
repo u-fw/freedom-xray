@@ -86,6 +86,26 @@ func currentObservatoryRecord(root map[string]any, kind, ref string) (observator
 }
 
 func (s *BotService) sendObservatoryDetail(chatID int64, msgID int, kind, ref string) {
+	s.sendObservatoryDetailNotice(chatID, msgID, kind, ref, "")
+}
+
+func (s *BotService) returnObservatoryDetail(chatID int64, msgID int, kind, notice string) {
+	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
+	if err == nil {
+		records, err := observatoryRecords(root, false)
+		if err == nil {
+			for _, record := range records {
+				if record.Kind == kind {
+					s.sendObservatoryDetailNotice(chatID, msgID, kind, observatoryRef(record), notice)
+					return
+				}
+			}
+		}
+	}
+	s.sendObservatoryPage(chatID, msgID, tr(s.cfg.Language, "monitor.changed"))
+}
+
+func (s *BotService) sendObservatoryDetailNotice(chatID int64, msgID int, kind, ref, notice string) {
 	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
 	if err != nil {
 		s.sendObservatoryPage(chatID, msgID, tr(s.cfg.Language, "monitor.changed"))
@@ -97,6 +117,9 @@ func (s *BotService) sendObservatoryDetail(chatID int64, msgID int, kind, ref st
 		return
 	}
 	body := tr(s.cfg.Language, "monitor.detail", mdEsc(kind))
+	if notice != "" {
+		body = mdEsc(notice) + "\n\n" + body
+	}
 	if record.Configured {
 		body += tr(s.cfg.Language, "monitor.selectors", mdEsc(strings.Join(stringList(record.Config["subjectSelector"]), "\n")))
 		config, _ := readObservatory(root, kind)
@@ -128,6 +151,10 @@ func (s *BotService) sendObservatoryDetail(chatID int64, msgID int, kind, ref st
 				tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "monitor.edit_url"), observatoryCallback("url", kind, ref))))
 			rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "monitor.delete"), observatoryCallback("delete", kind, ref))))
 		}
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "monitor.native.edit"), observatoryCallback("json", kind, ref))))
+	}
+	if record.Configured && s.cfg.AllowSensitiveBackup {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "config.export.button"), nativeConfigExportCallback("monitor", observatoryIndex(kind), record.ETag))))
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "monitor.back"), "mo:page"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.back"), "bl:page:0")))
 	s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))
@@ -163,7 +190,11 @@ func (s *BotService) offerObservatoryChange(chatID, adminID int64, msgID int, ch
 		if change.Action == "put" {
 			selectors = change.Config["subjectSelector"]
 		}
-		detail = tr(s.cfg.Language, "monitor.confirm.put", mdEsc(change.Kind), mdEsc(strings.Join(stringList(selectors), ", ")))
+		key := "monitor.confirm.put"
+		if change.Action == "put" && change.ETag != "" {
+			key = "monitor.native.confirm_replace"
+		}
+		detail = tr(s.cfg.Language, key, mdEsc(change.Kind), mdEsc(strings.Join(stringList(selectors), ", ")))
 	}
 	s.queueGuidedRoutingChange(chatID, adminID, msgID, pendingRoutingChange{Observatory: &change}, detail)
 }
@@ -206,8 +237,8 @@ func (s *BotService) handleObservatoryCallback(cb *tgbotapi.CallbackQuery) {
 		return
 	}
 	switch parts[1] {
-	case "edit", "interval", "url":
-		if parts[1] != "edit" && ref == "new" {
+	case "edit", "interval", "url", "json":
+		if parts[1] != "edit" && parts[1] != "json" && ref == "new" {
 			return
 		}
 		clearOtherRoutingInputs(chatID)
@@ -222,8 +253,21 @@ func (s *BotService) handleObservatoryCallback(cb *tgbotapi.CallbackQuery) {
 		if parts[1] == "url" {
 			step, prompt = "monitor-url", "monitor.url_prompt"
 		}
+		if parts[1] == "json" {
+			step, prompt = "monitor-native", "monitor.native.prompt"
+		}
 		setBalancerWizard(chatID, balancerWizard{AdminID: cb.From.ID, Step: step, Tag: kind, ETag: etag, Expires: time.Now().Add(5 * time.Minute)})
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, prompt), observatoryBackMarkup(s.cfg.Language))
+		var text string
+		if parts[1] == "json" {
+			example := `{"subjectSelector":["proxy-"],"probeInterval":"1m","enableConcurrency":true}`
+			if kind == "burstObservatory" {
+				example = `{"subjectSelector":["proxy-"],"pingConfig":{"interval":"1m","sampling":4,"timeout":"5s"}}`
+			}
+			text = tr(s.cfg.Language, prompt, mdEsc(kind), example)
+		} else {
+			text = tr(s.cfg.Language, prompt)
+		}
+		s.sendOrEdit(chatID, msgID, text, observatoryBackMarkup(s.cfg.Language))
 	case "delete":
 		if ref == "new" {
 			return

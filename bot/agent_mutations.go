@@ -134,6 +134,10 @@ func agentBalancerChange(cfg *BotConfig, operation string, raw []byte, apply boo
 		if err != nil {
 			return nil, err
 		}
+		item, err = normalizeBalancerObject(item)
+		if err != nil {
+			return nil, err
+		}
 		change.Kind, change.Balancer = "put", item
 		if change.Tag == "" {
 			change.Tag, _ = item["tag"].(string)
