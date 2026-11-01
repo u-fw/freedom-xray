@@ -111,7 +111,8 @@ func balancerWarnings(lang string, root, item map[string]any) string {
 		return tr(lang, "balancer.warning.no_match")
 	}
 	strategy := strings.ToLower(balancerStrategy(item))
-	if strategy != "leastping" && strategy != "leastload" {
+	fallback, _ := item["fallbackTag"].(string)
+	if strategy != "leastping" && strategy != "leastload" && fallback == "" {
 		return ""
 	}
 	var selectors []string
@@ -136,7 +137,7 @@ func balancerWarnings(lang string, root, item map[string]any) string {
 	if len(missing) > 0 {
 		warning += tr(lang, "balancer.warning.unmonitored", mdEsc(strings.Join(missing, ", ")))
 	}
-	if fallback, _ := item["fallbackTag"].(string); fallback == "" {
+	if fallback == "" {
 		warning += tr(lang, "balancer.warning.no_fallback")
 	}
 	return warning
@@ -222,6 +223,7 @@ func (s *BotService) sendBalancerDetail(chatID int64, msgID int, key, etag strin
 		body += tr(s.cfg.Language, "balancer.hidden")
 	}
 	var rows [][]tgbotapi.InlineKeyboardButton
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.live"), balancerCallback("live", record.Tag, record.ETag))))
 	if s.cfg.AllowMutations {
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.edit.selectors"), balancerCallback("selector", record.Tag, record.ETag)),
@@ -232,6 +234,47 @@ func (s *BotService) sendBalancerDetail(chatID int64, msgID int, key, etag strin
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.back"), "bl:page:0"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.home"), "menu_main")))
 	s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))
+}
+
+func (s *BotService) sendBalancerLive(chatID int64, msgID int, record balancerRecord) {
+	status, err := queryBalancerLive(s.cfg, record.Tag)
+	body := tr(s.cfg.Language, "balancer.live.title", mdEsc(record.Tag))
+	var rows [][]tgbotapi.InlineKeyboardButton
+	if errors.Is(err, errRoutingServiceDisabled) {
+		body += tr(s.cfg.Language, "balancer.live.disabled")
+		if s.cfg.AllowMutations {
+			rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.live.enable"), balancerCallback("enable", record.Tag, record.ETag))))
+		}
+	} else if err != nil {
+		body += tr(s.cfg.Language, "balancer.live.failed", mdEsc(err.Error()))
+	} else {
+		selected := strings.Join(status.Selected, ", ")
+		if selected == "" {
+			selected = tr(s.cfg.Language, "balancer.live.none")
+		}
+		override := status.Override
+		if override == "" {
+			override = tr(s.cfg.Language, "balancer.live.none")
+		}
+		body += tr(s.cfg.Language, "balancer.live.result", mdEsc(selected), mdEsc(override))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.refresh"), balancerCallback("live", record.Tag, record.ETag)),
+		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.back"), balancerCallback("v", record.Tag, record.ETag))))
+	s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))
+}
+
+func (s *BotService) returnToBalancerLive(chatID int64, msgID int, tag, etag string) {
+	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
+	if err == nil {
+		var record balancerRecord
+		record, err = findBalancerByCallback(root, userCallbackKey(tag), etag)
+		if err == nil {
+			s.sendBalancerLive(chatID, msgID, record)
+			return
+		}
+	}
+	s.sendBalancerPage(chatID, msgID, 0, tr(s.cfg.Language, "balancer.changed"))
 }
 
 func (s *BotService) offerBalancerChange(chatID, adminID int64, msgID int, change balancerChange) {
@@ -450,11 +493,33 @@ func (s *BotService) handleBalancerCallback(cb *tgbotapi.CallbackQuery) {
 		s.sendBalancerDetail(chatID, msgID, parts[2], parts[3])
 		return
 	}
+	if parts[1] == "live" && len(parts) == 4 {
+		s.sendBalancerLive(chatID, msgID, record)
+		return
+	}
 	if !s.cfg.AllowMutations {
 		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), balancerBackMarkup(s.cfg.Language))
 		return
 	}
 	switch parts[1] {
+	case "enable":
+		if len(parts) != 4 {
+			return
+		}
+		server := s.cfg.StatsAPIServer
+		if server == "" {
+			server = "127.0.0.1:10085"
+		}
+		changed, err := applyRoutingService(root, server)
+		if err != nil {
+			s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.edit.invalid", mdEsc(err.Error())), balancerBackMarkup(s.cfg.Language))
+			return
+		}
+		if !changed {
+			s.sendBalancerLive(chatID, msgID, record)
+			return
+		}
+		s.queueGuidedRoutingChange(chatID, cb.From.ID, msgID, pendingRoutingChange{EnableRoutingAPI: true, LiveBalancerTag: record.Tag, LiveBalancerETag: record.ETag}, tr(s.cfg.Language, "balancer.live.enable_confirm"))
 	case "selector":
 		if len(parts) != 4 {
 			return

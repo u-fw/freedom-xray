@@ -11,10 +11,9 @@ import (
 // applyStatsInfrastructure creates only the loopback StatsService scaffold.
 // Existing ambiguous or public API listeners are rejected rather than changed.
 func applyStatsInfrastructure(root map[string]any, server string) (bool, error) {
-	if routing, ok := getMap(root["routing"]); ok {
-		if script, ok := routing["script"].(string); ok && script != "" {
-			return false, errors.New("statistics repair cannot verify or modify routing scripts; configure the internal API route in the script manually")
-		}
+	directAPI, err := validateAPIAccess(root, server)
+	if err != nil {
+		return false, err
 	}
 	host, portText, err := net.SplitHostPort(server)
 	if err != nil {
@@ -96,6 +95,9 @@ func applyStatsInfrastructure(root map[string]any, server string) (bool, error) 
 	}
 	if enableStatsPolicy(root) {
 		changed = true
+	}
+	if directAPI {
+		return changed, nil
 	}
 	inbounds, ok := root["inbounds"].([]any)
 	if !ok {

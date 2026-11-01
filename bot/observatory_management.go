@@ -120,7 +120,8 @@ func applyObservatoryChange(root map[string]any, change observatoryChange) (stri
 					return "", errors.New("invalid balancer object")
 				}
 				strategy := strings.ToLower(balancerStrategy(item))
-				if strategy == "leastping" || strategy == "leastload" {
+				fallback, _ := item["fallbackTag"].(string)
+				if strategy == "leastping" || strategy == "leastload" || fallback != "" {
 					return "", errors.New("a balancer still requires an observatory")
 				}
 			}

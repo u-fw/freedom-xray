@@ -80,6 +80,9 @@ func inspectStatsSwitches(configPath string, server ...string) (statsSwitchRepor
 	hasAPIInbound := false
 	apiAddress := "127.0.0.1:10085"
 	if len(server)>0 && server[0]!="" {apiAddress=server[0]}
+	directListen, _ := api["listen"].(string)
+	directAPI := directListen != ""
+	if _, safetyErr := validateAPIAccess(root, apiAddress); safetyErr != nil { report.APIMissing=append(report.APIMissing,"api safety: "+safetyErr.Error()) }
 	host, portText, addressErr := net.SplitHostPort(apiAddress)
 	if strings.EqualFold(host,"localhost") {host="127.0.0.1"}
 	apiIP:=net.ParseIP(host); apiPort,portErr:=strconv.Atoi(portText)
@@ -91,13 +94,13 @@ func inspectStatsSwitches(configPath string, server ...string) (statsSwitchRepor
 				hasAPIInbound = true
 				listen,_:=inbound["listen"].(string); ip:=net.ParseIP(listen)
 				settings,_:=getMap(inbound["settings"]); dest,_:=settings["address"].(string);destIP:=net.ParseIP(dest)
-				if addressErr!=nil||portErr!=nil||apiIP==nil||!apiIP.IsLoopback()||ip==nil||!ip.IsLoopback()||!ip.Equal(apiIP)||inboundPortValue(inbound["port"])!=apiPort||inbound["protocol"]!="dokodemo-door"||destIP==nil||!destIP.IsLoopback() {
+				if addressErr!=nil||portErr!=nil||apiIP==nil||!apiIP.IsLoopback()||ip==nil||!ip.IsLoopback()||(!directAPI&&(!ip.Equal(apiIP)||inboundPortValue(inbound["port"])!=apiPort))||inbound["protocol"]!="dokodemo-door"||destIP==nil||!destIP.IsLoopback() {
 					report.APIMissing=append(report.APIMissing,"unsafe or mismatched api-internal listener")
 				}
 			}
 		}
 	}
-	if !hasAPIInbound {
+	if !hasAPIInbound && !directAPI {
 		report.APIMissing = append(report.APIMissing, "api-internal")
 	}
 	hasAPIOutbound := false
@@ -109,7 +112,7 @@ func inspectStatsSwitches(configPath string, server ...string) (statsSwitchRepor
 			}
 		}
 	}
-	if !hasAPIOutbound {
+	if !hasAPIOutbound && !directAPI {
 		report.APIMissing = append(report.APIMissing, apiTag+" outbound")
 	}
 	hasAPIRoute := false
@@ -118,7 +121,7 @@ func inspectStatsSwitches(configPath string, server ...string) (statsSwitchRepor
 	if rules, ok := routing["rules"].([]any); ok {
 		if len(rules)>0 {rule,_:=getMap(rules[0]);hasAPIRoute=isInternalAPIRoute(rule,apiTag)}
 	}
-	if !hasAPIRoute {
+	if !hasAPIRoute && !directAPI {
 		report.APIMissing = append(report.APIMissing, "api route")
 	}
 

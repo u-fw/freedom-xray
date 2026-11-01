@@ -90,7 +90,7 @@ def main():
         server_config = {
             "log": {"loglevel": "info"},
             "stats": {},
-            "api": {"tag": "api", "services": ["StatsService"]},
+            "api": {"tag": "api", "services": ["StatsService", "RoutingService"]},
             "policy": {
                 "levels": {"0": {"statsUserUplink": True, "statsUserDownlink": True}},
                 "system": {"statsInboundUplink": True, "statsInboundDownlink": True},
@@ -179,6 +179,8 @@ def main():
             assert (directory / "config.json").read_bytes() == original_config
             balancers = agent("balancers.list")
             assert balancers[0]["tag"] == "pool" and balancers[0]["balancer"]["selector"] == ["direct"], balancers
+            live = agent("balancers.live", {"tag": "pool"})
+            assert live["tag"] == "pool" and set(live["selected"]) == {"direct", "direct2"}, live
             balance_preview = agent("balancers.patch", {
                 "tag": "pool", "etag": balancers[0]["etag"],
                 "field": "selector", "value": ["direct2"],
@@ -220,7 +222,7 @@ def main():
             assert after["users"]["bob"]["total_down"] == before["users"]["bob"]["total_down"], after
             for binding in ("alice+cmF3", "alice+Y2Ru"):
                 assert after["bindings"][binding]["total_down"] == 0, after
-            print("Real Xray balancer routing, per-binding traffic and isolated user reset passed")
+            print("Real Xray balancer routing and live status, per-binding traffic and isolated user reset passed")
         except Exception:
             for index, process in enumerate(processes):
                 process.terminate()

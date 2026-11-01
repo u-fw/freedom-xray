@@ -100,3 +100,41 @@ func TestBalancerWarnsAboutMissingCoverageAndFallback(t *testing.T) {
 		t.Fatalf("unexpected warning: %s", warning)
 	}
 }
+
+func TestBalancerLiveEnableRequiresConfirmation(t *testing.T) {
+	root := agentFixtureRoot(t)
+	root["routing"].(map[string]any)["balancers"] = []any{map[string]any{"tag": "pool", "selector": []any{"direct"}}}
+	data, _ := json.Marshal(root)
+	h := newBindingMigrationHarness(t, string(data), false)
+	cfg := DefaultConfig()
+	cfg.XrayConfigPath, cfg.XrayBinPath, cfg.AllowMutations = h.config, h.xray, true
+	s, capture := newCapturedRoutingBot(t, cfg)
+	chat, admin := &tgbotapi.Chat{ID: 9503, Type: "private"}, &tgbotapi.User{ID: 17}
+	records, _ := balancerRecords(root)
+	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: balancerCallback("live", "pool", records[0].ETag)}
+	s.handleBalancerCallback(cb)
+	body, markup := capture.card(t)
+	if !strings.Contains(body, "not enabled") || !strings.Contains(strings.Join(keyboardCallbacks(t, markup), " "), "bl:enable:") {
+		t.Fatalf("missing enable action: %s", body)
+	}
+	cb.Data = balancerCallback("enable", "pool", records[0].ETag)
+	s.handleBalancerCallback(cb)
+	before, _ := os.ReadFile(h.config)
+	cb.Data = "routing_confirm:" + pendingRoutingToken(t, chat.ID)
+	cb.From = &tgbotapi.User{ID: 18}
+	s.resolveRoutingChange(cb, true)
+	after, _ := os.ReadFile(h.config)
+	if !bytes.Equal(before, after) {
+		t.Fatal("another admin enabled routing API")
+	}
+	cb.From = admin
+	s.resolveRoutingChange(cb, true)
+	root, _ = decodeBindingMigrationConfig(h.config)
+	if !routingServiceConfigured(root) || h.restartCount(t) != 1 {
+		t.Fatal("routing API was not enabled after confirmation")
+	}
+	_, markup = capture.card(t)
+	if callbacks := strings.Join(keyboardCallbacks(t, markup), " "); !strings.Contains(callbacks, "bl:live:") {
+		t.Fatalf("did not return to live balancer status: %s", callbacks)
+	}
+}

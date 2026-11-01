@@ -66,6 +66,26 @@ func TestBalancerRequiresSafeSelectorsAndObservatory(t *testing.T) {
 	}
 }
 
+func TestBalancerFallbackRequiresObservatory(t *testing.T) {
+	for _, strategy := range []string{"random", "roundRobin"} {
+		t.Run(strategy, func(t *testing.T) {
+			root := editableRoutingRoot(t)
+			item := map[string]any{"tag": "pool", "selector": []any{"direct"}, "fallbackTag": "block", "strategy": map[string]any{"type": strategy}}
+			if _, err := applyBalancerChange(root, balancerChange{Kind: "put", Tag: "pool", Balancer: item}); err == nil {
+				t.Fatal("accepted fallback without an observatory")
+			}
+			root["observatory"] = map[string]any{"subjectSelector": []any{"direct"}}
+			if _, err := applyBalancerChange(root, balancerChange{Kind: "put", Tag: "pool", Balancer: item}); err != nil {
+				t.Fatal(err)
+			}
+			records, _ := observatoryRecords(root, false)
+			if _, err := applyObservatoryChange(root, observatoryChange{Kind: "observatory", Action: "delete", ETag: records[0].ETag}); err == nil {
+				t.Fatal("deleted observatory needed by fallback")
+			}
+		})
+	}
+}
+
 func TestAgentBalancerPreviewAndRedaction(t *testing.T) {
 	root := editableRoutingRoot(t)
 	if _, err := applyBalancerChange(root, balancerChange{Kind: "put", Tag: "pool", Balancer: testBalancer("pool")}); err != nil {

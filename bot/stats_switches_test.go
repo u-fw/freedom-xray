@@ -48,7 +48,7 @@ const statsSwitchFixture=`{
   {"tag":"cdn","settings":{"clients":[]},"streamSettings":{"network":"xhttp","sockopt":{}}},
   {"tag":"cdn-ok","settings":{"clients":[]},"streamSettings":{"network":"xhttp","sockopt":{"trustedXForwardedFor":["CF-Connecting-IP"]}}}
  ],
- "outbounds":[{"tag":"api","protocol":"freedom"}],
+ "outbounds":[{"tag":"direct","protocol":"freedom"},{"tag":"api","protocol":"freedom"}],
  "routing":{"rules":[{"inboundTag":["api-internal"],"outboundTag":"api"}]}
 }`
 

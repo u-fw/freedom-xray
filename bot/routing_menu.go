@@ -17,18 +17,21 @@ type routingWizard struct {
 	Expires time.Time
 }
 type pendingRoutingChange struct {
-	ChatID        int64
-	AdminID       int64
-	Change        routingChange
-	Network       *networkChange
-	Host          *string
-	RuleEdit      *routingRuleEdit
-	Balancer      *balancerChange
-	Observatory   *observatoryChange
-	Outbound      *outboundChange
-	DNS           *dnsChange
-	ExpectedRules string
-	Expires       time.Time
+	ChatID           int64
+	AdminID          int64
+	Change           routingChange
+	Network          *networkChange
+	Host             *string
+	RuleEdit         *routingRuleEdit
+	Balancer         *balancerChange
+	Observatory      *observatoryChange
+	Outbound         *outboundChange
+	DNS              *dnsChange
+	EnableRoutingAPI bool
+	LiveBalancerTag  string
+	LiveBalancerETag string
+	ExpectedRules    string
+	Expires          time.Time
 }
 
 var routingWizards = struct {
@@ -233,7 +236,9 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 		return
 	}
 	if !confirm {
-		if pending.DNS != nil {
+		if pending.EnableRoutingAPI {
+			s.returnToBalancerLive(chatID, msgID, pending.LiveBalancerTag, pending.LiveBalancerETag)
+		} else if pending.DNS != nil {
 			s.sendDNSPage(chatID, msgID, 0, "")
 		} else if pending.Outbound != nil {
 			s.sendOutboundPage(chatID, msgID, 0, "")
@@ -269,6 +274,8 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 			}
 			message = tr(s.cfg.Language, "serverhost.done", mdEsc(host))
 		}
+	} else if pending.EnableRoutingAPI {
+		message, err = enableRoutingService(s.cfg)
 	} else if pending.DNS != nil {
 		message, err = changeDNSConfig(s.cfg, *pending.DNS)
 	} else if pending.Outbound != nil {
@@ -317,7 +324,9 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 			return
 		}
 		markup := s.backToMainMarkup()
-		if pending.DNS != nil {
+		if pending.EnableRoutingAPI {
+			markup = balancerBackMarkup(s.cfg.Language)
+		} else if pending.DNS != nil {
 			markup = dnsBackMarkup(s.cfg.Language)
 		} else if pending.Outbound != nil {
 			markup = outboundBackMarkup(s.cfg.Language)
@@ -329,6 +338,10 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 			markup = routingPageBackMarkup(s.cfg.Language)
 		}
 		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.edit.failed", mdEsc(err.Error())), markup)
+		return
+	}
+	if pending.EnableRoutingAPI {
+		s.returnToBalancerLive(chatID, msgID, pending.LiveBalancerTag, pending.LiveBalancerETag)
 		return
 	}
 	markup := s.backToMainMarkup()

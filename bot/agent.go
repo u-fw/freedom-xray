@@ -73,6 +73,7 @@ var agentOperations = []agentOperation{
 	{"routing.update", true, true, false, "Replace a named Xray routing rule"},
 	{"routing.delete", true, true, false, "Delete a named Xray routing rule"},
 	{"balancers.list", false, false, false, "Read balancers and edit references; extensions hidden unless requested"},
+	{"balancers.live", true, false, false, "Read live preferred targets and overrides from Xray"},
 	{"balancers.put", true, true, false, "Create or replace one native balancer"},
 	{"balancers.patch", true, true, false, "Change a balancer selector, strategy or fallback"},
 	{"balancers.delete", true, true, false, "Delete an unreferenced balancer"},
@@ -81,6 +82,7 @@ var agentOperations = []agentOperation{
 	{"observatories.selectors", true, true, false, "Change a monitor's outbound selectors"},
 	{"observatories.patch", true, true, false, "Change a monitor's probe interval or URL"},
 	{"observatories.delete", true, true, false, "Delete an unused health-check monitor"},
+	{"routing.api.enable", false, true, false, "Enable loopback-only routing diagnostics"},
 	{"outbounds.list", false, false, false, "List outbound tags and protocols without credentials"},
 	{"outbounds.inspect", false, false, false, "Read outbound summaries, server endpoints and edit references"},
 	{"outbounds.create", true, true, false, "Create a direct or blackhole outbound"},
@@ -651,6 +653,32 @@ func executeAgentOperation(cfg *BotConfig, operation agentOperation, raw []byte,
 		return redactBalancerRecords(records), nil
 	case "balancers.put", "balancers.patch", "balancers.delete":
 		return agentBalancerChange(cfg, name, raw, apply)
+	case "balancers.live":
+		var input agentTagInput
+		if err := decodeAgentInput(raw, &input); err != nil {
+			return nil, err
+		}
+		if input.Tag == "" {
+			return nil, errors.New("balancer tag is required")
+		}
+		return queryBalancerLive(cfg, input.Tag)
+	case "routing.api.enable":
+		if apply {
+			return agentMessage(enableRoutingService(cfg))
+		}
+		root, err := decodeBindingMigrationConfig(cfg.XrayConfigPath)
+		if err != nil {
+			return nil, err
+		}
+		server := cfg.StatsAPIServer
+		if server == "" {
+			server = "127.0.0.1:10085"
+		}
+		changed, err := applyRoutingService(root, server)
+		if err != nil {
+			return nil, err
+		}
+		return agentPreview(name, map[string]any{"change_needed": changed}), nil
 	case "observatories.list":
 		root, err := decodeBindingMigrationConfig(cfg.XrayConfigPath)
 		if err != nil {

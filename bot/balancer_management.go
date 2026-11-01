@@ -135,8 +135,10 @@ func validateBalancer(root, item map[string]any) error {
 	if err := validateOutboundSelectors(root, item["selector"]); err != nil {
 		return err
 	}
+	fallback := ""
 	if value, exists := item["fallbackTag"]; exists && value != nil {
-		fallback, ok := value.(string)
+		var ok bool
+		fallback, ok = value.(string)
 		if !ok {
 			return errors.New("fallback must be an outbound tag")
 		}
@@ -161,15 +163,16 @@ func validateBalancer(root, item map[string]any) error {
 		}
 	}
 	switch strategy {
-	case "random", "roundrobin":
-	case "leastping", "leastload":
-		if _, ok := getMap(root["observatory"]); !ok {
-			if _, ok = getMap(root["burstObservatory"]); !ok {
-				return errors.New("this strategy requires a configured observatory")
-			}
-		}
+	case "random", "roundrobin", "leastping", "leastload":
 	default:
 		return errors.New("unknown balancing strategy")
+	}
+	if fallback != "" || strategy == "leastping" || strategy == "leastload" {
+		if _, ok := getMap(root["observatory"]); !ok {
+			if _, ok = getMap(root["burstObservatory"]); !ok {
+				return errors.New("this strategy or fallback requires a configured observatory")
+			}
+		}
 	}
 	return nil
 }
