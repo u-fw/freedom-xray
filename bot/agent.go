@@ -93,6 +93,7 @@ var agentOperations = []agentOperation{
 	{"balancers.list", false, false, false, "Read balancers and edit references; extensions hidden unless requested"},
 	{"balancers.get", true, false, true, "Export one native balancer including strategy settings"},
 	{"balancers.live", true, false, false, "Read live preferred targets and overrides from Xray"},
+	{"balancers.override", true, true, false, "Temporarily force a matching outbound or restore automatic balancing"},
 	{"balancers.put", true, true, false, "Create or replace one native balancer"},
 	{"balancers.patch", true, true, false, "Change a balancer selector, strategy or fallback"},
 	{"balancers.delete", true, true, false, "Delete an unreferenced balancer"},
@@ -761,6 +762,8 @@ func executeAgentOperation(cfg *BotConfig, operation agentOperation, raw []byte,
 			return nil, errors.New("balancer tag is required")
 		}
 		return queryBalancerLive(cfg, input.Tag)
+	case "balancers.override":
+		return agentBalancerOverride(cfg, raw, apply)
 	case "routing.api.enable":
 		if apply {
 			return agentMessage(enableRoutingService(cfg))

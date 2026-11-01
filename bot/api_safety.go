@@ -26,6 +26,9 @@ func parseLoopbackAPIAddress(address string) (net.IP, int, error) {
 // Adding API services must not expose them through a public direct listener,
 // a broad route, a balancer, or an outbound proxy chain.
 func validateAPIAccess(root map[string]any, server string) (bool, error) {
+	if err := validateAPIFieldCasing(root); err != nil {
+		return false, err
+	}
 	wantedIP, wantedPort, err := parseLoopbackAPIAddress(server)
 	if err != nil {
 		return false, err

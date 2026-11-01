@@ -69,6 +69,14 @@ func balancerCallback(action, tag, etag string) string {
 }
 
 func findBalancerByCallback(root map[string]any, key, etag string) (balancerRecord, error) {
+	found, err := findBalancerByKey(root, key)
+	if err == nil && found.ETag != etag {
+		err = errBalancerChanged
+	}
+	return found, err
+}
+
+func findBalancerByKey(root map[string]any, key string) (balancerRecord, error) {
 	records, err := balancerRecords(root)
 	if err != nil {
 		return balancerRecord{}, err
@@ -81,7 +89,7 @@ func findBalancerByCallback(root map[string]any, key, etag string) (balancerReco
 			count++
 		}
 	}
-	if count != 1 || found.ETag != etag {
+	if count != 1 {
 		return balancerRecord{}, errBalancerChanged
 	}
 	return found, nil
@@ -280,8 +288,15 @@ func (s *BotService) sendBalancerDetailNotice(chatID int64, msgID int, key, etag
 }
 
 func (s *BotService) sendBalancerLive(chatID int64, msgID int, record balancerRecord) {
+	s.sendBalancerLiveNotice(chatID, msgID, record, "")
+}
+
+func (s *BotService) sendBalancerLiveNotice(chatID int64, msgID int, record balancerRecord, notice string) {
 	status, err := queryBalancerLive(s.cfg, record.Tag)
 	body := tr(s.cfg.Language, "balancer.live.title", mdEsc(record.Tag))
+	if notice != "" {
+		body = mdEsc(notice) + "\n\n" + body
+	}
 	var rows [][]tgbotapi.InlineKeyboardButton
 	if errors.Is(err, errRoutingServiceDisabled) {
 		body += tr(s.cfg.Language, "balancer.live.disabled")
@@ -297,9 +312,13 @@ func (s *BotService) sendBalancerLive(chatID int64, msgID int, record balancerRe
 		}
 		override := status.Override
 		if override == "" {
-			override = tr(s.cfg.Language, "balancer.live.none")
+			override = tr(s.cfg.Language, "balancer.override.auto")
 		}
 		body += tr(s.cfg.Language, "balancer.live.result", mdEsc(selected), mdEsc(override))
+		body += tr(s.cfg.Language, "balancer.override.runtime_note")
+		if s.cfg.AllowMutations {
+			rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.override.button"), balancerCallback("override", record.Tag, record.ETag))))
+		}
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.refresh"), balancerCallback("live", record.Tag, record.ETag)),
@@ -511,6 +530,10 @@ func (s *BotService) handleBalancerCallback(cb *tgbotapi.CallbackQuery) {
 	if len(parts) < 2 {
 		return
 	}
+	if parts[1] == "ol" || parts[1] == "op" {
+		s.handleBalancerOverrideCallback(cb)
+		return
+	}
 	if parts[1] == "page" && len(parts) == 3 {
 		offset, err := strconv.Atoi(parts[2])
 		if err == nil {
@@ -560,6 +583,17 @@ func (s *BotService) handleBalancerCallback(cb *tgbotapi.CallbackQuery) {
 		return
 	}
 	switch parts[1] {
+	case "override":
+		if len(parts) != 4 {
+			return
+		}
+		clearOtherRoutingInputs(chatID)
+		status, err := queryBalancerLive(s.cfg, record.Tag)
+		if err != nil {
+			s.sendBalancerLiveNotice(chatID, msgID, record, err.Error())
+			return
+		}
+		s.sendBalancerOverridePicker(chatID, msgID, record, status, 0)
 	case "json":
 		if len(parts) != 4 {
 			return

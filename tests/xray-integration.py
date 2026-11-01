@@ -90,6 +90,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         data = b"x" * 65536
         self.send_response(200)
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("X-Integration-Peer", self.client_address[0])
         self.end_headers()
         self.wfile.write(data)
 
@@ -167,6 +168,9 @@ def main():
         cdn_settings = server_config["inbounds"][2]["settings"]
         cdn_settings["users"] = cdn_settings.pop("clients")
         cdn_settings["clients"] = None
+        # Distinct loopback source addresses let HTTP traffic prove which
+        # outbound a manual runtime selection actually used.
+        server_config["outbounds"][1]["sendThrough"] = "127.0.0.2"
         processes = []
         try:
             server = start_xray(server_config, directory, "config")
@@ -265,6 +269,22 @@ def main():
             assert full_balancer["strategy"]["type"] == "roundRobin", full_balancer
             live = agent("balancers.live", {"tag": "pool"})
             assert live["tag"] == "pool" and set(live["selected"]) == {"direct", "direct2"}, live
+            assert set(live["override_targets"]) == {"direct", "direct2"} and len(live["state_etag"]) == 24, live
+            force = {"tag": "pool", "state_etag": live["state_etag"], "target": "direct2"}
+            assert not agent("balancers.override", force)["applied"]
+            switched = agent("balancers.override", force, "--apply")
+            assert switched["applied"] and switched["runtime_only"] and switched["status"]["override"] == "direct2", switched
+            headers = subprocess.run([
+                "curl", "-fsS", "--max-time", "10", "--noproxy", "",
+                "--socks5-hostname", f"127.0.0.1:{alice_raw}",
+                f"http://127.0.0.1:{httpd.server_port}/", "-o", os.devnull, "-D", "-",
+            ], check=True, capture_output=True, text=True, timeout=15).stdout
+            assert "X-Integration-Peer: 127.0.0.2" in headers, headers
+            restored = agent("balancers.override", {
+                "tag": "pool", "state_etag": switched["status"]["state_etag"], "target": "",
+            }, "--apply")
+            assert restored["applied"] and not restored["status"].get("override"), restored
+            assert server.poll() is None and (directory / "config.json").read_bytes() == original_config
             balance_preview = agent("balancers.patch", {
                 "tag": "pool", "etag": balancers[0]["etag"],
                 "field": "selector", "value": ["direct2"],
@@ -476,7 +496,7 @@ def main():
             assert fake_ip in ipaddress.ip_network("198.18.0.0/24"), fake_ip
             assert agent("xray.section.reset", section_ref("fakedns"), "--apply")["applied"]
             assert agent("xray.section.reset", section_ref("log"), "--apply")["applied"]
-            print("Real Xray advanced sections, FakeDNS responses, native client CRUD, authenticated VMess/Trojan traffic, balancing and isolated traffic reset passed")
+            print("Real Xray advanced sections, FakeDNS responses, native client CRUD, authenticated VMess/Trojan traffic, runtime balancing with verified egress and isolated traffic reset passed")
         except Exception:
             for index, process in enumerate(processes):
                 process.terminate()

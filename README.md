@@ -33,7 +33,7 @@ Run `sudo freedom` to open the terminal menu. The Telegram submenu can install t
 | Per-user/per-node traffic since binding migration | Aggregate user totals | Yes |
 | Per-user traffic quota and expiry with automatic suspension and admin notices | Local metadata | Yes |
 | Online users, source IPs and last-online information | Via collector | `/online`, `/onlinedoctor` and user details |
-| Routing rules, outbounds, balancers and DNS | Config file or agent CLI | `/routing` manages rules, outbound endpoints, balancers, DNS servers and static host mappings; live balancer diagnostics use a local Xray API; advanced objects use JSON |
+| Routing rules, outbounds, balancers and DNS | Config file or agent CLI | `/routing` manages rules, outbound endpoints, balancers, DNS servers and static host mappings; live balancer diagnostics and temporary target switching use a local Xray API; advanced objects use JSON |
 | Logging, connection policies and FakeDNS pools | Agent CLI, including preview and guarded apply | `/xrayconfig`: inspect common values, export, replace native JSON or restore defaults |
 | Xray start, stop and restart; statistics repair | Yes | Status and diagnostics menus (confirmation required) |
 | Bot and manager updates; Xray upgrades and rollback | Yes | Permission-gated |

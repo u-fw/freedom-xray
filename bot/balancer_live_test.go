@@ -114,7 +114,8 @@ func TestBalancerLiveWithRealXray(t *testing.T) {
 			if mode == "direct" {
 				root["api"] = map[string]any{"tag": "api", "listen": apiAddress}
 			}
-			root["routing"].(map[string]any)["balancers"] = []any{map[string]any{"tag": "pool", "selector": []any{"direct"}, "strategy": map[string]any{"type": "random"}}}
+			root["outbounds"] = append(root["outbounds"].([]any), map[string]any{"tag": "direct2", "protocol": "freedom"}, map[string]any{"tag": "-r", "protocol": "freedom"})
+			root["routing"].(map[string]any)["balancers"] = []any{map[string]any{"tag": "pool", "selector": []any{"direct", "-r"}, "strategy": map[string]any{"type": "random"}}}
 			if _, err := applyRoutingService(root, apiAddress); err != nil {
 				t.Fatal(err)
 			}
@@ -142,8 +143,36 @@ func TestBalancerLiveWithRealXray(t *testing.T) {
 			cfg := DefaultConfig()
 			cfg.XrayConfigPath, cfg.XrayBinPath, cfg.StatsAPIServer = path, bin, apiAddress
 			status, err := queryBalancerLive(cfg, "pool")
-			if err != nil || len(status.Selected) != 1 || status.Selected[0] != "direct" {
+			if err != nil || len(status.Selected) != 3 || len(status.OverrideTargets) != 3 || len(status.StateETag) != 24 {
 				t.Fatalf("incorrect live balancer status: %+v %v", status, err)
+			}
+			change := balancerOverrideChange{Tag: "pool", StateETag: status.StateETag, Target: "direct2"}
+			if _, err := setBalancerOverride(cfg, change, false); err != nil {
+				t.Fatal(err)
+			}
+			updated, err := setBalancerOverride(cfg, change, true)
+			if err != nil || updated.Override != "direct2" {
+				t.Fatalf("real override failed: %+v %v", updated, err)
+			}
+			// Another administrator changes the core directly. Its state must not
+			// be overwritten using the earlier review reference.
+			if out, err := exec.Command(bin, "api", "bo", "-server", apiAddress, "-b", "pool", "--", "direct").CombinedOutput(); err != nil {
+				t.Fatalf("external API switch failed: %v %s", err, out)
+			}
+			if _, err := setBalancerOverride(cfg, balancerOverrideChange{Tag: "pool", StateETag: updated.StateETag, Target: "-r"}, true); !errors.Is(err, errBalancerLiveChanged) {
+				t.Fatalf("overwrote an external runtime change: %v", err)
+			}
+			current, _ := queryBalancerLive(cfg, "pool")
+			literal, err := setBalancerOverride(cfg, balancerOverrideChange{Tag: "pool", StateETag: current.StateETag, Target: "-r"}, true)
+			if err != nil || literal.Override != "-r" {
+				t.Fatalf("option-like target was not treated literally: %+v %v", literal, err)
+			}
+			restored, err := setBalancerOverride(cfg, balancerOverrideChange{Tag: "pool", StateETag: literal.StateETag, Target: ""}, true)
+			if err != nil || restored.Override != "" {
+				t.Fatalf("real restore failed: %+v %v", restored, err)
+			}
+			if after, _ := os.ReadFile(path); !bytes.Equal(after, data) {
+				t.Fatal("runtime operations wrote the configuration")
 			}
 		})
 	}

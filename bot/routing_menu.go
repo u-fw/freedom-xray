@@ -26,6 +26,7 @@ type pendingRoutingChange struct {
 	Host                  *string
 	RuleEdit              *routingRuleEdit
 	Balancer              *balancerChange
+	Override              *balancerOverrideChange
 	Observatory           *observatoryChange
 	Outbound              *outboundChange
 	DNS                   *dnsChange
@@ -298,7 +299,9 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 		return
 	}
 	if !confirm {
-		if pending.EnableRoutingAPI {
+		if pending.Override != nil {
+			s.returnBalancerLiveLatest(chatID, msgID, pending.Override.Tag, "")
+		} else if pending.EnableRoutingAPI {
 			s.returnToBalancerLive(chatID, msgID, pending.LiveBalancerTag, pending.LiveBalancerETag)
 		} else if pending.XraySection != nil {
 			s.returnXraySection(chatID, msgID, pending.XraySection.Name, "")
@@ -344,6 +347,8 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 			}
 			message = tr(s.cfg.Language, "serverhost.done", mdEsc(host))
 		}
+	} else if pending.Override != nil {
+		_, err = setBalancerOverride(s.cfg, *pending.Override, true)
 	} else if pending.EnableRoutingAPI {
 		message, err = enableRoutingService(s.cfg)
 	} else if pending.XraySection != nil {
@@ -407,6 +412,14 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 		message, err = changeRoutingConfig(s.cfg.XrayConfigPath, s.cfg.XrayBinPath, s.cfg.StatsAPIServer, pending.Change)
 	}
 	if err != nil {
+		if pending.Override != nil {
+			notice := balancerOverrideFailure(s.cfg.Language, err)
+			if errors.Is(err, errBalancerLiveChanged) {
+				notice = tr(s.cfg.Language, "balancer.override.changed")
+			}
+			s.returnBalancerLiveLatest(chatID, msgID, pending.Override.Tag, notice)
+			return
+		}
 		if pending.XraySection != nil && errors.Is(err, errXraySectionChanged) {
 			s.returnXraySection(chatID, msgID, pending.XraySection.Name, tr(s.cfg.Language, "xray.section.changed"))
 			return
@@ -464,6 +477,10 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 			markup = routingPageBackMarkup(s.cfg.Language)
 		}
 		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.edit.failed", mdEsc(err.Error())), markup)
+		return
+	}
+	if pending.Override != nil {
+		s.returnBalancerLiveLatest(chatID, msgID, pending.Override.Tag, tr(s.cfg.Language, "balancer.override.done"))
 		return
 	}
 	if pending.EnableRoutingAPI {

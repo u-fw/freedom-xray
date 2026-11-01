@@ -17,9 +17,11 @@ import (
 var errRoutingServiceDisabled = errors.New("RoutingService is not enabled")
 
 type balancerLiveStatus struct {
-	Tag      string   `json:"tag"`
-	Selected []string `json:"selected"`
-	Override string   `json:"override,omitempty"`
+	Tag             string   `json:"tag"`
+	Selected        []string `json:"selected"`
+	Override        string   `json:"override,omitempty"`
+	StateETag       string   `json:"state_etag"`
+	OverrideTargets []string `json:"override_targets"`
 }
 
 type boundedCommandOutput struct {
@@ -49,25 +51,40 @@ func queryBalancerLive(cfg *BotConfig, tag string) (balancerLiveStatus, error) {
 	if err != nil {
 		return balancerLiveStatus{}, err
 	}
-	_, item, err := findBalancer(root, tag)
-	if err != nil || item == nil {
-		return balancerLiveStatus{}, errors.New("balancer not found")
-	}
+	return queryBalancerLiveFromRoot(cfg, root, tag)
+}
+
+func routingAPIAddress(cfg *BotConfig, root map[string]any) (string, error) {
 	server := cfg.StatsAPIServer
 	if server == "" {
 		server = "127.0.0.1:10085"
 	}
-	if _, err = validateAPIAccess(root, server); err != nil {
-		return balancerLiveStatus{}, fmt.Errorf("unsafe API configuration: %w", err)
+	if _, err := validateAPIAccess(root, server); err != nil {
+		return "", fmt.Errorf("unsafe API configuration: %w", err)
 	}
 	if !routingServiceConfigured(root) {
-		return balancerLiveStatus{}, errRoutingServiceDisabled
+		return "", errRoutingServiceDisabled
 	}
 	ip, port, err := parseLoopbackAPIAddress(server)
 	if err != nil {
+		return "", err
+	}
+	return net.JoinHostPort(ip.String(), strconv.Itoa(port)), nil
+}
+
+func queryBalancerLiveFromRoot(cfg *BotConfig, root map[string]any, tag string) (balancerLiveStatus, error) {
+	_, item, err := findBalancer(root, tag)
+	if err != nil || item == nil {
+		return balancerLiveStatus{}, errors.New("balancer not found")
+	}
+	address, err := routingAPIAddress(cfg, root)
+	if err != nil {
 		return balancerLiveStatus{}, err
 	}
-	address := net.JoinHostPort(ip.String(), strconv.Itoa(port))
+	targets, err := balancerOverrideTargets(root, item)
+	if err != nil {
+		return balancerLiveStatus{}, err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, cfg.XrayBinPath, "api", "bi", "-json", "-server", address, "-timeout", "3", "--", tag)
@@ -92,14 +109,17 @@ func queryBalancerLive(cfg *BotConfig, tag string) (balancerLiveStatus, error) {
 	if err := json.Unmarshal(output.Bytes(), &response); err != nil || response.Balancer == nil {
 		return balancerLiveStatus{}, errors.New("Xray returned an unsupported balancer status response")
 	}
-	result := balancerLiveStatus{Tag: tag, Selected: []string{}}
+	result := balancerLiveStatus{Tag: tag, Selected: []string{}, OverrideTargets: targets}
 	if response.Balancer.Override != nil {
 		result.Override = response.Balancer.Override.Target
 	}
 	if response.Balancer.PrincipleTarget != nil {
 		result.Selected = response.Balancer.PrincipleTarget.Tag
 	}
-	return result, nil
+	// Automatic strategy preferences can fluctuate. The review reference tracks
+	// configuration and manual override, not the strategy's transient selection.
+	result.StateETag, err = routingRuleETag(map[string]any{"config": root, "tag": tag, "override": result.Override})
+	return result, err
 }
 
 func applyRoutingService(root map[string]any, server string) (bool, error) {
