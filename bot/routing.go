@@ -1,11 +1,11 @@
 package main
 
 import (
- "encoding/json"
- "fmt"
- "os"
- "sort"
- "strings"
+	"encoding/json"
+	"fmt"
+	"os"
+	"sort"
+	"strings"
 )
 
 type routingRule struct {
@@ -25,27 +25,33 @@ type routingRule struct {
 }
 
 type routingSnapshot struct {
-	Rules          []routingRule `json:"rules"`
-	Outbounds      []string      `json:"outbounds"`
-	Balancers      []string      `json:"balancers"`
-	DomainStrategy string        `json:"domain_strategy"`
-	ScriptConfigured bool        `json:"script_configured"`
+	Rules            []routingRule `json:"rules"`
+	Outbounds        []string      `json:"outbounds"`
+	Balancers        []string      `json:"balancers"`
+	DomainStrategy   string        `json:"domain_strategy"`
+	ScriptConfigured bool          `json:"script_configured"`
 }
 
 func stringList(value any) []string {
- // Xray accepts a scalar string for fields such as port and sourcePort, and
- // arrays for domain, ip and tag lists. Preserve both shapes.
- if text,ok:=value.(string);ok {
-  if text==""{return nil}
-  return []string{text}
- }
- raw,ok:=value.([]any)
- if !ok{return nil}
- out:=make([]string,0,len(raw))
- for _,item:=range raw {
-  if text,ok:=item.(string);ok&&text!=""{out=append(out,text)}
- }
- return out
+	// Xray accepts a scalar string for fields such as port and sourcePort, and
+	// arrays for domain, ip and tag lists. Preserve both shapes.
+	if text, ok := value.(string); ok {
+		if text == "" {
+			return nil
+		}
+		return []string{text}
+	}
+	raw, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		if text, ok := item.(string); ok && text != "" {
+			out = append(out, text)
+		}
+	}
+	return out
 }
 
 // LoadRouting reads the routing section without modifying it. The Bot keeps
@@ -111,46 +117,63 @@ func LoadRouting(configPath string) (routingSnapshot, error) {
 }
 
 func routingPortList(value any) []string {
-	if number, ok := value.(float64); ok { return []string{fmt.Sprint(number)} }
+	if number, ok := value.(float64); ok {
+		return []string{fmt.Sprint(number)}
+	}
 	return stringList(value)
 }
 
-func joinOrEmpty(values []string,empty string) string {
- if len(values)==0{return empty}
- return strings.Join(values,", ")
+func joinOrEmpty(values []string, empty string) string {
+	if len(values) == 0 {
+		return empty
+	}
+	return strings.Join(values, ", ")
 }
 
-func routingCardText(snapshot routingSnapshot,lang string) string {
- var out strings.Builder
- out.WriteString(tr(lang,"routing.title"))
- strategy:=snapshot.DomainStrategy
- if strategy==""{strategy="default"}
- out.WriteString(tr(lang,"routing.summary",mdCode(strategy),len(snapshot.Rules),len(snapshot.Outbounds),len(snapshot.Balancers)))
- if len(snapshot.Rules)==0 {
-  out.WriteString(tr(lang,"routing.empty"))
- }else{
-  limit:=len(snapshot.Rules);if limit>20{limit=20}
-  for _,rule:=range snapshot.Rules[:limit] {
-   tag:=rule.RuleTag
-   if tag==""{tag=fmt.Sprintf("#%d",rule.Index)}
-   inbound:=joinOrEmpty(rule.InboundTags,tr(lang,"routing.any"))
-   outbound:=rule.OutboundTag
-   if rule.BalancerTag!=""{outbound="balancer:"+rule.BalancerTag}
-   if outbound==""{outbound=tr(lang,"routing.none")}
-   ports:=joinOrEmpty(rule.Ports,tr(lang,"routing.none"))
-   protocols:=joinOrEmpty(rule.Protocols,tr(lang,"routing.none"))
-   out.WriteString(tr(lang,"routing.rule",
-    rule.Index,mdCode(truncateLabel(tag,24)),mdCode(truncateLabel(inbound,40)),mdCode(truncateLabel(outbound,40)),
-    len(rule.Domains),len(rule.IPs),mdCode(truncateLabel(ports,40)),mdCode(truncateLabel(protocols,40))))
-  }
-  if len(snapshot.Rules)>limit{out.WriteString(tr(lang,"routing.truncated",limit))}
- }
- out.WriteString(tr(lang,"routing.outbounds",mdCode(truncateLabel(joinOrEmpty(snapshot.Outbounds,tr(lang,"routing.none")),180))))
- out.WriteString(tr(lang,"routing.balancers",mdCode(truncateLabel(joinOrEmpty(snapshot.Balancers,tr(lang,"routing.none")),180))))
- out.WriteString(tr(lang,"routing.note"))
- return out.String()
+func routingCardText(snapshot routingSnapshot, lang string) string {
+	var out strings.Builder
+	out.WriteString(tr(lang, "routing.title"))
+	strategy := snapshot.DomainStrategy
+	if strategy == "" {
+		strategy = "default"
+	}
+	out.WriteString(tr(lang, "routing.summary", mdCode(strategy), len(snapshot.Rules), len(snapshot.Outbounds), len(snapshot.Balancers)))
+	if len(snapshot.Rules) == 0 {
+		out.WriteString(tr(lang, "routing.empty"))
+	} else {
+		limit := len(snapshot.Rules)
+		if limit > 20 {
+			limit = 20
+		}
+		for _, rule := range snapshot.Rules[:limit] {
+			tag := rule.RuleTag
+			if tag == "" {
+				tag = fmt.Sprintf("#%d", rule.Index)
+			}
+			inbound := joinOrEmpty(rule.InboundTags, tr(lang, "routing.any"))
+			outbound := rule.OutboundTag
+			if rule.BalancerTag != "" {
+				outbound = "balancer:" + rule.BalancerTag
+			}
+			if outbound == "" {
+				outbound = tr(lang, "routing.none")
+			}
+			ports := joinOrEmpty(rule.Ports, tr(lang, "routing.none"))
+			protocols := joinOrEmpty(rule.Protocols, tr(lang, "routing.none"))
+			out.WriteString(tr(lang, "routing.rule",
+				rule.Index, mdCode(truncateLabel(tag, 24)), mdCode(truncateLabel(inbound, 40)), mdCode(truncateLabel(outbound, 40)),
+				len(rule.Domains), len(rule.IPs), mdCode(truncateLabel(ports, 40)), mdCode(truncateLabel(protocols, 40))))
+		}
+		if len(snapshot.Rules) > limit {
+			out.WriteString(tr(lang, "routing.truncated", limit))
+		}
+	}
+	out.WriteString(tr(lang, "routing.outbounds", mdCode(truncateLabel(joinOrEmpty(snapshot.Outbounds, tr(lang, "routing.none")), 180))))
+	out.WriteString(tr(lang, "routing.balancers", mdCode(truncateLabel(joinOrEmpty(snapshot.Balancers, tr(lang, "routing.none")), 180))))
+	out.WriteString(tr(lang, "routing.note"))
+	return out.String()
 }
 
 func (s *BotService) sendRoutingCard(chatID int64, msgID int) {
-	s.sendRoutingPage(chatID,msgID,0,"")
+	s.sendRoutingPage(chatID, msgID, 0, "")
 }

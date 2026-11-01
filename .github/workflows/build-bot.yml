@@ -51,6 +51,9 @@ jobs:
       - name: Verify Bot before publishing
         working-directory: bot
         run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then printf 'Run gofmt on:\n%s\n' "$unformatted"; exit 1; fi
+          go vet ./...
           go test ./...
           go test -race ./...
 

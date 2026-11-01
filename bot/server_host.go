@@ -25,103 +25,127 @@ import (
 const serverHostCacheTTL = 10 * time.Minute
 
 var (
- serverHostCacheMu sync.Mutex
- serverHostCache   string
- serverHostExpires time.Time
+	serverHostCacheMu sync.Mutex
+	serverHostCache   string
+	serverHostExpires time.Time
 )
 
 var serverHostDiscoveryTargets = []string{
- "https://api.ip.sb/ip",
- "https://api.ipify.org",
- "https://ifconfig.me/ip",
- "https://ipv4.icanhazip.com",
+	"https://api.ip.sb/ip",
+	"https://api.ipify.org",
+	"https://ifconfig.me/ip",
+	"https://ipv4.icanhazip.com",
 }
 
 var serverHostnamePattern = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$`)
 
 // normalizeServerHost accepts a bare DNS name or IP literal. Brackets around an
 // IPv6 literal are removed because formatHost adds them when the link is built.
-func normalizeServerHost(value string) (string,error) {
- host:=strings.TrimSpace(value)
- if host=="" {return "",nil}
- if strings.HasPrefix(host,"[")&&strings.HasSuffix(host,"]") {
-  host=strings.TrimSuffix(strings.TrimPrefix(host,"["),"]")
- }
- if ip:=net.ParseIP(host);ip!=nil {
-  if ip.IsLoopback()||ip.IsUnspecified()||ip.IsMulticast() {
-   return "",errors.New("must not be a loopback, unspecified, or multicast address")
-  }
-  return host,nil
- }
- host=strings.TrimSuffix(host,".")
- if len(host)==0||len(host)>253||!serverHostnamePattern.MatchString(host) {
-  return "",errors.New("must be a DNS hostname or IP address without a scheme, path, or port")
- }
- return host,nil
+func normalizeServerHost(value string) (string, error) {
+	host := strings.TrimSpace(value)
+	if host == "" {
+		return "", nil
+	}
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsUnspecified() || ip.IsMulticast() {
+			return "", errors.New("must not be a loopback, unspecified, or multicast address")
+		}
+		return host, nil
+	}
+	host = strings.TrimSuffix(host, ".")
+	if len(host) == 0 || len(host) > 253 || !serverHostnamePattern.MatchString(host) {
+		return "", errors.New("must be a DNS hostname or IP address without a scheme, path, or port")
+	}
+	return host, nil
 }
 
 func isGlobalUnicastIP(ip net.IP) bool {
- return ip!=nil&&ip.IsGlobalUnicast()&&!ip.IsPrivate()&&!ip.IsLoopback()&&!ip.IsUnspecified()&&!ip.IsLinkLocalUnicast()
+	return ip != nil && ip.IsGlobalUnicast() && !ip.IsPrivate() && !ip.IsLoopback() && !ip.IsUnspecified() && !ip.IsLinkLocalUnicast()
 }
 
 // interfacePublicHost is a last-resort fallback for hosts where the public-IP
 // HTTP endpoints are unreachable. It deliberately rejects private addresses:
 // a NATed VPS needs an explicit server_host because clients cannot dial it.
 func interfacePublicHost() string {
- interfaces,err:=net.Interfaces()
- if err!=nil{return ""}
- var v6 string
- for _,iface:=range interfaces {
-  if iface.Flags&net.FlagUp==0||iface.Flags&net.FlagLoopback!=0 {continue}
-  addresses,err:=iface.Addrs()
-  if err!=nil{continue}
-  for _,address:=range addresses {
-   var ip net.IP
-   switch value:=address.(type) {
-   case *net.IPNet:
-    ip=value.IP
-   case *net.IPAddr:
-    ip=value.IP
-   default:
-    continue
-   }
-   if !isGlobalUnicastIP(ip) {continue}
-   if ip4:=ip.To4();ip4!=nil{return ip4.String()}
-   if v6==""{v6=ip.String()}
-  }
- }
- return v6
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	var v6 string
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addresses, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, address := range addresses {
+			var ip net.IP
+			switch value := address.(type) {
+			case *net.IPNet:
+				ip = value.IP
+			case *net.IPAddr:
+				ip = value.IP
+			default:
+				continue
+			}
+			if !isGlobalUnicastIP(ip) {
+				continue
+			}
+			if ip4 := ip.To4(); ip4 != nil {
+				return ip4.String()
+			}
+			if v6 == "" {
+				v6 = ip.String()
+			}
+		}
+	}
+	return v6
 }
 
-func fetchPublicIPv4(ctx context.Context,client *http.Client,endpoint string) (string,error) {
- request,err:=http.NewRequestWithContext(ctx,http.MethodGet,endpoint,nil)
- if err!=nil{return "",err}
- request.Header.Set("User-Agent","freedom-bot/public-address")
- response,err:=client.Do(request)
- if err!=nil{return "",err}
- defer response.Body.Close()
- if response.StatusCode!=http.StatusOK {return "",fmt.Errorf("HTTP %d",response.StatusCode)}
- body,err:=io.ReadAll(io.LimitReader(response.Body,256))
- if err!=nil{return "",err}
- ip:=net.ParseIP(strings.TrimSpace(string(body)))
- if ip==nil||ip.To4()==nil||!isGlobalUnicastIP(ip) {
-  return "",fmt.Errorf("endpoint returned an unusable address")
- }
- return ip.To4().String(),nil
+func fetchPublicIPv4(ctx context.Context, client *http.Client, endpoint string) (string, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("User-Agent", "freedom-bot/public-address")
+	response, err := client.Do(request)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("HTTP %d", response.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, 256))
+	if err != nil {
+		return "", err
+	}
+	ip := net.ParseIP(strings.TrimSpace(string(body)))
+	if ip == nil || ip.To4() == nil || !isGlobalUnicastIP(ip) {
+		return "", fmt.Errorf("endpoint returned an unusable address")
+	}
+	return ip.To4().String(), nil
 }
 
 func cachedServerHostValue(now time.Time) string {
- serverHostCacheMu.Lock()
- defer serverHostCacheMu.Unlock()
- if serverHostCache==""||!now.Before(serverHostExpires) {return ""}
- return serverHostCache
+	serverHostCacheMu.Lock()
+	defer serverHostCacheMu.Unlock()
+	if serverHostCache == "" || !now.Before(serverHostExpires) {
+		return ""
+	}
+	return serverHostCache
 }
 
-func storeCachedServerHost(host string,now time.Time) {
- serverHostCacheMu.Lock()
- serverHostCache=host
- serverHostExpires=now.Add(serverHostCacheTTL)
- serverHostCacheMu.Unlock()
+func storeCachedServerHost(host string, now time.Time) {
+	serverHostCacheMu.Lock()
+	serverHostCache = host
+	serverHostExpires = now.Add(serverHostCacheTTL)
+	serverHostCacheMu.Unlock()
 }
 
 // resolveServerHost returns the address that clients should dial. An explicit
@@ -203,10 +227,10 @@ func resolveServerHost(cfg *BotConfig) (string, error) {
 // returns an empty string instead of the loopback address when discovery
 // fails, so link generation cannot silently emit an unusable REALITY host.
 func GetPublicIP() string {
- host,err:=resolveServerHost(nil)
- if err!=nil {
-  log.Printf("[ServerHost] %v",err)
-  return ""
- }
- return host
+	host, err := resolveServerHost(nil)
+	if err != nil {
+		log.Printf("[ServerHost] %v", err)
+		return ""
+	}
+	return host
 }

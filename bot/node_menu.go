@@ -15,26 +15,51 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-type pendingNodeChange struct{ Change NodeChange; ChatID int64; AdminID int64; Expires time.Time }
-type nodePathWizard struct {Tag string; AdminID int64; Expires time.Time; Kind string; Value string}
-
-var pendingNodes=struct{sync.Mutex;items map[string]pendingNodeChange}{items:map[string]pendingNodeChange{}}
-var nodePathWizards=struct{sync.Mutex;items map[int64]nodePathWizard}{items:map[int64]nodePathWizard{}}
-
-func findManagedNodeByKey(nodes []InboundDetails,key string) *InboundDetails {
- var found *InboundDetails
- for i:=range nodes {
-  if nodes[i].Protocol!="vless" || userCallbackKey(nodes[i].Tag)!=key {continue}
-  if found!=nil {return nil} // Reject ambiguous tags/callbacks.
-  found=&nodes[i]
- }
- return found
+type pendingNodeChange struct {
+	Change  NodeChange
+	ChatID  int64
+	AdminID int64
+	Expires time.Time
+}
+type nodePathWizard struct {
+	Tag     string
+	AdminID int64
+	Expires time.Time
+	Kind    string
+	Value   string
 }
 
-func maskRealityShortID(shortID,lang string) string {
- if shortID=="" {return tr(lang,"node.notconfigured")}
- if len(shortID)<=4 {return tr(lang,"node.hidden")}
- return shortID[:4]+"…"
+var pendingNodes = struct {
+	sync.Mutex
+	items map[string]pendingNodeChange
+}{items: map[string]pendingNodeChange{}}
+var nodePathWizards = struct {
+	sync.Mutex
+	items map[int64]nodePathWizard
+}{items: map[int64]nodePathWizard{}}
+
+func findManagedNodeByKey(nodes []InboundDetails, key string) *InboundDetails {
+	var found *InboundDetails
+	for i := range nodes {
+		if nodes[i].Protocol != "vless" || userCallbackKey(nodes[i].Tag) != key {
+			continue
+		}
+		if found != nil {
+			return nil
+		} // Reject ambiguous tags/callbacks.
+		found = &nodes[i]
+	}
+	return found
+}
+
+func maskRealityShortID(shortID, lang string) string {
+	if shortID == "" {
+		return tr(lang, "node.notconfigured")
+	}
+	if len(shortID) <= 4 {
+		return tr(lang, "node.hidden")
+	}
+	return shortID[:4] + "…"
 }
 
 func nodeChangeFieldLabel(lang, kind string) string {
@@ -75,8 +100,8 @@ func nodeChangeFieldLabel(lang, kind string) string {
 	return kind
 }
 
-func (s *BotService) startNodeWizard(chatID,adminID int64,msgID int,tag,kind,prompt string){
- s.startNodeWizardValue(chatID,adminID,msgID,tag,kind,prompt,"")
+func (s *BotService) startNodeWizard(chatID, adminID int64, msgID int, tag, kind, prompt string) {
+	s.startNodeWizardValue(chatID, adminID, msgID, tag, kind, prompt, "")
 }
 
 func (s *BotService) startNodeWizardValue(chatID, adminID int64, msgID int, tag, kind, prompt, value string) {
@@ -252,96 +277,162 @@ func (s *BotService) sendNodeDetailSection(chatID int64, msgID int, key string, 
 	s.sendOrEdit(chatID, msgID, msg, tgbotapi.NewInlineKeyboardMarkup(visible...))
 }
 
-func (s *BotService) offerNodeChange(chatID,adminID int64,msgID int,change NodeChange){
- if !s.cfg.AllowMutations{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.mutationsdisabled"),s.backToMainMarkup());return}
- var randKey [8]byte
- if _,err:=rand.Read(randKey[:]);err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.tokenerror"));return}
- key:=hex.EncodeToString(randKey[:])
- pendingNodes.Lock()
- for token,v:=range pendingNodes.items {if time.Now().After(v.Expires){delete(pendingNodes.items,token)}}
- pendingNodes.items[key]=pendingNodeChange{Change:change,ChatID:chatID,AdminID:adminID,Expires:time.Now().Add(3*time.Minute)}
- pendingNodes.Unlock()
- note:=tr(s.cfg.Language,"node.changenote.generic")
- switch change.Kind {
- case "public_port": note=tr(s.cfg.Language,"node.changenote.publicport")
- case "reality_sni": note=tr(s.cfg.Language,"node.changenote.sni")
- case "port": note=tr(s.cfg.Language,"node.changenote.port")
- case "xhttp_host": note=tr(s.cfg.Language,"node.changenote.host")
- case "xhttp_padding": note=tr(s.cfg.Language,"node.changenote.padding")
- case "reality_short_id": note=tr(s.cfg.Language,"node.changenote.shortid")
- case "reality_dest": note=tr(s.cfg.Language,"node.changenote.dest")
- case "reality_target": note=tr(s.cfg.Language,"node.changenote.target")
- case "tls_pair": note=tr(s.cfg.Language,"node.changenote.certpair")
- case "alpn": note=tr(s.cfg.Language,"node.changenote.alpn")
- }
- value:=change.Value
- if value==""{value=tr(s.cfg.Language,"node.clear")}
- body:=tr(s.cfg.Language,"node.changebody",mdCode(change.Tag),mdEsc(nodeChangeFieldLabel(s.cfg.Language,change.Kind)),mdCode(value),note)
- keyboard:=tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-  tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.confirm"),"node_confirm:"+key),
-  tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.cancel"),"node_cancel:"+key)))
- s.sendOrEdit(chatID,msgID,body,keyboard)
+func (s *BotService) offerNodeChange(chatID, adminID int64, msgID int, change NodeChange) {
+	if !s.cfg.AllowMutations {
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.mutationsdisabled"), s.backToMainMarkup())
+		return
+	}
+	var randKey [8]byte
+	if _, err := rand.Read(randKey[:]); err != nil {
+		s.sendAlert(chatID, tr(s.cfg.Language, "node.tokenerror"))
+		return
+	}
+	key := hex.EncodeToString(randKey[:])
+	pendingNodes.Lock()
+	for token, v := range pendingNodes.items {
+		if time.Now().After(v.Expires) {
+			delete(pendingNodes.items, token)
+		}
+	}
+	pendingNodes.items[key] = pendingNodeChange{Change: change, ChatID: chatID, AdminID: adminID, Expires: time.Now().Add(3 * time.Minute)}
+	pendingNodes.Unlock()
+	note := tr(s.cfg.Language, "node.changenote.generic")
+	switch change.Kind {
+	case "public_port":
+		note = tr(s.cfg.Language, "node.changenote.publicport")
+	case "reality_sni":
+		note = tr(s.cfg.Language, "node.changenote.sni")
+	case "port":
+		note = tr(s.cfg.Language, "node.changenote.port")
+	case "xhttp_host":
+		note = tr(s.cfg.Language, "node.changenote.host")
+	case "xhttp_padding":
+		note = tr(s.cfg.Language, "node.changenote.padding")
+	case "reality_short_id":
+		note = tr(s.cfg.Language, "node.changenote.shortid")
+	case "reality_dest":
+		note = tr(s.cfg.Language, "node.changenote.dest")
+	case "reality_target":
+		note = tr(s.cfg.Language, "node.changenote.target")
+	case "tls_pair":
+		note = tr(s.cfg.Language, "node.changenote.certpair")
+	case "alpn":
+		note = tr(s.cfg.Language, "node.changenote.alpn")
+	}
+	value := change.Value
+	if value == "" {
+		value = tr(s.cfg.Language, "node.clear")
+	}
+	body := tr(s.cfg.Language, "node.changebody", mdCode(change.Tag), mdEsc(nodeChangeFieldLabel(s.cfg.Language, change.Kind)), mdCode(value), note)
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.confirm"), "node_confirm:"+key),
+		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.cancel"), "node_cancel:"+key)))
+	s.sendOrEdit(chatID, msgID, body, keyboard)
 }
 
 // offerNodeSecretChange confirms an operation whose new value is generated by
 // the Bot or intentionally omitted. Secret material is never rendered.
-func (s *BotService) offerNodeSecretChange(chatID,adminID int64,msgID int,change NodeChange,noteKey string){
- if !s.cfg.AllowMutations{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.mutationsdisabled"),s.backToMainMarkup());return}
- var randKey [8]byte
- if _,err:=rand.Read(randKey[:]);err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.tokenerror"));return}
- key:=hex.EncodeToString(randKey[:])
- pendingNodes.Lock()
- for token,v:=range pendingNodes.items {if time.Now().After(v.Expires){delete(pendingNodes.items,token)}}
- pendingNodes.items[key]=pendingNodeChange{Change:change,ChatID:chatID,AdminID:adminID,Expires:time.Now().Add(3*time.Minute)}
- pendingNodes.Unlock()
- body:=tr(s.cfg.Language,"node.secretchange",mdCode(change.Tag),mdEsc(nodeChangeFieldLabel(s.cfg.Language,change.Kind)),mdEsc(tr(s.cfg.Language,noteKey)))
- keyboard:=tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-  tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.confirm"),"node_confirm:"+key),
-  tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.cancel"),"node_cancel:"+key)))
- s.sendOrEdit(chatID,msgID,body,keyboard)
+func (s *BotService) offerNodeSecretChange(chatID, adminID int64, msgID int, change NodeChange, noteKey string) {
+	if !s.cfg.AllowMutations {
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.mutationsdisabled"), s.backToMainMarkup())
+		return
+	}
+	var randKey [8]byte
+	if _, err := rand.Read(randKey[:]); err != nil {
+		s.sendAlert(chatID, tr(s.cfg.Language, "node.tokenerror"))
+		return
+	}
+	key := hex.EncodeToString(randKey[:])
+	pendingNodes.Lock()
+	for token, v := range pendingNodes.items {
+		if time.Now().After(v.Expires) {
+			delete(pendingNodes.items, token)
+		}
+	}
+	pendingNodes.items[key] = pendingNodeChange{Change: change, ChatID: chatID, AdminID: adminID, Expires: time.Now().Add(3 * time.Minute)}
+	pendingNodes.Unlock()
+	body := tr(s.cfg.Language, "node.secretchange", mdCode(change.Tag), mdEsc(nodeChangeFieldLabel(s.cfg.Language, change.Kind)), mdEsc(tr(s.cfg.Language, noteKey)))
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.confirm"), "node_confirm:"+key),
+		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.cancel"), "node_cancel:"+key)))
+	s.sendOrEdit(chatID, msgID, body, keyboard)
 }
 
 // offerNodeTLSPair shows both paths because a certificate replacement must be
 // committed as one pair; validating either half alone would always fail.
-func (s *BotService) offerNodeTLSPair(chatID,adminID int64,msgID int,change NodeChange,noteKey string){
- if !s.cfg.AllowMutations{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.mutationsdisabled"),s.backToMainMarkup());return}
- var randKey [8]byte
- if _,err:=rand.Read(randKey[:]);err!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.tokenerror"));return}
- key:=hex.EncodeToString(randKey[:])
- pendingNodes.Lock()
- for token,v:=range pendingNodes.items {if time.Now().After(v.Expires){delete(pendingNodes.items,token)}}
- pendingNodes.items[key]=pendingNodeChange{Change:change,ChatID:chatID,AdminID:adminID,Expires:time.Now().Add(3*time.Minute)}
- pendingNodes.Unlock()
- body:=tr(s.cfg.Language,"node.certpairchange",mdCode(change.Tag),mdCode(change.Value),mdCode(change.Secret),mdEsc(tr(s.cfg.Language,noteKey)))
- keyboard:=tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-  tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.confirm"),"node_confirm:"+key),
-  tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.cancel"),"node_cancel:"+key)))
- s.sendOrEdit(chatID,msgID,body,keyboard)
+func (s *BotService) offerNodeTLSPair(chatID, adminID int64, msgID int, change NodeChange, noteKey string) {
+	if !s.cfg.AllowMutations {
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.mutationsdisabled"), s.backToMainMarkup())
+		return
+	}
+	var randKey [8]byte
+	if _, err := rand.Read(randKey[:]); err != nil {
+		s.sendAlert(chatID, tr(s.cfg.Language, "node.tokenerror"))
+		return
+	}
+	key := hex.EncodeToString(randKey[:])
+	pendingNodes.Lock()
+	for token, v := range pendingNodes.items {
+		if time.Now().After(v.Expires) {
+			delete(pendingNodes.items, token)
+		}
+	}
+	pendingNodes.items[key] = pendingNodeChange{Change: change, ChatID: chatID, AdminID: adminID, Expires: time.Now().Add(3 * time.Minute)}
+	pendingNodes.Unlock()
+	body := tr(s.cfg.Language, "node.certpairchange", mdCode(change.Tag), mdCode(change.Value), mdCode(change.Secret), mdEsc(tr(s.cfg.Language, noteKey)))
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.confirm"), "node_confirm:"+key),
+		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.cancel"), "node_cancel:"+key)))
+	s.sendOrEdit(chatID, msgID, body, keyboard)
 }
 
-func (s *BotService) confirmNodeChange(cb *tgbotapi.CallbackQuery,confirm bool){
- if cb.Message==nil||cb.Message.Chat==nil||cb.From==nil{return}
- chatID:=cb.Message.Chat.ID;msgID:=cb.Message.MessageID
- token:=strings.TrimPrefix(strings.TrimPrefix(cb.Data,"node_confirm:"),"node_cancel:")
- pendingNodes.Lock()
- p,ok:=pendingNodes.items[token]
- if ok&&p.ChatID==chatID&&p.AdminID==cb.From.ID{delete(pendingNodes.items,token)}
- pendingNodes.Unlock()
- if ok&&(p.ChatID!=chatID||p.AdminID!=cb.From.ID){s.sendAlert(chatID,tr(s.cfg.Language,"manage.owned"));return}
- if !ok||time.Now().After(p.Expires){s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.expired"),s.backToMainMarkup());return}
- if !confirm{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.cancelled"),s.backToMainMarkup());return}
- if !s.cfg.AllowMutations{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.denied"),s.backToMainMarkup());return}
- var result string
- var err error
- if p.Change.Kind=="public_port"{
-  port,parseErr:=strconv.Atoi(p.Change.Value)
-  if parseErr!=nil{s.sendAlert(chatID,tr(s.cfg.Language,"node.invalidport"));return}
-  result,err=SetInboundPublicPort(s.cfg.XrayConfigPath,p.Change.Tag,port)
- }else{
-  result,err=ChangeNodeConfig(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer,p.Change)
- }
- if err!=nil{log.Printf("[Bot] node update failed: %v",err);s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.updatefailed",err.Error()),s.backToMainMarkup());return}
- s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"node.updatesuccess",result),s.backToMainMarkup())
+func (s *BotService) confirmNodeChange(cb *tgbotapi.CallbackQuery, confirm bool) {
+	if cb.Message == nil || cb.Message.Chat == nil || cb.From == nil {
+		return
+	}
+	chatID := cb.Message.Chat.ID
+	msgID := cb.Message.MessageID
+	token := strings.TrimPrefix(strings.TrimPrefix(cb.Data, "node_confirm:"), "node_cancel:")
+	pendingNodes.Lock()
+	p, ok := pendingNodes.items[token]
+	if ok && p.ChatID == chatID && p.AdminID == cb.From.ID {
+		delete(pendingNodes.items, token)
+	}
+	pendingNodes.Unlock()
+	if ok && (p.ChatID != chatID || p.AdminID != cb.From.ID) {
+		s.sendAlert(chatID, tr(s.cfg.Language, "manage.owned"))
+		return
+	}
+	if !ok || time.Now().After(p.Expires) {
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.expired"), s.backToMainMarkup())
+		return
+	}
+	if !confirm {
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.cancelled"), s.backToMainMarkup())
+		return
+	}
+	if !s.cfg.AllowMutations {
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.denied"), s.backToMainMarkup())
+		return
+	}
+	var result string
+	var err error
+	if p.Change.Kind == "public_port" {
+		port, parseErr := strconv.Atoi(p.Change.Value)
+		if parseErr != nil {
+			s.sendAlert(chatID, tr(s.cfg.Language, "node.invalidport"))
+			return
+		}
+		result, err = SetInboundPublicPort(s.cfg.XrayConfigPath, p.Change.Tag, port)
+	} else {
+		result, err = ChangeNodeConfig(s.cfg.XrayConfigPath, s.cfg.XrayBinPath, s.cfg.StatsAPIServer, p.Change)
+	}
+	if err != nil {
+		log.Printf("[Bot] node update failed: %v", err)
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.updatefailed", err.Error()), s.backToMainMarkup())
+		return
+	}
+	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.updatesuccess", result), s.backToMainMarkup())
 }
 
 func (s *BotService) handleNodeCallback(cb *tgbotapi.CallbackQuery) {

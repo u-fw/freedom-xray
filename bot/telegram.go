@@ -22,35 +22,37 @@ import (
 
 // BotService wraps Telegram bot lifecycle and handlers
 type BotService struct {
-	cfg    *BotConfig
-	bot    *tgbotapi.BotAPI
-	stopCh chan struct{}
- collectorReady bool
- // startupNotice is set by main after a successful one-time migration and is
- // delivered once the polling loop has started.
- startupNotice string
+	cfg            *BotConfig
+	bot            *tgbotapi.BotAPI
+	stopCh         chan struct{}
+	collectorReady bool
+	// startupNotice is set by main after a successful one-time migration and is
+	// delivered once the polling loop has started.
+	startupNotice string
 }
 
-func telegramHTTPClient(socksAddress string) (*http.Client,error) {
+func telegramHTTPClient(socksAddress string) (*http.Client, error) {
 	httpClient := &http.Client{Timeout: 30 * time.Second}
 	if socksAddress != "" {
 		dialer, err := proxy.SOCKS5("tcp", socksAddress, nil, proxy.Direct)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create socks5 dialer: %w", err)
 		}
-		contextDialer,ok:=dialer.(proxy.ContextDialer)
-		if !ok{return nil,fmt.Errorf("socks5 dialer does not support cancellation")}
+		contextDialer, ok := dialer.(proxy.ContextDialer)
+		if !ok {
+			return nil, fmt.Errorf("socks5 dialer does not support cancellation")
+		}
 		httpClient.Transport = &http.Transport{
-			DialContext: func(ctx context.Context,network,addr string)(net.Conn,error) {
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				// net/http can detach a dial from the original request; bound it
 				// even when the proxy accepts TCP but never finishes SOCKS negotiation.
-				ctx,cancel:=context.WithTimeout(ctx,30*time.Second)
+				ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 				defer cancel()
-				return contextDialer.DialContext(ctx,network,addr)
+				return contextDialer.DialContext(ctx, network, addr)
 			},
 		}
 	}
-	return httpClient,nil
+	return httpClient, nil
 }
 
 // NewBotService initializes Telegram Bot with optional SOCKS5 proxy
@@ -60,8 +62,10 @@ func NewBotService(cfg *BotConfig) (*BotService, error) {
 	}
 
 	SetXrayBinPath(cfg.XrayBinPath)
-	httpClient,err:=telegramHTTPClient(cfg.Socks5Proxy)
-	if err!=nil{return nil,err}
+	httpClient, err := telegramHTTPClient(cfg.Socks5Proxy)
+	if err != nil {
+		return nil, err
+	}
 
 	bot, err := tgbotapi.NewBotAPIWithClient(cfg.Token, tgbotapi.APIEndpoint, httpClient)
 	if err != nil {
@@ -70,7 +74,7 @@ func NewBotService(cfg *BotConfig) (*BotService, error) {
 
 	log.Printf("[Bot] Authorized on account @%s (ID: %d)", bot.Self.UserName, bot.Self.ID)
 	if err := publishBotReadiness(); err != nil {
-		log.Printf("[Bot] Startup readiness marker failed: %v",err)
+		log.Printf("[Bot] Startup readiness marker failed: %v", err)
 	}
 
 	return &BotService{
@@ -91,10 +95,12 @@ func (s *BotService) Start() error {
 	}
 
 	// Independently persist traffic, even when no report or chat is requested.
- if !s.collectorReady {go s.runTrafficSampler()}
- go s.runLimitEnforcer()
+	if !s.collectorReady {
+		go s.runTrafficSampler()
+	}
+	go s.runLimitEnforcer()
 
- // Start periodic report if enabled
+	// Start periodic report if enabled
 	if s.cfg.ReportHours > 0 {
 		go s.runPeriodicReport()
 	}
@@ -114,10 +120,10 @@ func (s *BotService) Start() error {
 
 // Stop cleanly stops the bot
 func (s *BotService) Stop() {
-  if _,err:=snapshotTraffic(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer);err!=nil{
-    log.Printf("[Traffic] shutdown snapshot skipped: %v",err)
-  }
-  close(s.stopCh)
+	if _, err := snapshotTraffic(s.cfg.XrayConfigPath, s.cfg.XrayBinPath, s.cfg.StatsAPIServer); err != nil {
+		log.Printf("[Traffic] shutdown snapshot skipped: %v", err)
+	}
+	close(s.stopCh)
 }
 
 func (s *BotService) handleUpdate(update tgbotapi.Update) {
@@ -143,12 +149,12 @@ func (s *BotService) handleUpdate(update tgbotapi.Update) {
 		log.Printf("[Bot] Unauthorized access attempt from User ID: %d", senderID)
 		if isCallback && update.CallbackQuery != nil {
 			// Stop the client-side spinner on unauthorized button presses.
-			if _, err := s.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, tr(s.cfg.Language,"auth.denied"))); err != nil {
+			if _, err := s.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, tr(s.cfg.Language, "auth.denied"))); err != nil {
 				log.Printf("[Bot] answer unauthorized callback failed: %v", err)
 			}
 		}
 		if !isCallback && update.Message != nil && update.Message.Chat.IsPrivate() {
-			msg := tgbotapi.NewMessage(chatID, fmt.Sprintf(tr(s.cfg.Language,"auth.unauthorized"), senderID))
+			msg := tgbotapi.NewMessage(chatID, fmt.Sprintf(tr(s.cfg.Language, "auth.unauthorized"), senderID))
 			msg.ParseMode = "Markdown"
 			if _, err := s.bot.Send(msg); err != nil {
 				log.Printf("[Bot] send unauthorized notice failed: %v", err)
@@ -161,7 +167,9 @@ func (s *BotService) handleUpdate(update tgbotapi.Update) {
 	// In a private Telegram chat, chat ID equals the authorized user's ID.
 	if chatID != senderID || (update.Message != nil && !update.Message.Chat.IsPrivate()) ||
 		(update.CallbackQuery != nil && update.CallbackQuery.Message != nil && !update.CallbackQuery.Message.Chat.IsPrivate()) {
-		if isCallback { _,_ = s.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, tr(s.cfg.Language,"auth.privateonly"))) }
+		if isCallback {
+			_, _ = s.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, tr(s.cfg.Language, "auth.privateonly")))
+		}
 		return
 	}
 
@@ -276,7 +284,7 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 	chatID := cb.Message.Chat.ID
 	msgID := cb.Message.MessageID
 	data := cb.Data
-	if data=="menu_main" || data=="menu_users" || data=="menu_nodes" || data=="menu_routing" || data=="menu_traffic" || data=="menu_online" || data=="menu_status" || data=="menu_tools" {
+	if data == "menu_main" || data == "menu_users" || data == "menu_nodes" || data == "menu_routing" || data == "menu_traffic" || data == "menu_online" || data == "menu_status" || data == "menu_tools" {
 		clearOtherRoutingInputs(chatID)
 	}
 
@@ -284,7 +292,7 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 	case data == "menu_main":
 		s.sendMainMenu(chatID, msgID)
 	case data == "menu_tools":
-		s.sendToolsCard(chatID,msgID)
+		s.sendToolsCard(chatID, msgID)
 	case data == "menu_status":
 		s.sendStatusCard(chatID, msgID)
 	case data == "service_ask:start":
@@ -313,25 +321,25 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 		s.doStatsRepair(chatID, msgID)
 	case data == "menu_routing":
 		s.sendRoutingCard(chatID, msgID)
-	case strings.HasPrefix(data,"rt:"):
+	case strings.HasPrefix(data, "rt:"):
 		s.handleGuidedRoutingCallback(cb)
-	case strings.HasPrefix(data,"bl:"):
+	case strings.HasPrefix(data, "bl:"):
 		s.handleBalancerCallback(cb)
-	case strings.HasPrefix(data,"mo:"):
+	case strings.HasPrefix(data, "mo:"):
 		s.handleObservatoryCallback(cb)
-	case strings.HasPrefix(data,"ob:"):
+	case strings.HasPrefix(data, "ob:"):
 		s.handleOutboundCallback(cb)
-	case strings.HasPrefix(data,"dn:"):
+	case strings.HasPrefix(data, "dn:"):
 		s.handleDNSCallback(cb)
-	case strings.HasPrefix(data,"dh:"):
+	case strings.HasPrefix(data, "dh:"):
 		s.handleDNSHostCallback(cb)
-	case strings.HasPrefix(data,"ce:"):
+	case strings.HasPrefix(data, "ce:"):
 		s.handleNativeConfigExportCallback(cb)
-	case strings.HasPrefix(data,"xs:"):
+	case strings.HasPrefix(data, "xs:"):
 		s.handleXraySectionCallback(cb)
-	case strings.HasPrefix(data,"ni:"):
+	case strings.HasPrefix(data, "ni:"):
 		s.handleNativeInboundCallback(cb)
-	case strings.HasPrefix(data,"nc:"):
+	case strings.HasPrefix(data, "nc:"):
 		s.handleNativeClientCallback(cb)
 	case strings.HasPrefix(data, "routing_manage:"):
 		s.beginRoutingWizard(cb)
@@ -455,11 +463,14 @@ func (s *BotService) handleUserLinksCallback(chatID int64, payload string) {
 
 	_, loadErr := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if loadErr != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language,"users.linkreadfailed",loadErr.Error()))
+		s.sendAlert(chatID, tr(s.cfg.Language, "users.linkreadfailed", loadErr.Error()))
 		return
 	}
-	emails,dirErr := allDirectoryNames(s.cfg.XrayConfigPath)
-	if dirErr!=nil {s.sendAlert(chatID,tr(s.cfg.Language,"users.directoryreadfailed",dirErr.Error()));return}
+	emails, dirErr := allDirectoryNames(s.cfg.XrayConfigPath)
+	if dirErr != nil {
+		s.sendAlert(chatID, tr(s.cfg.Language, "users.directoryreadfailed", dirErr.Error()))
+		return
+	}
 
 	// Current format: a 16-hex-character email hash, stable across refreshes.
 	if len(payload) == 16 {
@@ -470,7 +481,7 @@ func (s *BotService) handleUserLinksCallback(chatID int64, payload string) {
 					return
 				}
 			}
-			s.sendAlert(chatID, tr(s.cfg.Language,"users.listchanged"))
+			s.sendAlert(chatID, tr(s.cfg.Language, "users.listchanged"))
 			s.sendUsersCard(chatID, 0)
 			return
 		}
@@ -482,7 +493,7 @@ func (s *BotService) handleUserLinksCallback(chatID int64, payload string) {
 			s.sendUserLinksAndQRs(chatID, emails[idx])
 			return
 		}
-		s.sendAlert(chatID, tr(s.cfg.Language,"users.listchanged"))
+		s.sendAlert(chatID, tr(s.cfg.Language, "users.listchanged"))
 		s.sendUsersCard(chatID, 0)
 		return
 	}
@@ -791,7 +802,7 @@ func (s *BotService) sendTrafficCard(chatID int64, msgID int) {
 
 	sb.WriteString(tr(s.cfg.Language, "traffic.note"))
 	trafficMissing := []string{}
-	if report, reportErr := inspectStatsSwitches(s.cfg.XrayConfigPath,s.cfg.StatsAPIServer); reportErr == nil {
+	if report, reportErr := inspectStatsSwitches(s.cfg.XrayConfigPath, s.cfg.StatsAPIServer); reportErr == nil {
 		trafficMissing = report.MissingTrafficLevels
 		if len(trafficMissing) > 0 {
 			sb.WriteString(tr(s.cfg.Language, "stats.traffic.off", mdCode(strings.Join(trafficMissing, ", "))))
@@ -820,45 +831,48 @@ func (s *BotService) sendTrafficCard(chatID int64, msgID int) {
 
 func (s *BotService) askTrafficReset(chatID int64, msgID int) {
 	if !s.cfg.AllowMutations {
-		s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"manage.writesdisabled"),s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
 		return
 	}
-	text := tr(s.cfg.Language,"traffic.resetconfirm")
+	text := tr(s.cfg.Language, "traffic.resetconfirm")
 	markup := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"traffic.resetbutton"), "traffic_reset_confirm"),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.cancel"), "menu_traffic"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "traffic.resetbutton"), "traffic_reset_confirm"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.cancel"), "menu_traffic"),
 		),
 	)
 	s.sendOrEdit(chatID, msgID, text, markup)
 }
 
 func (s *BotService) doTrafficReset(chatID int64, msgID int) {
- if !s.cfg.AllowMutations {
-  s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"manage.writesdisabled"),s.backToMainMarkup())
-  return
- }
- lock,lockErr:=acquireConfigLock(s.cfg.XrayConfigPath,10*time.Second)
- if lockErr!=nil{s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"traffic.lock",mdEsc(lockErr.Error())),s.backToMainMarkup());return}
- defer releaseConfigLock(lock)
+	if !s.cfg.AllowMutations {
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
+		return
+	}
+	lock, lockErr := acquireConfigLock(s.cfg.XrayConfigPath, 10*time.Second)
+	if lockErr != nil {
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "traffic.lock", mdEsc(lockErr.Error())), s.backToMainMarkup())
+		return
+	}
+	defer releaseConfigLock(lock)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	_, err := QueryTrafficStats(ctx, s.cfg.XrayBinPath, s.cfg.StatsAPIServer, true)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language,"traffic.reseterror",mdEsc(err.Error())), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "traffic.reseterror", mdEsc(err.Error())), s.backToMainMarkup())
 		return
 	}
 
 	if err := resetTrafficAllUsersLocked(s.cfg.XrayConfigPath); err != nil {
-		s.sendOrEdit(chatID,msgID,tr(s.cfg.Language,"traffic.partialreset",mdEsc(err.Error())),s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "traffic.partialreset", mdEsc(err.Error())), s.backToMainMarkup())
 		return
 	}
-	text := tr(s.cfg.Language,"traffic.resetsuccess")
+	text := tr(s.cfg.Language, "traffic.resetsuccess")
 	markup := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"traffic.view"), "menu_traffic"),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.back"), "menu_main"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "traffic.view"), "menu_traffic"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.back"), "menu_main"),
 		),
 	)
 	s.sendOrEdit(chatID, msgID, text, markup)
@@ -873,7 +887,7 @@ const nodesPerPage = 8
 func (s *BotService) sendNodesCardPage(chatID int64, msgID, offset int) {
 	nodes, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language,"nodes.failure",mdEsc(err.Error())), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "nodes.failure", mdEsc(err.Error())), s.backToMainMarkup())
 		return
 	}
 	var nativeNodes []nativeInboundRecord
@@ -890,30 +904,38 @@ func (s *BotService) sendNodesCardPage(chatID int64, msgID, offset int) {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(tr(s.cfg.Language,"nodes.title"))
+	sb.WriteString(tr(s.cfg.Language, "nodes.title"))
 
-	if offset < 0 || len(nodes) == 0 { offset = 0 }
-	if len(nodes) > 0 && offset >= len(nodes) { offset = ((len(nodes) - 1) / nodesPerPage) * nodesPerPage }
+	if offset < 0 || len(nodes) == 0 {
+		offset = 0
+	}
+	if len(nodes) > 0 && offset >= len(nodes) {
+		offset = ((len(nodes) - 1) / nodesPerPage) * nodesPerPage
+	}
 	end := offset + nodesPerPage
-	if end > len(nodes) { end = len(nodes) }
+	if end > len(nodes) {
+		end = len(nodes)
+	}
 	if len(nodes) == 0 {
-		sb.WriteString(tr(s.cfg.Language,"nodes.empty"))
+		sb.WriteString(tr(s.cfg.Language, "nodes.empty"))
 	} else {
-		sb.WriteString(tr(s.cfg.Language,"nodes.page",offset/nodesPerPage+1,(len(nodes)+nodesPerPage-1)/nodesPerPage,len(nodes)))
+		sb.WriteString(tr(s.cfg.Language, "nodes.page", offset/nodesPerPage+1, (len(nodes)+nodesPerPage-1)/nodesPerPage, len(nodes)))
 		for i, n := range nodes[offset:end] {
 			sni := n.SNI
 			if sni == "" {
 				sni = "-"
 			}
 			if n.Protocol == "vless" {
-				sb.WriteString(fmt.Sprintf(tr(s.cfg.Language,"nodes.row"),
+				sb.WriteString(fmt.Sprintf(tr(s.cfg.Language, "nodes.row"),
 					offset+i+1, mdEsc(n.Tag), n.SharePort(),
 					mdCode(strings.ToUpper(n.Protocol)), mdCode(strings.ToUpper(n.Network)),
 					mdCode(strings.ToUpper(n.Security)), mdCode(sni), len(n.Clients)))
 			} else {
 				port := "-"
-				if len(nativeNodes) == len(nodes) && nativeNodes[offset+i].Tag == safeInboundField(n.Tag) && nativeNodes[offset+i].Protocol == safeInboundField(n.Protocol) && nativeNodes[offset+i].Port != "" { port = nativeNodes[offset+i].Port }
-				sb.WriteString(fmt.Sprintf(tr(s.cfg.Language,"nodes.native_row"),
+				if len(nativeNodes) == len(nodes) && nativeNodes[offset+i].Tag == safeInboundField(n.Tag) && nativeNodes[offset+i].Protocol == safeInboundField(n.Protocol) && nativeNodes[offset+i].Port != "" {
+					port = nativeNodes[offset+i].Port
+				}
+				sb.WriteString(fmt.Sprintf(tr(s.cfg.Language, "nodes.native_row"),
 					offset+i+1, mdEsc(n.Tag), mdCode(port), mdCode(strings.ToUpper(n.Protocol)),
 					mdCode(strings.ToUpper(n.Network)), mdCode(strings.ToUpper(n.Security)), mdCode(sni)))
 			}
@@ -921,30 +943,43 @@ func (s *BotService) sendNodesCardPage(chatID int64, msgID, offset int) {
 	}
 
 	var nodeRows [][]tgbotapi.InlineKeyboardButton
-	for i,node:=range nodes[offset:end] {
-		if node.Protocol=="vless" {
-			nodeRows=append(nodeRows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⚙ "+truncateLabel(node.Tag,40),"node_detail:"+userCallbackKey(node.Tag))))
-		}else{
-			callback:="ni:page:0"
-			if len(nativeNodes)==len(nodes) {
-				record:=nativeNodes[offset+i]
-				if record.Tag==safeInboundField(node.Tag)&&record.Protocol==safeInboundField(node.Protocol){callback=nativeInboundCallback("v",record.Index,record.ETag)}
+	for i, node := range nodes[offset:end] {
+		if node.Protocol == "vless" {
+			nodeRows = append(nodeRows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⚙ "+truncateLabel(node.Tag, 40), "node_detail:"+userCallbackKey(node.Tag))))
+		} else {
+			callback := "ni:page:0"
+			if len(nativeNodes) == len(nodes) {
+				record := nativeNodes[offset+i]
+				if record.Tag == safeInboundField(node.Tag) && record.Protocol == safeInboundField(node.Protocol) {
+					callback = nativeInboundCallback("v", record.Index, record.ETag)
+				}
 			}
-			name:=node.Tag;if name==""{name=tr(s.cfg.Language,"inbound.native.untagged")}
-			nodeRows=append(nodeRows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⚙ "+truncateLabel(name,40),callback)))
+			name := node.Tag
+			if name == "" {
+				name = tr(s.cfg.Language, "inbound.native.untagged")
+			}
+			nodeRows = append(nodeRows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⚙ "+truncateLabel(name, 40), callback)))
 		}
 	}
 	var pages []tgbotapi.InlineKeyboardButton
 	if offset > 0 {
 		prev := offset - nodesPerPage
-		if prev < 0 { prev = 0 }
-		pages = append(pages, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.prev"),fmt.Sprintf("nodes_page:%d",prev)))
+		if prev < 0 {
+			prev = 0
+		}
+		pages = append(pages, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.prev"), fmt.Sprintf("nodes_page:%d", prev)))
 	}
-	if end < len(nodes) { pages = append(pages,tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.next"),fmt.Sprintf("nodes_page:%d",end))) }
-	if len(pages) > 0 { nodeRows = append(nodeRows,pages) }
-	nodeRows = append(nodeRows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"inbound.native.button"),"ni:page:0")))
-	if s.cfg.AllowMutations { nodeRows = append(nodeRows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"node.create.button"),"node_new_menu"))) }
-	nodeRows = append(nodeRows,tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.refresh"),fmt.Sprintf("nodes_page:%d",offset)),tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.back"),"menu_main")))
+	if end < len(nodes) {
+		pages = append(pages, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.next"), fmt.Sprintf("nodes_page:%d", end)))
+	}
+	if len(pages) > 0 {
+		nodeRows = append(nodeRows, pages)
+	}
+	nodeRows = append(nodeRows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "inbound.native.button"), "ni:page:0")))
+	if s.cfg.AllowMutations {
+		nodeRows = append(nodeRows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.create.button"), "node_new_menu")))
+	}
+	nodeRows = append(nodeRows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.refresh"), fmt.Sprintf("nodes_page:%d", offset)), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.back"), "menu_main")))
 	s.sendOrEdit(chatID, msgID, sb.String(), tgbotapi.NewInlineKeyboardMarkup(nodeRows...))
 }
 
@@ -959,52 +994,67 @@ const usersPerPage = 20
 func (s *BotService) sendUsersCardPage(chatID int64, msgID, offset int) {
 	_, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if err != nil {
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language,"users.failure",mdEsc(err.Error())), s.backToMainMarkup())
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "users.failure", mdEsc(err.Error())), s.backToMainMarkup())
 		return
 	}
 
-	emails,dirErr := allDirectoryNames(s.cfg.XrayConfigPath)
-	if dirErr!=nil {s.sendAlert(chatID,tr(s.cfg.Language,"users.directoryerror",dirErr.Error()));return}
+	emails, dirErr := allDirectoryNames(s.cfg.XrayConfigPath)
+	if dirErr != nil {
+		s.sendAlert(chatID, tr(s.cfg.Language, "users.directoryerror", dirErr.Error()))
+		return
+	}
 
-	total:=len(emails)
-	if offset<0 {offset=0}
-	if total==0 {offset=0} else if offset>=total {offset=((total-1)/usersPerPage)*usersPerPage}
-	end:=offset+usersPerPage
-	if end>total {end=total}
+	total := len(emails)
+	if offset < 0 {
+		offset = 0
+	}
+	if total == 0 {
+		offset = 0
+	} else if offset >= total {
+		offset = ((total - 1) / usersPerPage) * usersPerPage
+	}
+	end := offset + usersPerPage
+	if end > total {
+		end = total
+	}
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, email := range emails[offset:end] {
 		key := userCallbackKey(email)
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(truncateLabel("👤 "+email, 40),"manage_user:"+key),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"users.export"), "user_links:"+key),
+			tgbotapi.NewInlineKeyboardButtonData(truncateLabel("👤 "+email, 40), "manage_user:"+key),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "users.export"), "user_links:"+key),
 		))
 	}
 	rows = append([][]tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"users.add"),"manage_add"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"users.suspended"),"menu_disabled_users")),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "users.add"), "manage_add"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "users.suspended"), "menu_disabled_users")),
 	}, rows...)
 	if total > usersPerPage {
 		var nav []tgbotapi.InlineKeyboardButton
-		if offset>0 {
-			previous:=offset-usersPerPage
-			if previous<0 {previous=0}
-			nav=append(nav,tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.prev"),"users_page:"+strconv.Itoa(previous)))
+		if offset > 0 {
+			previous := offset - usersPerPage
+			if previous < 0 {
+				previous = 0
+			}
+			nav = append(nav, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.prev"), "users_page:"+strconv.Itoa(previous)))
 		}
-		if end<total {
-			nav=append(nav,tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.next"),"users_page:"+strconv.Itoa(end)))
+		if end < total {
+			nav = append(nav, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.next"), "users_page:"+strconv.Itoa(end)))
 		}
-		if len(nav)>0 {rows=append(rows,tgbotapi.NewInlineKeyboardRow(nav...))}
+		if len(nav) > 0 {
+			rows = append(rows, tgbotapi.NewInlineKeyboardRow(nav...))
+		}
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.back"), "menu_main"),
+		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.back"), "menu_main"),
 	))
 
-	text := tr(s.cfg.Language,"users.title")
+	text := tr(s.cfg.Language, "users.title")
 	if total == 0 {
-		text = tr(s.cfg.Language,"users.empty")
+		text = tr(s.cfg.Language, "users.empty")
 	} else if total > usersPerPage {
-		pages:=(total+usersPerPage-1)/usersPerPage
-		text += tr(s.cfg.Language,"users.page",offset/usersPerPage+1,pages,total)
+		pages := (total + usersPerPage - 1) / usersPerPage
+		text += tr(s.cfg.Language, "users.page", offset/usersPerPage+1, pages, total)
 	}
 
 	markup := tgbotapi.NewInlineKeyboardMarkup(rows...)
@@ -1016,8 +1066,8 @@ func (s *BotService) sendUsersCardPage(chatID int64, msgID, offset int) {
 // invalidate long VLESS URIs. QR is an optional attachment, never the only copy.
 // Legacy callback entry point: open an explicit selection menu, never auto-send
 // every QR and never silently drop a long REALITY URI.
-func (s *BotService) sendUserLinksAndQRs(chatID int64,email string) {
- s.sendUserExportMenu(chatID,0,email)
+func (s *BotService) sendUserLinksAndQRs(chatID int64, email string) {
+	s.sendUserExportMenu(chatID, 0, email)
 }
 
 func (s *BotService) askRestart(chatID int64, msgID int) {
@@ -1068,30 +1118,39 @@ func (s *BotService) doRestart(chatID int64, msgID int) {
 }
 
 func (s *BotService) sendBackupFile(chatID int64) {
-  if !s.cfg.AllowSensitiveBackup {
-    s.sendAlert(chatID,tr(s.cfg.Language,"backup.disabled"))
-    return
-  }
+	if !s.cfg.AllowSensitiveBackup {
+		s.sendAlert(chatID, tr(s.cfg.Language, "backup.disabled"))
+		return
+	}
 	if _, err := os.Stat(s.cfg.XrayConfigPath); err != nil {
-		s.sendAlert(chatID, tr(s.cfg.Language,"backup.missing",s.cfg.XrayConfigPath))
+		s.sendAlert(chatID, tr(s.cfg.Language, "backup.missing", s.cfg.XrayConfigPath))
 		return
 	}
 
 	doc := tgbotapi.NewDocument(chatID, tgbotapi.FilePath(s.cfg.XrayConfigPath))
-	doc.Caption = fmt.Sprintf(tr(s.cfg.Language,"backup.caption"), time.Now().Format("2006-01-02 15:04:05"))
+	doc.Caption = fmt.Sprintf(tr(s.cfg.Language, "backup.caption"), time.Now().Format("2006-01-02 15:04:05"))
 	if _, err := s.bot.Send(doc); err != nil {
 		log.Printf("[Bot] send backup document failed: %v", err)
 	}
 }
 
 func (s *BotService) runTrafficSampler() {
- ticker:=time.NewTicker(15*time.Second)
- defer ticker.Stop()
- sample:=func(){if _,err:=snapshotTraffic(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer);err!=nil{
-  log.Printf("[Traffic] background snapshot failed: %v",err)
- }}
- sample()
- for {select{case <-s.stopCh:return;case <-ticker.C:sample()}}
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	sample := func() {
+		if _, err := snapshotTraffic(s.cfg.XrayConfigPath, s.cfg.XrayBinPath, s.cfg.StatsAPIServer); err != nil {
+			log.Printf("[Traffic] background snapshot failed: %v", err)
+		}
+	}
+	sample()
+	for {
+		select {
+		case <-s.stopCh:
+			return
+		case <-ticker.C:
+			sample()
+		}
+	}
 }
 
 func (s *BotService) runPeriodicReport() {
@@ -1110,25 +1169,27 @@ func (s *BotService) runPeriodicReport() {
 
 func (s *BotService) broadcastReport() {
 	stats, _ := GetSystemStats()
- state,err:=snapshotTraffic(s.cfg.XrayConfigPath,s.cfg.XrayBinPath,s.cfg.StatsAPIServer)
- if err!=nil {state,_=loadTrafficStore(s.cfg.XrayConfigPath)}
- traffics:=storedUserTraffic(state)
+	state, err := snapshotTraffic(s.cfg.XrayConfigPath, s.cfg.XrayBinPath, s.cfg.StatsAPIServer)
+	if err != nil {
+		state, _ = loadTrafficStore(s.cfg.XrayConfigPath)
+	}
+	traffics := storedUserTraffic(state)
 
 	var sb strings.Builder
-	sb.WriteString(tr(s.cfg.Language,"report.title"))
+	sb.WriteString(tr(s.cfg.Language, "report.title"))
 	if stats != nil {
-		sb.WriteString(tr(s.cfg.Language,"report.host",
+		sb.WriteString(tr(s.cfg.Language, "report.host",
 			mdCode(stats.Hostname), mdCode(stats.XrayStatus),
 			stats.CPUUsagePct, stats.MemUsagePct, stats.DiskUsagePct,
 		))
 	}
 
-	sb.WriteString(tr(s.cfg.Language,"report.top"))
+	sb.WriteString(tr(s.cfg.Language, "report.top"))
 	if len(traffics) == 0 {
-		sb.WriteString(tr(s.cfg.Language,"report.empty"))
+		sb.WriteString(tr(s.cfg.Language, "report.empty"))
 	} else {
 		for _, u := range traffics {
-			sb.WriteString(tr(s.cfg.Language,"report.row",
+			sb.WriteString(tr(s.cfg.Language, "report.row",
 				mdCode(u.Email), FormatBytes(u.Uplink), FormatBytes(u.Downlink), FormatBytes(u.Total)))
 		}
 	}
@@ -1142,7 +1203,7 @@ func (s *BotService) broadcastReport() {
 func (s *BotService) backToMainMarkup() tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language,"common.back"), "menu_main"),
+			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.back"), "menu_main"),
 		),
 	)
 }

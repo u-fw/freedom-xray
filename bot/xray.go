@@ -24,33 +24,33 @@ type XrayClient struct {
 
 // InboundDetails holds parsed business node information
 type InboundDetails struct {
-	Tag           string
-	Port          int
-	PublicPort    int // client-facing HTTPS port; does not alter listener
-	Protocol      string
-	Network       string
-	Security      string
-	SNI           string
-	PublicKey     string
-	PrivateKey    string
-	MLDSA65Seed   string
-	ShortID       string
-	SpiderX       string
-	Dest          string
-	Target        string
-	Xver          int
-	MaxTimeDiff   int64
-	XHTTPPath     string
-	XHTTPHost     string
-	XHTTPMode     string
-	XHTTPPaddingBytes string
-	ClientEncrypt string
-	Decryption    string
-	CertFile      string
-	KeyFile       string
-	ALPN          []string
+	Tag                  string
+	Port                 int
+	PublicPort           int // client-facing HTTPS port; does not alter listener
+	Protocol             string
+	Network              string
+	Security             string
+	SNI                  string
+	PublicKey            string
+	PrivateKey           string
+	MLDSA65Seed          string
+	ShortID              string
+	SpiderX              string
+	Dest                 string
+	Target               string
+	Xver                 int
+	MaxTimeDiff          int64
+	XHTTPPath            string
+	XHTTPHost            string
+	XHTTPMode            string
+	XHTTPPaddingBytes    string
+	ClientEncrypt        string
+	Decryption           string
+	CertFile             string
+	KeyFile              string
+	ALPN                 []string
 	TrustedXForwardedFor []string
-	Clients       []XrayClient
+	Clients              []XrayClient
 }
 
 // UserTraffic holds traffic stats for one user
@@ -92,7 +92,9 @@ func runXrayHelper(args ...string) (string, error) {
 		// Helper arguments may contain REALITY private keys or ML-DSA seeds.
 		// Report only the subcommand; callers log this error and may show it in Telegram.
 		command := "helper"
-		if len(args)>0 {command=args[0]}
+		if len(args) > 0 {
+			command = args[0]
+		}
 		return string(out), fmt.Errorf("xray %s: %w", command, err)
 	}
 	return string(out), nil
@@ -184,33 +186,51 @@ func deriveMLDSA65Verify(seed string) string {
 }
 
 func intValue(value any) int {
- switch v:=value.(type) {
- case float64:return int(v)
- case json.Number:n,err:=v.Int64();if err==nil{return int(n)}
- case int:return v
- case int64:return int(v)
- }
- return 0
+	switch v := value.(type) {
+	case float64:
+		return int(v)
+	case json.Number:
+		n, err := v.Int64()
+		if err == nil {
+			return int(n)
+		}
+	case int:
+		return v
+	case int64:
+		return int(v)
+	}
+	return 0
 }
 
 func int64Value(value any) int64 {
- switch v:=value.(type) {
- case float64:return int64(v)
- case json.Number:n,err:=v.Int64();if err==nil{return n}
- case int:return int64(v)
- case int64:return v
- }
- return 0
+	switch v := value.(type) {
+	case float64:
+		return int64(v)
+	case json.Number:
+		n, err := v.Int64()
+		if err == nil {
+			return n
+		}
+	case int:
+		return int64(v)
+	case int64:
+		return v
+	}
+	return 0
 }
 
 func stringValues(value any) []string {
- raw,ok:=value.([]any)
- if !ok{return nil}
- out:=make([]string,0,len(raw))
- for _,item:=range raw {
-  if text,ok:=item.(string);ok&&text!=""{out=append(out,text)}
- }
- return out
+	raw, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		if text, ok := item.(string); ok && text != "" {
+			out = append(out, text)
+		}
+	}
+	return out
 }
 
 // LoadXrayInbounds parses /usr/local/etc/xray/config.json into InboundDetails
@@ -336,17 +356,21 @@ func LoadXrayInbounds(configPath string) ([]InboundDetails, error) {
 				node.XHTTPHost, _ = xhttp["host"].(string)
 				node.XHTTPMode, _ = xhttp["mode"].(string)
 				// Prefer the official nested extra when present, but keep legacy top-level compatibility.
-    if extra,ok:=xhttp["extra"].(map[string]interface{});ok {
-     node.XHTTPPaddingBytes,_=extra["xPaddingBytes"].(string)
-    }
-    if node.XHTTPPaddingBytes=="" {node.XHTTPPaddingBytes,_=xhttp["xPaddingBytes"].(string)}
+				if extra, ok := xhttp["extra"].(map[string]interface{}); ok {
+					node.XHTTPPaddingBytes, _ = extra["xPaddingBytes"].(string)
+				}
+				if node.XHTTPPaddingBytes == "" {
+					node.XHTTPPaddingBytes, _ = xhttp["xPaddingBytes"].(string)
+				}
 			}
 		}
 
 		inbounds = append(inbounds, node)
 	}
 
-	if err:=attachInboundPublicPorts(configPath,inbounds);err!=nil{return nil,err}
+	if err := attachInboundPublicPorts(configPath, inbounds); err != nil {
+		return nil, err
+	}
 	return inbounds, nil
 }
 
@@ -408,17 +432,21 @@ func formatHost(host string) string {
 const defaultXHTTPECHConfig = "cloudflare-ech.com+https://dns.alidns.com/dns-query"
 
 func (node *InboundDetails) xhttpShareExtra() string {
- padding:=node.XHTTPPaddingBytes
- if padding=="" {padding="100-1000"}
- extra,_:=json.Marshal(struct {
-  XPaddingBytes string `json:"xPaddingBytes"`
- }{XPaddingBytes:padding})
- return string(extra)
+	padding := node.XHTTPPaddingBytes
+	if padding == "" {
+		padding = "100-1000"
+	}
+	extra, _ := json.Marshal(struct {
+		XPaddingBytes string `json:"xPaddingBytes"`
+	}{XPaddingBytes: padding})
+	return string(extra)
 }
 
 func (node *InboundDetails) SharePort() int {
- if node.PublicPort>=1&&node.PublicPort<=65535{return node.PublicPort}
- return node.Port
+	if node.PublicPort >= 1 && node.PublicPort <= 65535 {
+		return node.PublicPort
+	}
+	return node.Port
 }
 
 // GenerateVlessURI builds a standard vless:// URI for the given client.
@@ -437,11 +465,11 @@ func (node *InboundDetails) GenerateVlessURI(client XrayClient, serverHost strin
 	if encryption == "" {
 		encryption = "none"
 	}
- if node.Network=="xhttp" && encryption=="none" && flow!="" {
-  // Vision is meaningful on XHTTP only together with VLESS Encryption.
-  log.Printf("[Xray] node %s: removed incompatible XHTTP Vision (encryption=none) from exported URI",node.Tag)
-  flow=""
- }
+	if node.Network == "xhttp" && encryption == "none" && flow != "" {
+		// Vision is meaningful on XHTTP only together with VLESS Encryption.
+		log.Printf("[Xray] node %s: removed incompatible XHTTP Vision (encryption=none) from exported URI", node.Tag)
+		flow = ""
+	}
 
 	q := url.Values{}
 	q.Set("type", node.Network)

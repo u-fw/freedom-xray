@@ -1,98 +1,170 @@
 package main
 
 import (
- "os"
- "path/filepath"
- "reflect"
- "regexp"
- "strings"
- "testing"
- "unicode"
+	"os"
+	"path/filepath"
+	"reflect"
+	"regexp"
+	"strings"
+	"testing"
+	"unicode"
 )
 
 var localeFormatVerb = regexp.MustCompile(`%(?:%|[#+\- 0-9.]*[A-Za-z])`)
 
 func localeVerbs(message string) []string {
- verbs:=make([]string,0)
- for _,verb:=range localeFormatVerb.FindAllString(message,-1) {
-  if verb=="%%"{continue}
-  verbs=append(verbs,verb)
- }
- return verbs
+	verbs := make([]string, 0)
+	for _, verb := range localeFormatVerb.FindAllString(message, -1) {
+		if verb == "%%" {
+			continue
+		}
+		verbs = append(verbs, verb)
+	}
+	return verbs
 }
 
 func TestEnglishDefaultAndLanguageNormalization(t *testing.T) {
- if DefaultConfig().Language!="en"{t.Fatal("English must be default")}
- for input,expected:=range map[string]string{"en":"en","en-US":"en","EN":"en","zh":"zh-CN","zh-CN":"zh-CN","fr":"en"}{
-  if actual:=normalizeLanguage(input);actual!=expected{t.Errorf("%q -> %q, want %q",input,actual,expected)}
- }
+	if DefaultConfig().Language != "en" {
+		t.Fatal("English must be default")
+	}
+	for input, expected := range map[string]string{"en": "en", "en-US": "en", "EN": "en", "zh": "zh-CN", "zh-CN": "zh-CN", "fr": "en"} {
+		if actual := normalizeLanguage(input); actual != expected {
+			t.Errorf("%q -> %q, want %q", input, actual, expected)
+		}
+	}
 }
-func TestI18nKeyCoverage(t *testing.T){
- en:=languageBundles["en"]
- zh:=languageBundles["zh-CN"]
- if len(en)==0 || len(zh)!=len(en){t.Fatalf("missing language entries")}
- for key,msg:=range en {
-  if strings.TrimSpace(msg)=="" {t.Errorf("empty English translation %q",key)}
-  for _,r:=range msg {if unicode.Is(unicode.Han,r){t.Errorf("non-English default translation: %q",key);break}}
-  if zh[key]=="" {t.Errorf("missing Chinese translation %q",key)}
-  if enVerbs,zhVerbs:=localeVerbs(msg),localeVerbs(zh[key]);!reflect.DeepEqual(enVerbs,zhVerbs){
-   t.Errorf("format verbs differ for %q: en=%v zh=%v",key,enVerbs,zhVerbs)
-  }
- }
- if got:=tr("fr","menu.users");got!=tr("en","menu.users"){t.Fatalf("unsupported locale did not fall back to English")}
+func TestI18nKeyCoverage(t *testing.T) {
+	en := languageBundles["en"]
+	zh := languageBundles["zh-CN"]
+	if len(en) == 0 || len(zh) != len(en) {
+		t.Fatalf("missing language entries")
+	}
+	for key, msg := range en {
+		if strings.TrimSpace(msg) == "" {
+			t.Errorf("empty English translation %q", key)
+		}
+		for _, r := range msg {
+			if unicode.Is(unicode.Han, r) {
+				t.Errorf("non-English default translation: %q", key)
+				break
+			}
+		}
+		if zh[key] == "" {
+			t.Errorf("missing Chinese translation %q", key)
+		}
+		if enVerbs, zhVerbs := localeVerbs(msg), localeVerbs(zh[key]); !reflect.DeepEqual(enVerbs, zhVerbs) {
+			t.Errorf("format verbs differ for %q: en=%v zh=%v", key, enVerbs, zhVerbs)
+		}
+	}
+	if got := tr("fr", "menu.users"); got != tr("en", "menu.users") {
+		t.Fatalf("unsupported locale did not fall back to English")
+	}
 }
-func TestLanguagePersistence(t *testing.T){
- path:=filepath.Join(t.TempDir(),"bot.json")
- c:=DefaultConfig()
- c.Language="zh-CN"
- if err:=c.Save(path);err!=nil{t.Fatal(err)}
- got,err:=LoadConfig(path)
- if err!=nil{t.Fatal(err)}
- if got.Language!="zh-CN"||got.ConfigFile!=path{t.Fatalf("language not retained: %+v",got)}
- raw,err:=os.ReadFile(path);if err!=nil{t.Fatal(err)}
- if strings.Contains(string(raw),"ConfigFile"){t.Fatal("private config path serialized")}
+func TestLanguagePersistence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bot.json")
+	c := DefaultConfig()
+	c.Language = "zh-CN"
+	if err := c.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Language != "zh-CN" || got.ConfigFile != path {
+		t.Fatalf("language not retained: %+v", got)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "ConfigFile") {
+		t.Fatal("private config path serialized")
+	}
 }
 
 func TestLanguageUpdatePreservesUnknownFields(t *testing.T) {
- path:=filepath.Join(t.TempDir(),"bot.json")
- original:=[]byte(`{"token":"example","admin_ids":[1234],"custom_extension":{"feature":true},"language":"en"}`)
- if err:=os.WriteFile(path,original,0600);err!=nil{t.Fatal(err)}
- if err:=persistLanguage(path,"zh-CN");err!=nil{t.Fatal(err)}
- data,err:=os.ReadFile(path);if err!=nil{t.Fatal(err)}
- if !strings.Contains(string(data),`"feature": true`) || !strings.Contains(string(data),`"language": "zh-CN"`){t.Fatalf("language update discarded fields: %s",data)}
- if !strings.Contains(string(data),`"language_explicit": true`){t.Fatalf("explicit language not recorded: %s",data)}
+	path := filepath.Join(t.TempDir(), "bot.json")
+	original := []byte(`{"token":"example","admin_ids":[1234],"custom_extension":{"feature":true},"language":"en"}`)
+	if err := os.WriteFile(path, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := persistLanguage(path, "zh-CN"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"feature": true`) || !strings.Contains(string(data), `"language": "zh-CN"`) {
+		t.Fatalf("language update discarded fields: %s", data)
+	}
+	if !strings.Contains(string(data), `"language_explicit": true`) {
+		t.Fatalf("explicit language not recorded: %s", data)
+	}
 }
 
 func TestTelegramLanguageDetection(t *testing.T) {
- cases:=map[string]string{
-  "en":"en","en-US":"en","zh":"zh-CN","zh-Hans":"zh-CN","zh-CN":"zh-CN",
-  "zh-Hant":"zh-CN","fr":"","": "",
- }
- for input,want:=range cases {
-  if got:=telegramLanguage(input);got!=want{t.Errorf("telegramLanguage(%q)=%q, want %q",input,got,want)}
- }
+	cases := map[string]string{
+		"en": "en", "en-US": "en", "zh": "zh-CN", "zh-Hans": "zh-CN", "zh-CN": "zh-CN",
+		"zh-Hant": "zh-CN", "fr": "", "": "",
+	}
+	for input, want := range cases {
+		if got := telegramLanguage(input); got != want {
+			t.Errorf("telegramLanguage(%q)=%q, want %q", input, got, want)
+		}
+	}
 }
 
 func TestLanguageButtonLabel(t *testing.T) {
- if got:=languageButtonLabel("en","en");got!="● English"{t.Fatalf("active English label: %q",got)}
- if got:=languageButtonLabel("zh-CN","en");got!="\u4e2d\u6587"{t.Fatalf("inactive Chinese label: %q",got)}
- if got:=languageButtonLabel("zh-CN","zh-CN");got!="● \u4e2d\u6587"{t.Fatalf("active Chinese label: %q",got)}
+	if got := languageButtonLabel("en", "en"); got != "● English" {
+		t.Fatalf("active English label: %q", got)
+	}
+	if got := languageButtonLabel("zh-CN", "en"); got != "\u4e2d\u6587" {
+		t.Fatalf("inactive Chinese label: %q", got)
+	}
+	if got := languageButtonLabel("zh-CN", "zh-CN"); got != "● \u4e2d\u6587" {
+		t.Fatalf("active Chinese label: %q", got)
+	}
 }
 
 func TestProvisionalLanguagePersistence(t *testing.T) {
- path:=filepath.Join(t.TempDir(),"bot.json")
- if err:=os.WriteFile(path,[]byte(`{"language":"en"}`),0600);err!=nil{t.Fatal(err)}
- if err:=persistLanguageWithExplicit(path,"zh-CN",false);err!=nil{t.Fatal(err)}
- data,err:=os.ReadFile(path);if err!=nil{t.Fatal(err)}
- if !strings.Contains(string(data),`"language_explicit": false`){t.Fatalf("provisional marker missing: %s",data)}
+	path := filepath.Join(t.TempDir(), "bot.json")
+	if err := os.WriteFile(path, []byte(`{"language":"en"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := persistLanguageWithExplicit(path, "zh-CN", false); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"language_explicit": false`) {
+		t.Fatalf("provisional marker missing: %s", data)
+	}
 }
 
 func TestLegacyNonEnglishLanguageIsExplicit(t *testing.T) {
- path:=filepath.Join(t.TempDir(),"bot.json")
- if err:=os.WriteFile(path,[]byte(`{"language":"zh-CN"}`),0600);err!=nil{t.Fatal(err)}
- cfg,err:=LoadConfig(path);if err!=nil{t.Fatal(err)}
- if !cfg.LanguageExplicit{t.Fatal("legacy non-English preference would be auto-overridden")}
- if err:=os.WriteFile(path,[]byte(`{"language":"en"}`),0600);err!=nil{t.Fatal(err)}
- cfg,err=LoadConfig(path);if err!=nil{t.Fatal(err)}
- if cfg.LanguageExplicit{t.Fatal("plain English default must remain auto-detectable")}
+	path := filepath.Join(t.TempDir(), "bot.json")
+	if err := os.WriteFile(path, []byte(`{"language":"zh-CN"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.LanguageExplicit {
+		t.Fatal("legacy non-English preference would be auto-overridden")
+	}
+	if err := os.WriteFile(path, []byte(`{"language":"en"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LanguageExplicit {
+		t.Fatal("plain English default must remain auto-detectable")
+	}
 }

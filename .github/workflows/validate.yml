@@ -28,6 +28,12 @@ jobs:
           # go.mod records the minimum language version; CI uses a supported toolchain.
           go-version: '1.26'
           cache-dependency-path: bot/go.sum
+      - name: Check Bot formatting and vet
+        working-directory: bot
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then printf 'Run gofmt on:\n%s\n' "$unformatted"; exit 1; fi
+          go vet ./...
       - name: Test Telegram bot export
         working-directory: bot
         run: |

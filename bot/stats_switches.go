@@ -79,23 +79,35 @@ func inspectStatsSwitches(configPath string, server ...string) (statsSwitchRepor
 	}
 	hasAPIInbound := false
 	apiAddress := "127.0.0.1:10085"
-	if len(server)>0 && server[0]!="" {apiAddress=server[0]}
+	if len(server) > 0 && server[0] != "" {
+		apiAddress = server[0]
+	}
 	directListen, _ := api["listen"].(string)
 	directAPI := directListen != ""
-	if _, safetyErr := validateAPIAccess(root, apiAddress); safetyErr != nil { report.APIMissing=append(report.APIMissing,"api safety: "+safetyErr.Error()) }
+	if _, safetyErr := validateAPIAccess(root, apiAddress); safetyErr != nil {
+		report.APIMissing = append(report.APIMissing, "api safety: "+safetyErr.Error())
+	}
 	host, portText, addressErr := net.SplitHostPort(apiAddress)
-	if strings.EqualFold(host,"localhost") {host="127.0.0.1"}
-	apiIP:=net.ParseIP(host); apiPort,portErr:=strconv.Atoi(portText)
+	if strings.EqualFold(host, "localhost") {
+		host = "127.0.0.1"
+	}
+	apiIP := net.ParseIP(host)
+	apiPort, portErr := strconv.Atoi(portText)
 	if inbounds, ok := root["inbounds"].([]any); ok {
 		for _, raw := range inbounds {
 			inbound, _ := getMap(raw)
 			if inbound["tag"] == "api-internal" {
-				if hasAPIInbound {report.APIMissing=append(report.APIMissing,"duplicate api-internal")}
+				if hasAPIInbound {
+					report.APIMissing = append(report.APIMissing, "duplicate api-internal")
+				}
 				hasAPIInbound = true
-				listen,_:=inbound["listen"].(string); ip:=net.ParseIP(listen)
-				settings,_:=getMap(inbound["settings"]); dest,_:=settings["address"].(string);destIP:=net.ParseIP(dest)
-				if addressErr!=nil||portErr!=nil||apiIP==nil||!apiIP.IsLoopback()||ip==nil||!ip.IsLoopback()||(!directAPI&&(!ip.Equal(apiIP)||inboundPortValue(inbound["port"])!=apiPort))||inbound["protocol"]!="dokodemo-door"||destIP==nil||!destIP.IsLoopback() {
-					report.APIMissing=append(report.APIMissing,"unsafe or mismatched api-internal listener")
+				listen, _ := inbound["listen"].(string)
+				ip := net.ParseIP(listen)
+				settings, _ := getMap(inbound["settings"])
+				dest, _ := settings["address"].(string)
+				destIP := net.ParseIP(dest)
+				if addressErr != nil || portErr != nil || apiIP == nil || !apiIP.IsLoopback() || ip == nil || !ip.IsLoopback() || (!directAPI && (!ip.Equal(apiIP) || inboundPortValue(inbound["port"]) != apiPort)) || inbound["protocol"] != "dokodemo-door" || destIP == nil || !destIP.IsLoopback() {
+					report.APIMissing = append(report.APIMissing, "unsafe or mismatched api-internal listener")
 				}
 			}
 		}
@@ -117,9 +129,14 @@ func inspectStatsSwitches(configPath string, server ...string) (statsSwitchRepor
 	}
 	hasAPIRoute := false
 	routing, _ := getMap(root["routing"])
-	if script, ok := routing["script"].(string); ok && script != "" { report.APIMissing = append(report.APIMissing, "routing script: internal API handling requires manual verification") }
+	if script, ok := routing["script"].(string); ok && script != "" {
+		report.APIMissing = append(report.APIMissing, "routing script: internal API handling requires manual verification")
+	}
 	if rules, ok := routing["rules"].([]any); ok {
-		if len(rules)>0 {rule,_:=getMap(rules[0]);hasAPIRoute=isInternalAPIRoute(rule,apiTag)}
+		if len(rules) > 0 {
+			rule, _ := getMap(rules[0])
+			hasAPIRoute = isInternalAPIRoute(rule, apiTag)
+		}
 	}
 	if !hasAPIRoute && !directAPI {
 		report.APIMissing = append(report.APIMissing, "api route")
@@ -223,7 +240,7 @@ func statsSwitchesBackMarkup(lang string) tgbotapi.InlineKeyboardMarkup {
 }
 
 func (s *BotService) sendStatsSwitches(chatID int64, msgID int) {
-	report, err := inspectStatsSwitches(s.cfg.XrayConfigPath,s.cfg.StatsAPIServer)
+	report, err := inspectStatsSwitches(s.cfg.XrayConfigPath, s.cfg.StatsAPIServer)
 	s.sendOrEdit(chatID, msgID, statsSwitchesText(s.cfg.Language, report, err), statsSwitchesMarkup(s.cfg.Language, report, err))
 }
 
@@ -250,7 +267,7 @@ func (s *BotService) doStatsRepair(chatID int64, msgID int) {
 		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "stats.repairfailed", mdEsc(err.Error())), statsSwitchesBackMarkup(s.cfg.Language))
 		return
 	}
-	report, err := inspectStatsSwitches(s.cfg.XrayConfigPath,s.cfg.StatsAPIServer)
+	report, err := inspectStatsSwitches(s.cfg.XrayConfigPath, s.cfg.StatsAPIServer)
 	text := tr(s.cfg.Language, "stats.repairdone") + "\n\n" + statsSwitchesText(s.cfg.Language, report, err)
 	s.sendOrEdit(chatID, msgID, text, statsSwitchesMarkup(s.cfg.Language, report, err))
 }
