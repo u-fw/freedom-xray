@@ -51,17 +51,6 @@ var pendingRoutingChanges = struct {
 	items map[string]pendingRoutingChange
 }{items: map[string]pendingRoutingChange{}}
 
-func clearRoutingWizard(chatID int64) {
-	routingWizards.Lock()
-	delete(routingWizards.items, chatID)
-	routingWizards.Unlock()
-	clearGuidedRoutingWizard(chatID)
-	clearBalancerWizard(chatID)
-	clearOutboundWizard(chatID)
-	clearDNSWizard(chatID)
-	clearNativeInboundWizard(chatID)
-}
-
 func consumeRoutingWizard(chatID int64, expected routingWizard) bool {
 	routingWizards.Lock()
 	defer routingWizards.Unlock()
@@ -93,7 +82,7 @@ func (s *BotService) beginRoutingWizard(cb *tgCallback) {
 	if kind != "add" && kind != "update" && kind != "delete" && kind != "outbound_put" && kind != "outbound_delete" && kind != "dns_put" && kind != "server_host" {
 		return
 	}
-	clearRoutingWizard(chatID)
+	clearInputSessions(chatID)
 	clearNodeCreateState(chatID)
 	nodePathWizards.Lock()
 	delete(nodePathWizards.items, chatID)

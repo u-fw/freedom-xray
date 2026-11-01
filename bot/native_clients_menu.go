@@ -225,10 +225,10 @@ func (s *BotService) handleNativeClientCallback(cb *tgCallback) {
 	}
 	switch parts[1] {
 	case "list":
-		clearRoutingWizard(chatID)
+		clearInputSessions(chatID)
 		s.sendNativeClientList(chatID, msgID, inboundIndex, clientIndex, etag, "")
 	case "view":
-		clearRoutingWizard(chatID)
+		clearInputSessions(chatID)
 		s.sendNativeClientDetail(chatID, msgID, inboundIndex, clientIndex, etag)
 	case "export":
 		client, err := lookupNativeClient(inbound, clientIndex)
@@ -247,7 +247,7 @@ func (s *BotService) handleNativeClientCallback(cb *tgCallback) {
 		if !s.cfg.AllowMutations {
 			return
 		}
-		clearOtherRoutingInputs(chatID)
+		clearInputSessions(chatID)
 		setNativeInboundWizard(chatID, nativeInboundWizard{AdminID: cb.From.ID, Kind: "client." + parts[1], Index: inboundIndex, ClientIndex: clientIndex, ETag: etag, Expires: time.Now().Add(5 * time.Minute)})
 		prompt := "inbound.client.email_prompt"
 		if parts[1] == "level" {

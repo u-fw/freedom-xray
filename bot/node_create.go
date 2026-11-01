@@ -96,7 +96,7 @@ func clearNodeCreateState(chatID int64) {
 }
 
 func (s *BotService) beginNodeCreate(chatID, adminID int64, msgID int, template NodeTemplate) {
-	clearRoutingWizard(chatID)
+	clearInputSessions(chatID)
 	if !s.cfg.AllowMutations {
 		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "node.mutationsdisabled"), s.backToMainMarkup())
 		return

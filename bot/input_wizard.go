@@ -19,7 +19,7 @@ var managementWizards = struct {
 }{states: make(map[int64]managementWizard)}
 
 func (s *BotService) beginUserWizard(chatID, adminID int64, msgID int, stage, user string) {
-	clearRoutingWizard(chatID)
+	clearInputSessions(chatID)
 	managementWizards.Lock()
 	managementWizards.states[chatID] = managementWizard{AdminID: adminID, Expires: time.Now().Add(5 * time.Minute), Stage: stage, User: user}
 	managementWizards.Unlock()
@@ -41,7 +41,7 @@ func (s *BotService) handleWizardMessage(msg *tgMessage) bool {
 	if ok && msg.From.ID != state.AdminID {
 		ok = false
 	}
-	if ok && (msg.Command() == "" || msg.Command() == "cancel") {
+	if ok && msg.Command() == "cancel" {
 		delete(managementWizards.states, chatID)
 	}
 	managementWizards.Unlock()
@@ -54,9 +54,12 @@ func (s *BotService) handleWizardMessage(msg *tgMessage) bool {
 	}
 	input := strings.TrimSpace(msg.Text)
 	if !managedUserName.MatchString(input) {
-		s.sendAlert(chatID, trh(s.cfg.Language, "wizard.invalidname"))
+		s.retryInput(chatID, trh(s.cfg.Language, "wizard.invalidname"))
 		return true
 	}
+	managementWizards.Lock()
+	delete(managementWizards.states, chatID)
+	managementWizards.Unlock()
 	if state.Stage == "rename" {
 		s.offerUserChange(chatID, msg.From.ID, 0, UserChange{Kind: "rename", User: state.User, NewName: input})
 		return true

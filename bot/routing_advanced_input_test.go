@@ -106,7 +106,7 @@ func TestCancellingAdvancedWizardDuringDownloadPreventsConfirmation(t *testing.T
 	case <-time.After(5 * time.Second):
 		t.Fatal("download did not start")
 	}
-	clearRoutingWizard(chat.ID)
+	clearInputSessions(chat.ID)
 	close(release)
 	select {
 	case handled := <-done:

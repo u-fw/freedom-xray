@@ -144,7 +144,7 @@ func (s *BotService) handleNativeConfigExportCallback(cb *tgCallback) {
 	if err != nil || index < 0 {
 		return
 	}
-	clearRoutingWizard(cb.Message.Chat.ID)
+	clearInputSessions(cb.Message.Chat.ID)
 	s.askNativeConfigExport(cb, parts[1], index, parts[3])
 }
 

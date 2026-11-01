@@ -59,7 +59,7 @@ func routeTestBackMarkup(lang string) tgKeyboard {
 }
 
 func (s *BotService) sendRouteTestPage(chatID, adminID int64, msgID int, notice string) {
-	clearOtherRoutingInputs(chatID)
+	clearInputSessions(chatID)
 	body := trh(s.cfg.Language, "route.test.title")
 	if notice != "" {
 		body += "\n" + esc(notice) + "\n"
@@ -119,7 +119,7 @@ func (s *BotService) handleRouteTestCallback(cb *tgCallback) {
 		s.sendRouteTestPage(chatID, cb.From.ID, msgID, "")
 		return
 	}
-	clearOtherRoutingInputs(chatID)
+	clearInputSessions(chatID)
 	s.queueGuidedRoutingChange(chatID, cb.From.ID, msgID, pendingRoutingChange{EnableRoutingAPI: true, ReturnRouteTest: true}, trh(s.cfg.Language, "route.test.enable_confirm"))
 }
 

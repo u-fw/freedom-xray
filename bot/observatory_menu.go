@@ -204,7 +204,7 @@ func (s *BotService) handleObservatoryCallback(cb *tgCallback) {
 	chatID, msgID := cb.Message.Chat.ID, cb.Message.MessageID
 	parts := strings.Split(cb.Data, ":")
 	if len(parts) == 2 && parts[1] == "page" {
-		clearRoutingWizard(chatID)
+		clearInputSessions(chatID)
 		s.sendObservatoryPage(chatID, msgID, "")
 		return
 	}
@@ -226,7 +226,7 @@ func (s *BotService) handleObservatoryCallback(cb *tgCallback) {
 		return
 	}
 	if parts[1] == "v" {
-		clearRoutingWizard(chatID)
+		clearInputSessions(chatID)
 		s.sendObservatoryDetail(chatID, msgID, kind, ref)
 		return
 	}
@@ -239,7 +239,7 @@ func (s *BotService) handleObservatoryCallback(cb *tgCallback) {
 		if parts[1] != "edit" && parts[1] != "json" && ref == "new" {
 			return
 		}
-		clearOtherRoutingInputs(chatID)
+		clearInputSessions(chatID)
 		etag := ref
 		if etag == "new" {
 			etag = ""

@@ -232,7 +232,7 @@ func (s *BotService) handleMessage(msg *tgMessage) {
 
 	switch cmd {
 	case "start", "menu":
-		clearOtherRoutingInputs(msg.Chat.ID)
+		clearInputSessions(msg.Chat.ID)
 		s.registerAdminCommands(msg.Chat.ID)
 		s.sendMainMenu(msg.Chat.ID, 0)
 	case "status":
@@ -246,10 +246,10 @@ func (s *BotService) handleMessage(msg *tgMessage) {
 	case "stats", "switches":
 		s.sendStatsSwitches(msg.Chat.ID, 0)
 	case "routing":
-		clearOtherRoutingInputs(msg.Chat.ID)
+		clearInputSessions(msg.Chat.ID)
 		s.sendRoutingCard(msg.Chat.ID, 0)
 	case "xrayconfig":
-		clearOtherRoutingInputs(msg.Chat.ID)
+		clearInputSessions(msg.Chat.ID)
 		s.sendXraySectionsPage(msg.Chat.ID, 0, "")
 	case "traffic", "usage":
 		s.sendTrafficCard(msg.Chat.ID, 0)
@@ -269,11 +269,13 @@ func (s *BotService) handleMessage(msg *tgMessage) {
 		s.sendVersionCard(msg.Chat.ID, 0)
 	case "help":
 		s.sendHelpCard(msg.Chat.ID, 0)
+	case "cancel":
+		s.sendOrEdit(msg.Chat.ID, 0, trh(s.cfg.Language, "cancel.none"), s.backToMainMarkup())
 	default:
 		if strings.HasPrefix(text, "/") {
 			s.sendAlert(msg.Chat.ID, trh(s.cfg.Language, "command.unknown"))
 		} else {
-			s.sendMainMenu(msg.Chat.ID, 0)
+			s.sendMainMenuNotice(msg.Chat.ID, 0, trh(s.cfg.Language, "menu.unexpected_text"))
 		}
 	}
 }
@@ -291,7 +293,7 @@ func (s *BotService) handleCallback(cb *tgCallback) {
 	msgID := cb.Message.MessageID
 	data := cb.Data
 	if data == "menu_main" || data == "menu_users" || data == "menu_nodes" || data == "menu_routing" || data == "menu_traffic" || data == "menu_online" || data == "menu_status" || data == "menu_tools" {
-		clearOtherRoutingInputs(chatID)
+		clearInputSessions(chatID)
 	}
 
 	switch {
@@ -456,6 +458,10 @@ func (s *BotService) handleCallback(cb *tgCallback) {
 		strings.HasPrefix(data, "manage_quota:") || strings.HasPrefix(data, "manage_expiry:") || strings.HasPrefix(data, "manage_limitclear:") ||
 		strings.HasPrefix(data, "manage_traffic:"):
 		s.handleManagedUserCallback(cb)
+	default:
+		// Buttons from removed or renamed menus must not fail silently.
+		clearInputSessions(chatID)
+		s.sendMainMenuNotice(chatID, msgID, trh(s.cfg.Language, "menu.expired"))
 	}
 }
 
@@ -645,6 +651,11 @@ func (s *BotService) sendOrEdit(chatID int64, msgID int, text htmlText, markup t
 }
 
 func (s *BotService) sendMainMenu(chatID int64, msgID int) {
+	s.sendMainMenuNotice(chatID, msgID, "")
+}
+
+// sendMainMenuNotice shows the dashboard with an optional explanatory line above it.
+func (s *BotService) sendMainMenuNotice(chatID int64, msgID int, notice htmlText) {
 	nodes, _ := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	names, dirErr := allDirectoryNames(s.cfg.XrayConfigPath)
 	userCount := len(sortedEmails(nodes))
@@ -665,6 +676,9 @@ func (s *BotService) sendMainMenu(chatID int64, msgID int) {
 		updateState = tr(s.cfg.Language, "menu.updates.enabled")
 	}
 	content := trh(s.cfg.Language, "menu.dashboard", hostname, state, status, len(nodes), userCount, Version, updateState)
+	if notice != "" {
+		content = notice + "\n\n" + content
+	}
 	keyboard := mainMenuMarkup(s.cfg.Language)
 	s.sendOrEdit(chatID, msgID, content, keyboard)
 }

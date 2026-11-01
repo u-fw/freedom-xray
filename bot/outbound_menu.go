@@ -261,7 +261,7 @@ func (s *BotService) handleOutboundCallback(cb *tgCallback) {
 	if parts[1] == "page" && len(parts) == 3 {
 		offset, err := strconv.Atoi(parts[2])
 		if err == nil {
-			clearRoutingWizard(chatID)
+			clearInputSessions(chatID)
 			s.sendOutboundPage(chatID, msgID, offset, "")
 		}
 		return
@@ -292,7 +292,7 @@ func (s *BotService) handleOutboundCallback(cb *tgCallback) {
 			s.sendOutboundPage(chatID, msgID, 0, tr(s.cfg.Language, "outbound.changed"))
 			return
 		}
-		clearOtherRoutingInputs(chatID)
+		clearInputSessions(chatID)
 		setOutboundWizard(chatID, outboundWizard{AdminID: cb.From.ID, Step: "create", Protocol: parts[2], ListETag: listETag, Expires: time.Now().Add(5 * time.Minute)})
 		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "outbound.tag_prompt", parts[2]), outboundBackMarkup(s.cfg.Language))
 		return
@@ -313,7 +313,7 @@ func (s *BotService) handleOutboundCallback(cb *tgCallback) {
 		return
 	}
 	if parts[1] == "v" {
-		clearRoutingWizard(chatID)
+		clearInputSessions(chatID)
 		s.sendOutboundDetail(chatID, msgID, index, parts[3])
 		return
 	}
@@ -323,7 +323,7 @@ func (s *BotService) handleOutboundCallback(cb *tgCallback) {
 	}
 	switch parts[1] {
 	case "address", "port":
-		clearOtherRoutingInputs(chatID)
+		clearInputSessions(chatID)
 		setOutboundWizard(chatID, outboundWizard{AdminID: cb.From.ID, Step: parts[1], Index: index, ETag: parts[3], Expires: time.Now().Add(5 * time.Minute)})
 		prompt := "outbound.address_prompt"
 		if parts[1] == "port" {

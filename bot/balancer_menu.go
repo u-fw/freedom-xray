@@ -535,7 +535,7 @@ func (s *BotService) handleBalancerCallback(cb *tgCallback) {
 	if parts[1] == "page" && len(parts) == 3 {
 		offset, err := strconv.Atoi(parts[2])
 		if err == nil {
-			clearRoutingWizard(chatID)
+			clearInputSessions(chatID)
 			s.sendBalancerPage(chatID, msgID, offset, "")
 		}
 		return
@@ -545,7 +545,7 @@ func (s *BotService) handleBalancerCallback(cb *tgCallback) {
 			s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), balancerBackMarkup(s.cfg.Language))
 			return
 		}
-		clearOtherRoutingInputs(chatID)
+		clearInputSessions(chatID)
 		step, prompt := "new-tag", "balancer.tag_prompt"
 		if parts[1] == "jsonnew" {
 			step, prompt = "native-create", "balancer.native.create_prompt"
@@ -568,7 +568,7 @@ func (s *BotService) handleBalancerCallback(cb *tgCallback) {
 		return
 	}
 	if parts[1] == "v" && len(parts) == 4 {
-		clearRoutingWizard(chatID)
+		clearInputSessions(chatID)
 		s.sendBalancerDetail(chatID, msgID, parts[2], parts[3])
 		return
 	}
@@ -585,7 +585,7 @@ func (s *BotService) handleBalancerCallback(cb *tgCallback) {
 		if len(parts) != 4 {
 			return
 		}
-		clearOtherRoutingInputs(chatID)
+		clearInputSessions(chatID)
 		status, err := queryBalancerLive(s.cfg, record.Tag)
 		if err != nil {
 			s.sendBalancerLiveNotice(chatID, msgID, record, err.Error())
@@ -596,7 +596,7 @@ func (s *BotService) handleBalancerCallback(cb *tgCallback) {
 		if len(parts) != 4 {
 			return
 		}
-		clearOtherRoutingInputs(chatID)
+		clearInputSessions(chatID)
 		setBalancerWizard(chatID, balancerWizard{AdminID: cb.From.ID, Step: "native-replace", Tag: record.Tag, ETag: record.ETag, Expires: time.Now().Add(5 * time.Minute)})
 		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "balancer.native.replace_prompt", record.Tag), balancerBackMarkup(s.cfg.Language))
 	case "enable":
@@ -621,7 +621,7 @@ func (s *BotService) handleBalancerCallback(cb *tgCallback) {
 		if len(parts) != 4 {
 			return
 		}
-		clearOtherRoutingInputs(chatID)
+		clearInputSessions(chatID)
 		setBalancerWizard(chatID, balancerWizard{AdminID: cb.From.ID, Step: "edit-selector", Tag: record.Tag, ETag: record.ETag, Expires: time.Now().Add(5 * time.Minute)})
 		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "balancer.selector_prompt"), balancerBackMarkup(s.cfg.Language))
 	case "strategy":

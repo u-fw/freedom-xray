@@ -103,7 +103,7 @@ func (s *BotService) startNodeWizard(chatID, adminID int64, msgID int, tag, kind
 }
 
 func (s *BotService) startNodeWizardValue(chatID, adminID int64, msgID int, tag, kind string, prompt htmlText, value string) {
-	clearRoutingWizard(chatID)
+	clearInputSessions(chatID)
 	nodePathWizards.Lock()
 	nodePathWizards.items[chatID] = nodePathWizard{Tag: tag, AdminID: adminID, Expires: time.Now().Add(5 * time.Minute), Kind: kind, Value: value}
 	nodePathWizards.Unlock()
@@ -654,29 +654,28 @@ func (s *BotService) handleNodePathInput(msg *tgMessage) bool {
 		nodePathWizards.Unlock()
 		return false
 	}
-	if strings.TrimSpace(msg.Text) == "/cancel" {
+	if msg.Command() == "cancel" {
 		delete(nodePathWizards.items, chatID)
 		nodePathWizards.Unlock()
-		s.sendAlert(chatID, trh(s.cfg.Language, "node.cancelinput"))
+		s.retryInput(chatID, trh(s.cfg.Language, "node.cancelinput"))
 		return true
 	}
 	if msg.Command() != "" {
 		nodePathWizards.Unlock()
 		return false
 	}
-	delete(nodePathWizards.items, chatID)
 	nodePathWizards.Unlock()
 	value := strings.TrimSpace(msg.Text)
 	switch state.Kind {
 	case "public_port":
 		port, err := strconv.Atoi(value)
 		if err != nil || port < 0 || port > 65535 {
-			s.sendAlert(chatID, trh(s.cfg.Language, "node.portinvalid"))
+			s.retryInput(chatID, trh(s.cfg.Language, "node.portinvalid"))
 			return true
 		}
 	case "port":
 		if _, err := validateListenPort(value); err != nil {
-			s.sendAlert(chatID, trh(s.cfg.Language, "node.listenportinvalid"))
+			s.retryInput(chatID, trh(s.cfg.Language, "node.listenportinvalid"))
 			return true
 		}
 	case "listen":
@@ -684,17 +683,17 @@ func (s *BotService) handleNodePathInput(msg *tgMessage) bool {
 			value = ""
 		}
 		if value != "" && net.ParseIP(value) == nil {
-			s.sendAlert(chatID, trh(s.cfg.Language, "node.listenaddressinvalid"))
+			s.retryInput(chatID, trh(s.cfg.Language, "node.listenaddressinvalid"))
 			return true
 		}
 	case "path":
 		if !safeXHTTPPath.MatchString(value) {
-			s.sendAlert(chatID, trh(s.cfg.Language, "node.pathinvalid"))
+			s.retryInput(chatID, trh(s.cfg.Language, "node.pathinvalid"))
 			return true
 		}
 	case "reality_sni":
 		if err := validateRealitySNI(value); err != nil {
-			s.sendAlert(chatID, trh(s.cfg.Language, "node.sniinvalid", err.Error()))
+			s.retryInput(chatID, trh(s.cfg.Language, "node.sniinvalid", err.Error()))
 			return true
 		}
 	case "reality_short_id":
@@ -702,7 +701,7 @@ func (s *BotService) handleNodePathInput(msg *tgMessage) bool {
 			value = ""
 		}
 		if err := validateRealityShortID(value); err != nil {
-			s.sendAlert(chatID, trh(s.cfg.Language, "node.shortidinvalid", err.Error()))
+			s.retryInput(chatID, trh(s.cfg.Language, "node.shortidinvalid", err.Error()))
 			return true
 		}
 	case "xhttp_host":
@@ -710,22 +709,22 @@ func (s *BotService) handleNodePathInput(msg *tgMessage) bool {
 			value = ""
 		}
 		if err := validateXHTTPHost(value); err != nil {
-			s.sendAlert(chatID, trh(s.cfg.Language, "node.hostinvalid", err.Error()))
+			s.retryInput(chatID, trh(s.cfg.Language, "node.hostinvalid", err.Error()))
 			return true
 		}
 	case "xhttp_padding":
 		if err := validateXHTTPPadding(value); err != nil {
-			s.sendAlert(chatID, trh(s.cfg.Language, "node.paddinginvalid", err.Error()))
+			s.retryInput(chatID, trh(s.cfg.Language, "node.paddinginvalid", err.Error()))
 			return true
 		}
 	case "reality_dest", "reality_target":
 		if _, err := validateRealityTarget(value); err != nil {
-			s.sendAlert(chatID, trh(s.cfg.Language, "node.targetinvalid", err.Error()))
+			s.retryInput(chatID, trh(s.cfg.Language, "node.targetinvalid", err.Error()))
 			return true
 		}
 	case "tls_pair_cert":
 		if !filepath.IsAbs(value) {
-			s.sendAlert(chatID, trh(s.cfg.Language, "node.create.absolutepath"))
+			s.retryInput(chatID, trh(s.cfg.Language, "node.create.absolutepath"))
 			return true
 		}
 		certPath := filepath.Clean(value)
@@ -733,20 +732,29 @@ func (s *BotService) handleNodePathInput(msg *tgMessage) bool {
 		return true
 	case "tls_pair_key":
 		if !filepath.IsAbs(value) {
-			s.sendAlert(chatID, trh(s.cfg.Language, "node.create.absolutepath"))
+			s.retryInput(chatID, trh(s.cfg.Language, "node.create.absolutepath"))
 			return true
 		}
+		endNodePathInput(chatID)
 		s.offerNodeTLSPair(chatID, msg.From.ID, 0, NodeChange{Kind: "tls_pair", Tag: state.Tag, Value: state.Value, Secret: filepath.Clean(value)}, "node.secretnote.certpair")
 		return true
 	case "alpn":
 		if _, err := validateNodeALPNText(value); err != nil {
-			s.sendAlert(chatID, trh(s.cfg.Language, "node.alpninvalid", err.Error()))
+			s.retryInput(chatID, trh(s.cfg.Language, "node.alpninvalid", err.Error()))
 			return true
 		}
 	default:
+		endNodePathInput(chatID)
 		s.sendAlert(chatID, trh(s.cfg.Language, "node.unknownop"))
 		return true
 	}
+	endNodePathInput(chatID)
 	s.offerNodeChange(chatID, msg.From.ID, 0, NodeChange{Kind: state.Kind, Tag: state.Tag, Value: value})
 	return true
+}
+
+func endNodePathInput(chatID int64) {
+	nodePathWizards.Lock()
+	delete(nodePathWizards.items, chatID)
+	nodePathWizards.Unlock()
 }

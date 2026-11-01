@@ -210,7 +210,7 @@ func (s *BotService) handleDNSHostCallback(cb *tgCallback) {
 	if len(parts) == 3 && parts[1] == "page" {
 		offset, err := strconv.Atoi(parts[2])
 		if err == nil {
-			clearRoutingWizard(chatID)
+			clearInputSessions(chatID)
 			s.sendDNSHostsPage(chatID, msgID, offset, "")
 		}
 		return
@@ -237,7 +237,7 @@ func (s *BotService) handleDNSHostCallback(cb *tgCallback) {
 		record = view.Hosts[index-1]
 	}
 	if parts[1] == "v" && len(parts) == 4 {
-		clearRoutingWizard(chatID)
+		clearInputSessions(chatID)
 		s.sendDNSHostDetail(chatID, msgID, record.Index, etag)
 		return
 	}
@@ -246,7 +246,7 @@ func (s *BotService) handleDNSHostCallback(cb *tgCallback) {
 		return
 	}
 	if parts[1] == "add" && len(parts) == 3 {
-		clearOtherRoutingInputs(chatID)
+		clearInputSessions(chatID)
 		setDNSWizard(chatID, dnsWizard{AdminID: cb.From.ID, Kind: "host-add-name", ETag: etag, Expires: time.Now().Add(5 * time.Minute)})
 		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "dns.hosts.name_prompt"), dnsHostsBackMarkup(s.cfg.Language))
 		return
@@ -256,7 +256,7 @@ func (s *BotService) handleDNSHostCallback(cb *tgCallback) {
 	}
 	switch parts[1] {
 	case "edit", "rename":
-		clearOtherRoutingInputs(chatID)
+		clearInputSessions(chatID)
 		kind, prompt := "host-update", "dns.hosts.targets_prompt"
 		if parts[1] == "rename" {
 			kind, prompt = "host-rename", "dns.hosts.name_prompt"

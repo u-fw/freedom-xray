@@ -438,7 +438,7 @@ var userLimitWizards = struct {
 }{items: map[int64]userLimitWizard{}}
 
 func (s *BotService) beginUserLimitWizard(chatID, adminID int64, msgID int, email, kind string, prompt htmlText) {
-	clearRoutingWizard(chatID)
+	clearInputSessions(chatID)
 	userLimitWizards.Lock()
 	userLimitWizards.items[chatID] = userLimitWizard{Email: email, Kind: kind, AdminID: adminID, Expires: time.Now().Add(5 * time.Minute)}
 	userLimitWizards.Unlock()
@@ -462,7 +462,7 @@ func (s *BotService) handleUserLimitInput(msg *tgMessage) bool {
 		userLimitWizards.Unlock()
 		return false
 	}
-	if strings.TrimSpace(msg.Text) == "/cancel" {
+	if msg.Command() == "cancel" {
 		delete(userLimitWizards.items, chatID)
 		userLimitWizards.Unlock()
 		s.sendAlert(chatID, trh(s.cfg.Language, "limit.cancelled"))
@@ -472,9 +472,9 @@ func (s *BotService) handleUserLimitInput(msg *tgMessage) bool {
 		userLimitWizards.Unlock()
 		return false
 	}
-	delete(userLimitWizards.items, chatID)
 	userLimitWizards.Unlock()
 	if !s.cfg.AllowMutations {
+		endUserLimitInput(chatID)
 		s.sendAlert(chatID, trh(s.cfg.Language, "manage.disabled"))
 		return true
 	}
@@ -484,9 +484,10 @@ func (s *BotService) handleUserLimitInput(msg *tgMessage) bool {
 	case "quota":
 		bytes, clear, err := parseQuotaGB(value)
 		if err != nil {
-			s.sendAlert(chatID, trh(s.cfg.Language, "limit.quotainvalid"))
+			s.retryInput(chatID, trh(s.cfg.Language, "limit.quotainvalid"))
 			return true
 		}
+		endUserLimitInput(chatID)
 		err = updateUserLimits(s.cfg.XrayConfigPath, func(users map[string]userLimit) error {
 			limit := users[state.Email]
 			if clear {
@@ -516,9 +517,10 @@ func (s *BotService) handleUserLimitInput(msg *tgMessage) bool {
 	case "expiry":
 		stamp, clear, err := parseExpiryInput(value, time.Now())
 		if err != nil {
-			s.sendAlert(chatID, trh(s.cfg.Language, "limit.expiryinvalid"))
+			s.retryInput(chatID, trh(s.cfg.Language, "limit.expiryinvalid"))
 			return true
 		}
+		endUserLimitInput(chatID)
 		err = updateUserLimits(s.cfg.XrayConfigPath, func(users map[string]userLimit) error {
 			limit := users[state.Email]
 			if clear {
@@ -546,9 +548,16 @@ func (s *BotService) handleUserLimitInput(msg *tgMessage) bool {
 		s.sendAlert(chatID, trh(s.cfg.Language, "limit.expiryset", state.Email, label))
 		s.sendUserManageCard(chatID, 0, key)
 	default:
+		endUserLimitInput(chatID)
 		s.sendAlert(chatID, trh(s.cfg.Language, "limit.unknown"))
 	}
 	return true
+}
+
+func endUserLimitInput(chatID int64) {
+	userLimitWizards.Lock()
+	delete(userLimitWizards.items, chatID)
+	userLimitWizards.Unlock()
 }
 
 func (s *BotService) clearUserLimits(chatID int64, msgID int, key, email string) {

@@ -456,20 +456,6 @@ func (s *BotService) sendRoutingAddPicker(chatID int64, msgID int) {
 	s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "routing.guide.add_picker"), newKeyboard(rows...))
 }
 
-func clearOtherRoutingInputs(chatID int64) {
-	clearNodeCreateState(chatID)
-	nodePathWizards.Lock()
-	delete(nodePathWizards.items, chatID)
-	nodePathWizards.Unlock()
-	userLimitWizards.Lock()
-	delete(userLimitWizards.items, chatID)
-	userLimitWizards.Unlock()
-	managementWizards.Lock()
-	delete(managementWizards.states, chatID)
-	managementWizards.Unlock()
-	clearRoutingWizard(chatID)
-}
-
 func setGuidedRoutingWizard(chatID int64, state guidedRoutingWizard) {
 	guidedRoutingWizards.Lock()
 	guidedRoutingWizards.items[chatID] = state
@@ -542,7 +528,7 @@ func (s *BotService) startGuidedRoutingInput(cb *tgCallback, ref routingRuleRef,
 		}
 		current = rule[field]
 	}
-	clearOtherRoutingInputs(chatID)
+	clearInputSessions(chatID)
 	step := "edit"
 	if newRule {
 		step = "new-input"
@@ -740,18 +726,18 @@ func (s *BotService) handleGuidedRoutingCallback(cb *tgCallback) {
 	if action == "page" && len(parts) == 3 {
 		offset, err := strconv.Atoi(parts[2])
 		if err == nil {
-			clearRoutingWizard(chatID)
+			clearInputSessions(chatID)
 			s.sendRoutingPage(chatID, msgID, offset, "")
 		}
 		return
 	}
 	if action == "advanced" && len(parts) == 2 {
-		clearRoutingWizard(chatID)
+		clearInputSessions(chatID)
 		s.sendRoutingAdvanced(chatID, msgID)
 		return
 	}
 	if action == "add" && len(parts) == 2 {
-		clearRoutingWizard(chatID)
+		clearInputSessions(chatID)
 		s.sendRoutingAddPicker(chatID, msgID)
 		return
 	}
@@ -886,7 +872,7 @@ func (s *BotService) handleGuidedRoutingCallback(cb *tgCallback) {
 	}
 	switch action {
 	case "v":
-		clearRoutingWizard(chatID)
+		clearInputSessions(chatID)
 		s.sendRoutingRuleDetail(chatID, msgID, ref)
 	case "more":
 		s.sendRoutingMoreFields(chatID, msgID, ref)

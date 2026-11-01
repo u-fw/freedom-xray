@@ -173,7 +173,7 @@ func (s *BotService) handleXraySectionCallback(cb *tgCallback) {
 	}
 	chatID, msgID := cb.Message.Chat.ID, cb.Message.MessageID
 	if cb.Data == "xs:page" {
-		clearOtherRoutingInputs(chatID)
+		clearInputSessions(chatID)
 		s.sendXraySectionsPage(chatID, msgID, "")
 		return
 	}
@@ -192,13 +192,13 @@ func (s *BotService) handleXraySectionCallback(cb *tgCallback) {
 	}
 	switch parts[1] {
 	case "v":
-		clearRoutingWizard(chatID)
+		clearInputSessions(chatID)
 		s.sendXraySectionDetail(chatID, msgID, name, etag, "")
 	case "put":
 		if !s.cfg.AllowMutations {
 			return
 		}
-		clearOtherRoutingInputs(chatID)
+		clearInputSessions(chatID)
 		routingWizards.Lock()
 		routingWizards.items[chatID] = routingWizard{AdminID: cb.From.ID, Kind: "xray_section", Section: name, ETag: etag, Expires: time.Now().Add(5 * time.Minute)}
 		routingWizards.Unlock()

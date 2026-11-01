@@ -334,7 +334,7 @@ func (s *BotService) handleNativeInboundCallback(cb *tgCallback) {
 	if len(parts) == 3 && parts[1] == "page" {
 		offset, err := strconv.Atoi(parts[2])
 		if err == nil {
-			clearRoutingWizard(chatID)
+			clearInputSessions(chatID)
 			s.sendNativeInboundPage(chatID, msgID, offset, "")
 		}
 		return
@@ -352,7 +352,7 @@ func (s *BotService) handleNativeInboundCallback(cb *tgCallback) {
 			s.sendNativeInboundPage(chatID, msgID, 0, tr(s.cfg.Language, "inbound.native.changed"))
 			return
 		}
-		clearOtherRoutingInputs(chatID)
+		clearInputSessions(chatID)
 		setNativeInboundWizard(chatID, nativeInboundWizard{AdminID: cb.From.ID, Kind: "add", ListETag: current, Expires: time.Now().Add(5 * time.Minute)})
 		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "inbound.native.json_prompt"), nativeInboundBackMarkup(s.cfg.Language))
 		return
@@ -373,12 +373,12 @@ func (s *BotService) handleNativeInboundCallback(cb *tgCallback) {
 		return
 	}
 	if parts[1] == "v" {
-		clearRoutingWizard(chatID)
+		clearInputSessions(chatID)
 		s.sendNativeInboundDetail(chatID, msgID, index, parts[3])
 		return
 	}
 	if parts[1] == "export" {
-		clearRoutingWizard(chatID)
+		clearInputSessions(chatID)
 		s.askNativeConfigExport(cb, "inbound", index, parts[3])
 		return
 	}
@@ -392,7 +392,7 @@ func (s *BotService) handleNativeInboundCallback(cb *tgCallback) {
 	}
 	switch parts[1] {
 	case "port", "listen", "replace":
-		clearOtherRoutingInputs(chatID)
+		clearInputSessions(chatID)
 		setNativeInboundWizard(chatID, nativeInboundWizard{AdminID: cb.From.ID, Kind: parts[1], Index: index, ETag: parts[3], Expires: time.Now().Add(5 * time.Minute)})
 		prompt := "inbound.native." + parts[1] + "_prompt"
 		if parts[1] == "replace" {

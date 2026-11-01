@@ -24,7 +24,7 @@ func TestBotRouteQuerySupportsReadOnlyTextDocumentAndRepeatedTargets(t *testing.
 	payload := []byte(`{"domain":"example.com","port":8443,"user":"private-input-secret","attributes":{"x-test":"value"}}`)
 	s, capture := newNativeDocumentBot(t, cfg, payload)
 	chat, admin := &tgChat{ID: 9640, Type: "private"}, &tgUser{ID: 17}
-	t.Cleanup(func() { clearRoutingWizard(chat.ID) })
+	t.Cleanup(func() { clearInputSessions(chat.ID) })
 	s.sendRoutingPage(chat.ID, 1, 0, "")
 	capture.mu.Lock()
 	markup := capture.markup
@@ -145,7 +145,7 @@ func TestBotRouteQueryServiceEnableRequiresConfirmationAndReturnsToQueryContext(
 	cfg.XrayConfigPath, cfg.XrayBinPath, cfg.AllowMutations = h.config, h.xray, true
 	s, capture := newCapturedRoutingBot(t, cfg)
 	chat, admin := &tgChat{ID: 9643, Type: "private"}, &tgUser{ID: 17}
-	t.Cleanup(func() { clearRoutingWizard(chat.ID) })
+	t.Cleanup(func() { clearInputSessions(chat.ID) })
 	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: "rt:test"}
 	s.handleCallback(cb)
 	_, markup := capture.card(t)

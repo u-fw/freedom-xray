@@ -304,7 +304,7 @@ func (s *BotService) handleDNSCallback(cb *tgCallback) {
 	if parts[1] == "page" && len(parts) == 3 {
 		offset, err := strconv.Atoi(parts[2])
 		if err == nil {
-			clearRoutingWizard(chatID)
+			clearInputSessions(chatID)
 			s.sendDNSPage(chatID, msgID, offset, "")
 		}
 		return
@@ -330,7 +330,7 @@ func (s *BotService) handleDNSCallback(cb *tgCallback) {
 	if parts[1] == "v" && len(parts) == 4 {
 		index, err := strconv.Atoi(parts[2])
 		if err == nil {
-			clearRoutingWizard(chatID)
+			clearInputSessions(chatID)
 			s.sendDNSServerDetail(chatID, msgID, index, etag)
 		}
 		return
@@ -354,7 +354,7 @@ func (s *BotService) handleDNSCallback(cb *tgCallback) {
 		} else if len(parts) != 3 {
 			return
 		}
-		clearOtherRoutingInputs(chatID)
+		clearInputSessions(chatID)
 		setDNSWizard(chatID, dnsWizard{AdminID: cb.From.ID, Kind: kind, Index: index, ETag: etag, Expires: time.Now().Add(5 * time.Minute)})
 		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "dns.address_prompt"), dnsBackMarkup(s.cfg.Language))
 	case "delete":
