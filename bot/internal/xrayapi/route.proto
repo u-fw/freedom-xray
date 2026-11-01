@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package freedom.xrayapi;
+option go_package = "github.com/u-fw/freedom-xray/bot/internal/xrayapi";
+
+// Wire-compatible subset of Xray's public RoutingService protocol:
+// https://github.com/XTLS/Xray-core/blob/main/app/router/command/command.proto
+// Message names are local; protobuf field numbers/types carry the contract.
+enum Network {
+  NETWORK_UNKNOWN = 0;
+  NETWORK_TCP = 2;
+  NETWORK_UDP = 3;
+  NETWORK_UNIX = 4;
+}
+
+message RoutingContext {
+  string inbound_tag = 1;
+  Network network = 2;
+  repeated bytes source_ips = 3;
+  repeated bytes target_ips = 4;
+  uint32 source_port = 5;
+  uint32 target_port = 6;
+  string target_domain = 7;
+  string protocol = 8;
+  string user = 9;
+  map<string, string> attributes = 10;
+  repeated string outbound_group_tags = 11;
+  string outbound_tag = 12;
+  repeated bytes local_ips = 13;
+  uint32 local_port = 14;
+  uint32 vless_route = 15;
+}
+
+message TestRouteRequest {
+  RoutingContext routing_context = 1;
+  repeated string field_selectors = 2;
+  bool publish_result = 3;
+}

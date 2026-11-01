@@ -33,7 +33,7 @@ Run `sudo freedom` to open the terminal menu. The Telegram submenu can install t
 | Per-user/per-node traffic since binding migration | Aggregate user totals | Yes |
 | Per-user traffic quota and expiry with automatic suspension and admin notices | Local metadata | Yes |
 | Online users, source IPs and last-online information | Via collector | `/online`, `/onlinedoctor` and user details |
-| Routing rules, outbounds, balancers and DNS | Config file or agent CLI | `/routing` manages rules, outbound endpoints, balancers, DNS servers and static host mappings; live balancer diagnostics and temporary target switching use a local Xray API; advanced objects use JSON |
+| Routing rules, outbounds, balancers and DNS | Config file or agent CLI | `/routing` manages rules, outbound endpoints, balancers, DNS servers and static host mappings; runtime route queries, balancer diagnostics and temporary target switching use a local Xray API; advanced objects use JSON |
 | Logging, connection policies and FakeDNS pools | Agent CLI, including preview and guarded apply | `/xrayconfig`: inspect common values, export, replace native JSON or restore defaults |
 | Xray start, stop and restart; statistics repair | Yes | Status and diagnostics menus (confirmation required) |
 | Bot and manager updates; Xray upgrades and rollback | Yes | Permission-gated |
@@ -233,7 +233,7 @@ GitHub Actions workflows are **manually dispatched** to avoid redundant builds a
 
 The Bot uses a separate stable `vMAJOR.MINOR.PATCH` version in `bot/main.go`: backward-compatible features increment the minor version and fixes increment the patch version. Each new Bot version receives a fixed `bot-vMAJOR.MINOR.PATCH` release with the source commit and checksummed binaries; the workflow refuses to reuse that version for different Bot source. `bot-latest` remains the rolling compatibility release used by existing installations. The terminal script keeps its independent version in `freedom.sh` and is incremented when that script changes. A fixed release identifies its original build; `bot-latest` can be rebuilt from equivalent source.
 
-The module retains Go 1.24 as its minimum language version, but release builds use the supported Go 1.26 toolchain. Use a current security-patched Go release for your own builds.
+Source builds require Go 1.26 or later, matching the official gRPC client's minimum and the release toolchain. Use a current security-patched Go release. Generated protobuf messages are committed; normal builds need no protobuf compiler. Installing a release binary does not require Go.
 
 For an optional end-to-end check on Linux, build the Bot locally and run `sudo env XRAY_BIN=/path/to/xray FREEDOM_BOT_BIN=/path/to/freedom-bot python3 tests/xray-integration.py`. It requires Xray 26.10.31 or newer and tests temporary loopback-only listeners, per-binding traffic and a single-user reset without modifying system services.
 

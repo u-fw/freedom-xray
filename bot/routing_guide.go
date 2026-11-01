@@ -243,6 +243,7 @@ func (s *BotService) sendRoutingPage(chatID int64, msgID, offset int, notice str
 		rows = append(rows, pages)
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "outbound.button"), "ob:page:0"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.button"), "bl:page:0"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "dns.button"), "dn:page:0")))
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "route.test.button"), "rt:test")))
 	if s.cfg.AllowMutations && script == "" {
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.add"), "rt:add"),
@@ -734,6 +735,10 @@ func (s *BotService) handleGuidedRoutingCallback(cb *tgbotapi.CallbackQuery) {
 	}
 	chatID, msgID := cb.Message.Chat.ID, cb.Message.MessageID
 	action := parts[1]
+	if (action == "test" || action == "testenable") && len(parts) == 2 {
+		s.handleRouteTestCallback(cb)
+		return
+	}
 	if action == "page" && len(parts) == 3 {
 		offset, err := strconv.Atoi(parts[2])
 		if err == nil {

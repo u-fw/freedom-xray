@@ -35,6 +35,7 @@ type pendingRoutingChange struct {
 	NativeClient          *nativeClientChange
 	XraySection           *xraySectionChange
 	EnableRoutingAPI      bool
+	ReturnRouteTest       bool
 	LiveBalancerTag       string
 	LiveBalancerETag      string
 	ExpectedRules         string
@@ -143,6 +144,10 @@ func (s *BotService) handleRoutingInput(msg *tgbotapi.Message) bool {
 	if state.Kind == "xray_section" {
 		routingWizards.Unlock()
 		return s.handleXraySectionInput(msg, state)
+	}
+	if state.Kind == "route_test" {
+		routingWizards.Unlock()
+		return s.handleRouteTestInput(msg, state)
 	}
 	if msg.Command() == "cancel" {
 		delete(routingWizards.items, chatID)
@@ -302,7 +307,11 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 		if pending.Override != nil {
 			s.returnBalancerLiveLatest(chatID, msgID, pending.Override.Tag, "")
 		} else if pending.EnableRoutingAPI {
-			s.returnToBalancerLive(chatID, msgID, pending.LiveBalancerTag, pending.LiveBalancerETag)
+			if pending.ReturnRouteTest {
+				s.sendRouteTestPage(chatID, cb.From.ID, msgID, "")
+			} else {
+				s.returnToBalancerLive(chatID, msgID, pending.LiveBalancerTag, pending.LiveBalancerETag)
+			}
 		} else if pending.XraySection != nil {
 			s.returnXraySection(chatID, msgID, pending.XraySection.Name, "")
 		} else if pending.NativeClient != nil {
@@ -333,6 +342,10 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 		return
 	}
 	if !s.cfg.AllowMutations {
+		if pending.EnableRoutingAPI && pending.ReturnRouteTest {
+			s.sendRouteTestPage(chatID, cb.From.ID, msgID, tr(s.cfg.Language, "manage.writesdisabled"))
+			return
+		}
 		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
 		return
 	}
@@ -412,6 +425,10 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 		message, err = changeRoutingConfig(s.cfg.XrayConfigPath, s.cfg.XrayBinPath, s.cfg.StatsAPIServer, pending.Change)
 	}
 	if err != nil {
+		if pending.EnableRoutingAPI && pending.ReturnRouteTest {
+			s.sendRouteTestPage(chatID, cb.From.ID, msgID, err.Error())
+			return
+		}
 		if pending.Override != nil {
 			notice := balancerOverrideFailure(s.cfg.Language, err)
 			if errors.Is(err, errBalancerLiveChanged) {
@@ -484,7 +501,11 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 		return
 	}
 	if pending.EnableRoutingAPI {
-		s.returnToBalancerLive(chatID, msgID, pending.LiveBalancerTag, pending.LiveBalancerETag)
+		if pending.ReturnRouteTest {
+			s.sendRouteTestPage(chatID, cb.From.ID, msgID, tr(s.cfg.Language, "route.test.enabled"))
+		} else {
+			s.returnToBalancerLive(chatID, msgID, pending.LiveBalancerTag, pending.LiveBalancerETag)
+		}
 		return
 	}
 	if pending.XraySection != nil {

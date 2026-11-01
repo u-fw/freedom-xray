@@ -81,6 +81,7 @@ var agentOperations = []agentOperation{
 	{"xray.section.put", true, true, false, "Create or replace log, policy or FakeDNS configuration"},
 	{"xray.section.reset", true, true, false, "Restore section defaults while retaining required statistics policies"},
 	{"routing.read", false, false, false, "Read routing, outbound and balancer summaries"},
+	{"routing.test", true, false, false, "Ask the running core to evaluate a synthetic routing context"},
 	{"routing.rules", false, false, false, "Read routing rules and edit references; extensions hidden unless requested"},
 	{"routing.rule.get", true, false, true, "Export one complete native routing rule including hidden extensions"},
 	{"routing.rule.patch", true, true, false, "Change one field of a routing rule"},
@@ -719,6 +720,12 @@ func executeAgentOperation(cfg *BotConfig, operation agentOperation, raw []byte,
 		return agentXraySection(cfg, name, raw, apply)
 	case "routing.read":
 		return LoadRouting(cfg.XrayConfigPath)
+	case "routing.test":
+		var input routeTestInput
+		if err := decodeAgentInput(raw, &input); err != nil {
+			return nil, err
+		}
+		return queryRouteTest(cfg, input)
 	case "routing.rules":
 		records, err := loadRoutingRuleRecords(cfg.XrayConfigPath)
 		if err != nil || includeSensitive {

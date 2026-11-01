@@ -257,6 +257,12 @@ def main():
             assert routes[0]["protected"] and routes[1]["rule"]["domain"] == ["domain:example.com"], routes
             full_rule = agent("routing.rule.get", {"index": routes[1]["index"], "etag": routes[1]["etag"]}, "--include-sensitive")
             assert full_rule["domain"] == ["domain:example.com"] and full_rule["outboundTag"] == "direct", full_rule
+            route_decision = agent("routing.test", {"domain": "example.com", "port": 443,
+                                                    "inbound_tag": "raw", "user": "alice", "protocol": "tls"})
+            assert route_decision["matched"] and route_decision["outbound_tag"] == "direct", route_decision
+            assert len(route_decision["config_etag"]) == 24 and route_decision["checked_at"], route_decision
+            no_route = agent("routing.test", {"domain": "no-route.invalid"})
+            assert not no_route["matched"] and "outbound_tag" not in no_route and no_route["saved_default_outbound"]["tag"] == "direct", no_route
             route_preview = agent("routing.rule.patch", {
                 "index": routes[1]["index"], "etag": routes[1]["etag"],
                 "field": "domain", "value": ["domain:changed.example"],
@@ -274,6 +280,8 @@ def main():
             assert not agent("balancers.override", force)["applied"]
             switched = agent("balancers.override", force, "--apply")
             assert switched["applied"] and switched["runtime_only"] and switched["status"]["override"] == "direct2", switched
+            route_decision = agent("routing.test", {"ip": "127.0.0.1", "port": httpd.server_port})
+            assert route_decision["matched"] and route_decision["outbound_tag"] == "direct2", route_decision
             headers = subprocess.run([
                 "curl", "-fsS", "--max-time", "10", "--noproxy", "",
                 "--socks5-hostname", f"127.0.0.1:{alice_raw}",
@@ -496,7 +504,7 @@ def main():
             assert fake_ip in ipaddress.ip_network("198.18.0.0/24"), fake_ip
             assert agent("xray.section.reset", section_ref("fakedns"), "--apply")["applied"]
             assert agent("xray.section.reset", section_ref("log"), "--apply")["applied"]
-            print("Real Xray advanced sections, FakeDNS responses, native client CRUD, authenticated VMess/Trojan traffic, runtime balancing with verified egress and isolated traffic reset passed")
+            print("Real Xray routing queries, advanced sections, FakeDNS responses, native client CRUD, authenticated VMess/Trojan traffic, runtime balancing with verified egress and isolated traffic reset passed")
         except Exception:
             for index, process in enumerate(processes):
                 process.terminate()
