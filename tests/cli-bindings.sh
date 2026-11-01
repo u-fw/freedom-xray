@@ -61,4 +61,39 @@ rows="$(online_user_rows "$online")"
 [[ "$rows" == *$'alice\t203.0.113.7, 203.0.113.8'* ]]
 [[ "$rows" != *'alice+cmF3'* && "$rows" != *'alice+Y2Ru'* ]]
 
+# set -e ignores negated commands, so expected failures are asserted explicitly.
+fails() { if "$@"; then echo "unexpected success: $*" >&2; return 1; fi; }
+
+# Menu choices stay decimal with leading zeros instead of aborting or reading octal.
+[[ "$(menu_index 08 9)" == 7 && "$(menu_index 010 10)" == 9 && "$(menu_index 1 1)" == 0 ]]
+fails menu_index 0 3
+fails menu_index 4 3
+fails menu_index abc 3
+fails menu_index 1234567 9999999
+
+# The core must accept a candidate before it replaces the live configuration.
+BIN="$work_dir/fake-xray"
+cat > "$BIN" <<'SH'
+#!/usr/bin/env bash
+[[ "$1 $2 $3" == 'run -test -config' && "$4" == *.json ]] || exit 2
+! grep -q '"reject-me"' "$4"
+SH
+chmod 700 "$BIN"
+set_xray_config_permissions() { :; }
+original="$(cat "$CONFIG_PATH")"
+fails commit_config '{"inbounds":[],"tag":"reject-me"}' 2>/dev/null
+[[ "$(cat "$CONFIG_PATH")" == "$original" ]]
+backup_existing_config 2>/dev/null
+commit_config '{"inbounds":[]}'
+[[ "$(jq -c . "$CONFIG_PATH")" == '{"inbounds":[]}' ]]
+[[ -z "$(find "$CONFIG_DIR" -maxdepth 1 -name '.freedom-check-*')" ]]
+backup_matches_live_config
+# A later edit made elsewhere, such as by the Bot, must not be offered for rollback.
+printf '%s\n' '{"inbounds":[],"log":{}}' > "$CONFIG_PATH"
+fails backup_matches_live_config
+commit_config '{"inbounds":[]}'
+fails backup_matches_live_config
+BIN=""
+fails commit_config '{"inbounds":[]}' 2>/dev/null
+
 echo 'CLI binding compatibility checks passed'

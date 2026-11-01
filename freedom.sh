@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# freedom.sh v11.0-modular-manager
+# freedom.sh: modular Xray-core manager (release: see SCRIPT_VERSION)
 # A modular Xray-core lifecycle manager for VLESS (REALITY, XHTTP, TLS).
 # Official configuration references: https://xtls.github.io/config/ and https://github.com/xtls/xray-core
 #
@@ -28,7 +28,7 @@ NC='\033[0m'
 
 export PATH="$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
 
-SCRIPT_VERSION="v13.5.2"
+SCRIPT_VERSION="v13.5.3"
 # Optional client-side ECH configuration for XHTTP/TLS links; does not modify origin TLS.
 XHTTP_CDN_ECH_CONFIG="cloudflare-ech.com+https://dns.alidns.com/dns-query"
 DEFAULT_SNI="www.nvidia.com"
@@ -50,6 +50,9 @@ META_PATH="$CONFIG_DIR/freedom-meta.json"
 PUBLIC_PORTS_PATH="$CONFIG_DIR/freedom-public-ports.json"
 STATS_STORE_PATH="$CONFIG_DIR/freedom-stats.json"
 BACKUP_FILE=""
+# SHA-256 of the live config this manager last snapshotted or committed. The
+# snapshot is only offered for restore while the live file still matches it.
+BACKUP_TRACKED_SHA=""
 
 BOT_BIN_PATH="/usr/local/bin/freedom-bot"
 BOT_CONFIG_PATH="$CONFIG_DIR/bot.json"
@@ -125,18 +128,42 @@ restore_backup() {
   fi
 }
 
+config_sha256() {
+  [[ -f "$CONFIG_PATH" ]] || return 1
+  sha256sum "$CONFIG_PATH" | cut -d' ' -f1
+}
+
+# Restoring a snapshot after the live file changed elsewhere (for example by
+# the Bot or an earlier menu action) would silently discard those changes.
+backup_matches_live_config() {
+  [[ -n "${BACKUP_FILE:-}" && -f "$BACKUP_FILE" && -n "$BACKUP_TRACKED_SHA" ]] || return 1
+  [[ "$(config_sha256 || true)" == "$BACKUP_TRACKED_SHA" ]]
+}
+
 fatal_with_rollback() {
   local msg="$1"
   local ans=""
-  if [[ -n "${BACKUP_FILE:-}" && -f "$BACKUP_FILE" ]]; then
+  if backup_matches_live_config; then
     warn "$msg"
     read -r -p "Restore this backup configuration? [y/N]: " ans || ans="N"
     case "${ans:-N}" in
       y|Y|yes|YES) restore_backup || warn "Backup restoration failed. Check manually: $BACKUP_FILE" ;;
       *) warn "Current configuration retained. Backup: $BACKUP_FILE" ;;
     esac
+  elif [[ -n "${BACKUP_FILE:-}" && -f "$BACKUP_FILE" ]]; then
+    warn "The configuration changed after snapshot ${BACKUP_FILE}; it is not offered for automatic restore."
   fi
   fatal "$msg"
+}
+
+# Print the zero-based index of a decimal menu choice in 1..max. Leading zeros
+# stay decimal: Bash arithmetic reads 010 as octal and aborts on 08 or 09.
+menu_index() {
+  local choice="$1" max="$2"
+  [[ "$choice" =~ ^[0-9]{1,6}$ ]] || return 1
+  choice=$((10#$choice))
+  ((choice >= 1 && choice <= max)) || return 1
+  printf '%s\n' "$((choice - 1))"
 }
 
 install_packages() {
@@ -982,9 +1009,11 @@ locked_config_operation() (
 backup_existing_config() {
   install -d -m 755 "$CONFIG_DIR"
   BACKUP_FILE=""
+  BACKUP_TRACKED_SHA=""
   if [[ -f "$CONFIG_PATH" ]]; then
     BACKUP_FILE="${CONFIG_PATH}.bak.$(date +%Y%m%d%H%M%S)"
     cp -a "$CONFIG_PATH" "$BACKUP_FILE"
+    BACKUP_TRACKED_SHA="$(sha256sum "$BACKUP_FILE" | cut -d' ' -f1)"
     info "Created rollback snapshot: $BACKUP_FILE"
     ls -1t "${CONFIG_PATH}".bak.* 2>/dev/null | tail -n +8 | xargs -r rm -f || true
   fi
@@ -1022,7 +1051,12 @@ commit_config() {
     warn "Generated config is not valid JSON. No changes were made."
     return 1
   fi
-  local tmp_file="${CONFIG_PATH}.tmp.$$"
+  # Xray selects the parser from the file extension, so the candidate keeps .json.
+  local tmp_file
+  if ! tmp_file="$(mktemp -p "$CONFIG_DIR" --suffix=.json .freedom-check-XXXXXX)"; then
+    warn "Unable to create a temporary config. The original remains unchanged."
+    return 1
+  fi
   if ! printf '%s\n' "$new_json" > "$tmp_file"; then
     rm -f "$tmp_file"
     warn "Unable to write temporary config. The original remains unchanged."
@@ -1034,12 +1068,47 @@ commit_config() {
     warn "Unable to set config file permissions; no changes committed."
     return 1
   fi
+  if ! xray_accepts_config "$tmp_file"; then
+    rm -f "$tmp_file"
+    warn "Xray rejected the generated config. The original remains unchanged."
+    return 1
+  fi
+  local previous_sha
+  previous_sha="$(config_sha256 || true)"
   if ! mv -f "$tmp_file" "$CONFIG_PATH"; then
     rm -f "$tmp_file"
     warn "Unable to replace config. The original remains unchanged."
     return 1
   fi
+  # Keep tracking the snapshot only across this manager's own consecutive writes.
+  if [[ -n "$BACKUP_TRACKED_SHA" && "$previous_sha" == "$BACKUP_TRACKED_SHA" ]]; then
+    BACKUP_TRACKED_SHA="$(config_sha256 || true)"
+  else
+    BACKUP_TRACKED_SHA=""
+  fi
   return 0
+}
+
+# Ask the installed core to load a candidate before it can replace the live file.
+xray_accepts_config() {
+  local candidate="$1" log
+  if [[ -z "$BIN" || ! -x "$BIN" ]]; then
+    warn "Xray core not found; refusing to commit an untested configuration."
+    return 1
+  fi
+  log="$(mktemp)" || return 1
+  if "$BIN" run -test -config "$candidate" >"$log" 2>&1; then
+    rm -f "$log"
+    return 0
+  fi
+  # Cores that predate the run subcommand only accept the legacy flag form.
+  if "$BIN" -test -config "$candidate" >/dev/null 2>&1; then
+    rm -f "$log"
+    return 0
+  fi
+  cat "$log" >&2
+  rm -f "$log"
+  return 1
 }
 
 validate_and_restart_service() {
@@ -1907,11 +1976,12 @@ show_user_node_links() {
     local u_sel
     read -r -p "Choose user [1-${i}]: " u_sel || u_sel=""
     [[ "$u_sel" == "0" || -z "$u_sel" ]] && return 0
-    if ! [[ "$u_sel" =~ ^[0-9]+$ ]] || ((u_sel < 1 || u_sel > i)); then
+    local u_index
+    if ! u_index="$(menu_index "$u_sel" "$i")"; then
       warn "Invalid selection."
       return 0
     fi
-    local chosen="${user_arr[$((u_sel-1))]}"
+    local chosen="${user_arr[$u_index]}"
     sel_email="${chosen%%|*}"
     sel_uuid="${chosen##*|}"
   fi
@@ -2020,8 +2090,9 @@ show_user_node_links() {
 
   echo
   read -r -p "Generate a terminal QR code for an inbound? Choose 1-${n_count}, or press Enter to skip: " qr_idx || qr_idx=""
-  if [[ "$qr_idx" =~ ^[0-9]+$ ]] && ((1 <= qr_idx && qr_idx <= n_count)); then
-    local sel_link="${node_links[$((qr_idx-1))]}"
+  local qr_index
+  if qr_index="$(menu_index "$qr_idx" "$n_count")"; then
+    local sel_link="${node_links[$qr_index]}"
     if [[ -n "$sel_link" ]]; then
       if ! command -v qrencode >/dev/null 2>&1; then
         install_packages qrencode || true
@@ -2133,8 +2204,9 @@ reset_traffic_stats_interactive() {
       echo "————————————————————————————————————————————————"
       read -r -p "Enter user number [1-${i}]: " u_idx || u_idx=""
       [[ "$u_idx" == "0" || -z "$u_idx" ]] && return 0
-      if [[ "$u_idx" =~ ^[0-9]+$ ]] && ((1 <= u_idx && u_idx <= i)); then
-        local target_em="${u_arr[$((u_idx-1))]}"
+      local u_index
+      if u_index="$(menu_index "$u_idx" "$i")"; then
+        local target_em="${u_arr[$u_index]}"
         if [[ -x "$BOT_BIN_PATH" ]]; then
           # Reset every per-node identity as well as the legacy username.
           # This menu already holds the shared configuration lock.
@@ -2952,8 +3024,8 @@ list_and_show_nodes() {
 
   echo
   read -r -p "Generate a terminal QR code? Choose inbound 1-${count}, or press Enter to skip: " qr_idx || qr_idx=""
-  if [[ "$qr_idx" =~ ^[0-9]+$ ]] && ((1 <= qr_idx && qr_idx <= count)); then
-    local target_i=$((qr_idx - 1))
+  local target_i
+  if target_i="$(menu_index "$qr_idx" "$count")"; then
     local ib_json
     ib_json="$(echo "$nodes_json" | jq -c --argjson idx "$target_i" '.[$idx]')"
     local net sec port uuid tag
@@ -3300,12 +3372,12 @@ delete_node_interactive() {
   read -r -p "Inbound to delete [1-${count}]: " del_sel || del_sel=""
   [[ "$del_sel" == "0" || -z "$del_sel" ]] && return 0
 
-  if ! [[ "$del_sel" =~ ^[0-9]+$ ]] || ((del_sel < 1 || del_sel > count)); then
+  local del_idx
+  if ! del_idx="$(menu_index "$del_sel" "$count")"; then
     warn "Invalid number; operation cancelled."
     return 0
   fi
 
-  local del_idx=$((del_sel - 1))
   local del_tag del_port
   del_tag="$(echo "$nodes_json" | jq -r --argjson idx "$del_idx" '.[$idx].tag')"
   del_port="$(echo "$nodes_json" | jq -r --argjson idx "$del_idx" '.[$idx].port')"
@@ -3394,12 +3466,12 @@ modify_node_interactive() {
   read -r -p "Choose inbound to edit [1-${count}]: " mod_sel || mod_sel=""
   [[ "$mod_sel" == "0" || -z "$mod_sel" ]] && return 0
 
-  if ! [[ "$mod_sel" =~ ^[0-9]+$ ]] || ((mod_sel < 1 || mod_sel > count)); then
+  local mod_idx
+  if ! mod_idx="$(menu_index "$mod_sel" "$count")"; then
     warn "Invalid number; operation cancelled."
     return 0
   fi
 
-  local mod_idx=$((mod_sel - 1))
   local current_json cur_tag cur_port cur_net
   current_json="$(echo "$nodes_json" | jq -c --argjson idx "$mod_idx" '.[$idx]')"
   cur_tag="$(echo "$current_json" | jq -r '.tag')"
@@ -3802,10 +3874,11 @@ configure_freedom_bot_interactive() {
 
   read -r -p "Periodic system/traffic report interval (hours, 0 disables) [current: ${cur_hours}]: " in_hours || in_hours=""
   local final_hours="${in_hours:-$cur_hours}"
-  if ! [[ "$final_hours" =~ ^[0-9]+$ ]] || ((final_hours > 168)); then
+  if ! [[ "$final_hours" =~ ^[0-9]{1,3}$ ]] || ((10#$final_hours > 168)); then
     warn "Report interval must be an integer between 0 and 168 hours; configuration not saved."
     return 1
   fi
+  final_hours=$((10#$final_hours))
 
   local in_mutations final_mutations="$cur_mutations"
   read -r -p "Allow Telegram administrators to edit Xray users? [y/N; current ${cur_mutations}] (default off): " in_mutations || in_mutations=""
