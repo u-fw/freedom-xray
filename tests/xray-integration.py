@@ -122,6 +122,9 @@ def main():
                         "balancers": [{"tag": "pool", "selector": ["direct"],
                                        "strategy": {"type": "roundRobin"}}]},
         }
+        cdn_settings = server_config["inbounds"][2]["settings"]
+        cdn_settings["users"] = cdn_settings.pop("clients")
+        cdn_settings["clients"] = None
         processes = []
         try:
             server = start_xray(server_config, directory, "config")

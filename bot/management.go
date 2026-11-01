@@ -43,10 +43,27 @@ func getMap(v any) (map[string]any,bool) {
  m,ok:=v.(map[string]any); return m,ok
 }
 
+// Xray gives a non-null clients array precedence over users, including an
+// explicitly empty array. Preserve the effective field during updates.
+func clientListField(in map[string]any) (map[string]any,string,[]any,error) {
+ settings,ok:=getMap(in["settings"]); if !ok{return nil,"",nil,errors.New("Inbound lacks settings")}
+ for _,field:=range []string{"clients","users"} {
+  if settings[field]==nil{continue}
+  clients,ok:=settings[field].([]any);if !ok{return nil,"",nil,fmt.Errorf("Inbound %s must be an array",field)}
+  return settings,field,clients,nil
+ }
+ return settings,"clients",[]any{},nil
+}
+
 func clientList(in map[string]any) ([]any,error) {
- settings,ok:=getMap(in["settings"]); if !ok{return nil,errors.New("Inbound lacks settings")}
- clients,ok:=settings["clients"].([]any); if !ok {return nil,errors.New("Inbound lacks clients")}
- return clients,nil
+ _,_,clients,err:=clientListField(in)
+ return clients,err
+}
+
+func setClientList(in map[string]any,clients []any) error {
+ settings,field,_,err:=clientListField(in);if err!=nil{return err}
+ settings[field]=clients
+ return nil
 }
 
 func usableInbounds(root map[string]any) ([]map[string]any,error) {

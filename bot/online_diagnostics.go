@@ -61,8 +61,7 @@ func inspectOnlinePolicy(configPath string) ([]onlineLevelInfo,error) {
  clients:=map[string]int{}
  for _,in:=range root.Inbounds {
   if in["tag"]=="api-internal"{continue}
-  settings,_:=getMap(in["settings"])
-  list,_:=settings["clients"].([]any)
+  list,_:=clientList(in)
   for _,raw:=range list {
    client,_:=getMap(raw)
    clients[clientLevelString(client["level"])]++

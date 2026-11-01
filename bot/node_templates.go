@@ -591,9 +591,7 @@ func inspectNodeDeletion(configPath,tag string)(nodeDeletionReport,error) {
   if report.Found{return report,errors.New("Duplicate inbound tag; refusing deletion")}
   report.Found=true
   report.Port=inboundPortValue(in["port"])
-  if settings,ok:=getMap(in["settings"]);ok {
-   if clients,ok:=settings["clients"].([]any);ok{report.Clients=len(clients)}
-  }
+  if clients,err:=clientList(in);err==nil{report.Clients=len(clients)}
  }
  if !report.Found{return report,errors.New("Inbound not found")}
  if routing,ok:=getMap(root["routing"]);ok {

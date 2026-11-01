@@ -70,13 +70,13 @@ func applyUserSuspension(root map[string]any,store *suspendedStore,change UserCh
   }
   if len(parked.Nodes)==0{return "",errors.New("User not found")}
   for _,in:=range inbounds {
-   settings,_:=getMap(in["settings"]);list,_:=clientList(in)
+   list,_:=clientList(in)
    next:=make([]any,0,len(list))
    for _,v:=range list{
     c,_:=getMap(v);email,_:=c["email"].(string)
     if bindingOwner(email)!=change.User {next=append(next,v)}
    }
-   settings["clients"]=next
+   if err:=setClientList(in,next);err!=nil{return "",err}
   }
   store.Users[change.User]=parked
   return fmt.Sprintf("Suspended %s across %d inbounds; the original UUID was saved locally",change.User,len(parked.Nodes)),nil
@@ -109,8 +109,8 @@ func applyUserSuspension(root map[string]any,store *suspendedStore,change UserCh
    restored[tag]=restoredClient
   }
   for tag,client:=range restored{
-   in:=byTag[tag];settings,_:=getMap(in["settings"]);list,_:=clientList(in)
-   settings["clients"]=append(list,client)
+   in:=byTag[tag];list,_:=clientList(in)
+   if err:=setClientList(in,append(list,client));err!=nil{return "",err}
   }
   delete(store.Users,change.User)
   return fmt.Sprintf("Restored %s's %d inbounds and original UUID",change.User,len(parked.Nodes)),nil

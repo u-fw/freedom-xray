@@ -46,7 +46,25 @@ func nativeAccountOwners(root map[string]any) (map[string]bool, error) {
 		}
 		protocol, _ := inbound["protocol"].(string)
 		if !strings.EqualFold(protocol, "vless") {
-			visit(inbound["settings"])
+			settings, ok := getMap(inbound["settings"])
+			if !ok {
+				visit(inbound["settings"])
+				continue
+			}
+			// These protocols use the same precedence as VLESS. Do not mark
+			// an inactive users entry as contributing to live Xray counters.
+			switch strings.ToLower(protocol) {
+			case "vmess", "trojan", "shadowsocks", "hysteria", "masque":
+				if settings["clients"] != nil {
+					for key, child := range settings {
+						if key != "users" {
+							visit(child)
+						}
+					}
+					continue
+				}
+			}
+			visit(settings)
 		}
 	}
 	return owners, nil

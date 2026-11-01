@@ -260,7 +260,11 @@ func LoadXrayInbounds(configPath string) ([]InboundDetails, error) {
 			if decryption, ok := settings["decryption"].(string); ok && decryption != "" {
 				node.Decryption = decryption
 			}
-			if clientsRaw, ok := settings["clients"].([]interface{}); ok {
+			clientsRaw, listErr := clientList(in)
+			if listErr != nil && proto == "vless" {
+				return nil, fmt.Errorf("invalid VLESS clients for inbound %q: %w", tag, listErr)
+			}
+			if listErr == nil {
 				for _, c := range clientsRaw {
 					if cMap, ok := c.(map[string]interface{}); ok {
 						id, _ := cMap["id"].(string)

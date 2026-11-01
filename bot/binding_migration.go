@@ -59,10 +59,10 @@ func applyBindingEmailMigration(root map[string]any,store *suspendedStore,mode b
   in,ok:=getMap(value)
   if !ok{return stats,errors.New("Invalid inbound format")}
   if in["tag"]=="api-internal"||in["protocol"]!="vless" {continue}
-  settings,ok:=getMap(in["settings"])
-  if !ok{continue}
-  list,ok:=settings["clients"].([]any)
-  if !ok||len(list)==0{continue}
+  if _,ok:=getMap(in["settings"]);!ok{continue}
+  list,err:=clientList(in)
+  if err!=nil{return stats,err}
+  if len(list)==0{continue}
   tag,_:=in["tag"].(string)
   if err:=validateNodeTag(tag);err!=nil {
    return stats,fmt.Errorf("Inbound tag %q cannot be used for per-node accounting: %w",tag,err)

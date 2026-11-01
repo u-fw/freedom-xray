@@ -141,8 +141,7 @@ func enableStatsPolicy(root map[string]any) bool {
  if inbounds,ok:=root["inbounds"].([]any);ok {
   for _,rawInbound:=range inbounds {
    inbound,ok:=rawInbound.(map[string]any);if !ok{continue}
-   settings,ok:=inbound["settings"].(map[string]any);if !ok{continue}
-   clients,ok:=settings["clients"].([]any);if !ok{continue}
+   clients,err:=clientList(inbound);if err!=nil{continue}
    for _,rawClient:=range clients {
     client,ok:=rawClient.(map[string]any);if !ok{continue}
     switch level:=client["level"].(type) {

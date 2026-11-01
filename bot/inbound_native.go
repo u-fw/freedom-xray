@@ -124,8 +124,15 @@ func nativeInboundRecords(root map[string]any) ([]nativeInboundRecord, error) {
 			record.Port = strconv.Itoa(port)
 		}
 		if settings, ok := getMap(item["settings"]); ok {
-			if clients, ok := settings["clients"].([]any); ok {
+			if settings["clients"] != nil || settings["users"] != nil {
+				clients, err := clientList(item)
+				if err != nil {
+					return nil, err
+				}
 				count := len(clients)
+				record.ClientCount = &count
+			} else if accounts, ok := settings["accounts"].([]any); ok {
+				count := len(accounts)
 				record.ClientCount = &count
 			}
 		}
