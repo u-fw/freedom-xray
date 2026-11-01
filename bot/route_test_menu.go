@@ -7,8 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func parseRouteTestInput(raw []byte, jsonOnly bool) (routeTestInput, error) {
@@ -54,10 +52,10 @@ func parseRouteTestInput(raw []byte, jsonOnly bool) (routeTestInput, error) {
 	return input, err
 }
 
-func routeTestBackMarkup(lang string) tgbotapi.InlineKeyboardMarkup {
-	return tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(lang, "routing.guide.back"), "rt:page:0"),
-		tgbotapi.NewInlineKeyboardButtonData(tr(lang, "menu.home"), "menu_main")))
+func routeTestBackMarkup(lang string) tgKeyboard {
+	return newKeyboard(newRow(
+		newButton(tr(lang, "routing.guide.back"), "rt:page:0"),
+		newButton(tr(lang, "menu.home"), "menu_main")))
 }
 
 func (s *BotService) sendRouteTestPage(chatID, adminID int64, msgID int, notice string) {
@@ -74,8 +72,8 @@ func (s *BotService) sendRouteTestPage(chatID, adminID int64, msgID int, notice 
 	if errors.Is(err, errRoutingServiceDisabled) {
 		body += tr(s.cfg.Language, "route.test.disabled")
 		if s.cfg.AllowMutations {
-			markup.InlineKeyboard = append([][]tgbotapi.InlineKeyboardButton{tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.live.enable"), "rt:testenable"))}, markup.InlineKeyboard...)
+			markup.InlineKeyboard = append([][]tgButton{newRow(
+				newButton(tr(s.cfg.Language, "balancer.live.enable"), "rt:testenable"))}, markup.InlineKeyboard...)
 		}
 	} else if err != nil {
 		body += tr(s.cfg.Language, "route.test.failed", mdEsc(err.Error()))
@@ -88,7 +86,7 @@ func (s *BotService) sendRouteTestPage(chatID, adminID int64, msgID int, notice 
 	s.sendOrEdit(chatID, msgID, body, markup)
 }
 
-func (s *BotService) handleRouteTestCallback(cb *tgbotapi.CallbackQuery) {
+func (s *BotService) handleRouteTestCallback(cb *tgCallback) {
 	if cb.Message == nil || cb.Message.Chat == nil || cb.From == nil {
 		return
 	}
@@ -144,7 +142,7 @@ func routeTestWizardCurrent(chatID int64, expected routingWizard) bool {
 	return ok && current == expected && time.Now().Before(current.Expires)
 }
 
-func (s *BotService) handleRouteTestInput(msg *tgbotapi.Message, state routingWizard) bool {
+func (s *BotService) handleRouteTestInput(msg *tgMessage, state routingWizard) bool {
 	if msg.Command() == "cancel" {
 		if consumeRoutingWizard(msg.Chat.ID, state) {
 			s.sendRoutingPage(msg.Chat.ID, 0, 0, tr(s.cfg.Language, "wizard.cancelled"))
@@ -157,7 +155,7 @@ func (s *BotService) handleRouteTestInput(msg *tgbotapi.Message, state routingWi
 	raw := []byte(msg.Text)
 	if msg.Document != nil {
 		var err error
-		raw, err = readTelegramJSONDocument(s.bot, msg.Document)
+		raw, err = readTelegramJSONDocument(s.tg, msg.Document)
 		if err != nil {
 			if routeTestWizardCurrent(msg.Chat.ID, state) {
 				s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))

@@ -7,8 +7,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // Only patch the language fields: administrator-managed bot.json files may
@@ -72,7 +70,7 @@ func languageButtonLabel(lang, current string) string {
 
 // Language selection is an administrator-private operation. Unsupported locale
 // identifiers are rejected rather than silently changing the saved setting.
-func (s *BotService) changeLanguage(msg *tgbotapi.Message) {
+func (s *BotService) changeLanguage(msg *tgMessage) {
 	lang := strings.TrimSpace(msg.CommandArguments())
 	if lang == "" {
 		s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "lang.usage", s.cfg.Language))
@@ -131,7 +129,7 @@ func (s *BotService) setLanguage(chatID int64, msgID int, lang string) {
 // maybeAutoDetectLanguage applies Telegram's client locale until the admin
 // makes an explicit choice. Only private administrator messages reach here;
 // group chats and explicit selections are never overridden.
-func (s *BotService) maybeAutoDetectLanguage(msg *tgbotapi.Message) {
+func (s *BotService) maybeAutoDetectLanguage(msg *tgMessage) {
 	if s.cfg.LanguageExplicit || msg == nil || msg.From == nil || !msg.Chat.IsPrivate() {
 		return
 	}

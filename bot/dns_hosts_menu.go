@@ -6,14 +6,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-func dnsHostsBackMarkup(lang string) tgbotapi.InlineKeyboardMarkup {
-	return tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(lang, "dns.hosts.back"), "dh:page:0"),
-		tgbotapi.NewInlineKeyboardButtonData(tr(lang, "dns.back"), "dn:page:0")))
+func dnsHostsBackMarkup(lang string) tgKeyboard {
+	return newKeyboard(newRow(
+		newButton(tr(lang, "dns.hosts.back"), "dh:page:0"),
+		newButton(tr(lang, "dns.back"), "dn:page:0")))
 }
 
 func dnsHostCallback(action string, index int, etag string) string {
@@ -56,26 +54,26 @@ func (s *BotService) sendDNSHostsPage(chatID int64, msgID, offset int, notice st
 	if notice != "" {
 		body += "\n" + mdEsc(notice) + "\n"
 	}
-	var rows [][]tgbotapi.InlineKeyboardButton
+	var rows [][]tgButton
 	for _, host := range view.Hosts[offset:end] {
 		label := fmt.Sprintf("%d. %s", host.Index, host.Name)
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(truncateLabel(label, 64), dnsHostCallback("v", host.Index, view.ETag))))
+		rows = append(rows, newRow(newButton(truncateLabel(label, 64), dnsHostCallback("v", host.Index, view.ETag))))
 	}
-	var pages []tgbotapi.InlineKeyboardButton
+	var pages []tgButton
 	if offset > 0 {
-		pages = append(pages, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.prev"), fmt.Sprintf("dh:page:%d", offset-routingPageSize)))
+		pages = append(pages, newButton(tr(s.cfg.Language, "common.prev"), fmt.Sprintf("dh:page:%d", offset-routingPageSize)))
 	}
 	if end < len(view.Hosts) {
-		pages = append(pages, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.next"), fmt.Sprintf("dh:page:%d", end)))
+		pages = append(pages, newButton(tr(s.cfg.Language, "common.next"), fmt.Sprintf("dh:page:%d", end)))
 	}
 	if len(pages) > 0 {
 		rows = append(rows, pages)
 	}
 	if s.cfg.AllowMutations {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "dns.hosts.add"), "dh:add:"+view.ETag)))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "dns.hosts.add"), "dh:add:"+view.ETag)))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.refresh"), fmt.Sprintf("dh:page:%d", offset)), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "dns.back"), "dn:page:0")))
-	s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "common.refresh"), fmt.Sprintf("dh:page:%d", offset)), newButton(tr(s.cfg.Language, "dns.back"), "dn:page:0")))
+	s.sendOrEdit(chatID, msgID, body, newKeyboard(rows...))
 }
 
 func (s *BotService) sendDNSHostDetail(chatID int64, msgID, index int, etag string) {
@@ -86,18 +84,18 @@ func (s *BotService) sendDNSHostDetail(chatID int64, msgID, index int, etag stri
 		if err == nil && index >= 1 && index <= len(view.Hosts) {
 			host := view.Hosts[index-1]
 			body := tr(s.cfg.Language, "dns.hosts.detail", mdEsc(host.Name), mdEsc(strings.Join(host.Targets, "\n")))
-			var rows [][]tgbotapi.InlineKeyboardButton
+			var rows [][]tgButton
 			if !host.Editable {
 				body += tr(s.cfg.Language, "dns.hosts.advanced")
 			} else if s.cfg.AllowMutations {
-				rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-					tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "dns.hosts.edit"), dnsHostCallback("edit", index, etag)),
-					tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "dns.hosts.rename"), dnsHostCallback("rename", index, etag))))
-				rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "dns.hosts.delete"), dnsHostCallback("delete", index, etag))))
+				rows = append(rows, newRow(
+					newButton(tr(s.cfg.Language, "dns.hosts.edit"), dnsHostCallback("edit", index, etag)),
+					newButton(tr(s.cfg.Language, "dns.hosts.rename"), dnsHostCallback("rename", index, etag))))
+				rows = append(rows, newRow(newButton(tr(s.cfg.Language, "dns.hosts.delete"), dnsHostCallback("delete", index, etag))))
 			}
 			offset := ((index - 1) / routingPageSize) * routingPageSize
-			rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "dns.hosts.back"), fmt.Sprintf("dh:page:%d", offset)), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "dns.back"), "dn:page:0")))
-			s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))
+			rows = append(rows, newRow(newButton(tr(s.cfg.Language, "dns.hosts.back"), fmt.Sprintf("dh:page:%d", offset)), newButton(tr(s.cfg.Language, "dns.back"), "dn:page:0")))
+			s.sendOrEdit(chatID, msgID, body, newKeyboard(rows...))
 			return
 		}
 	}
@@ -133,7 +131,7 @@ func (s *BotService) offerDNSHostChange(chatID, adminID int64, msgID int, change
 	s.queueGuidedRoutingChange(chatID, adminID, msgID, pendingRoutingChange{DNSHost: &change}, body)
 }
 
-func (s *BotService) handleDNSHostInput(msg *tgbotapi.Message, state dnsWizard) bool {
+func (s *BotService) handleDNSHostInput(msg *tgMessage, state dnsWizard) bool {
 	if msg.Command() == "cancel" {
 		clearDNSWizard(msg.Chat.ID)
 		s.sendDNSHostsPage(msg.Chat.ID, 0, 0, tr(s.cfg.Language, "wizard.cancelled"))
@@ -203,7 +201,7 @@ func (s *BotService) handleDNSHostInput(msg *tgbotapi.Message, state dnsWizard) 
 	return true
 }
 
-func (s *BotService) handleDNSHostCallback(cb *tgbotapi.CallbackQuery) {
+func (s *BotService) handleDNSHostCallback(cb *tgCallback) {
 	if cb.Message == nil || cb.Message.Chat == nil || cb.From == nil {
 		return
 	}

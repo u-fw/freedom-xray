@@ -2,8 +2,6 @@ package main
 
 import (
 	"strings"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func (s *BotService) sendInboundTrafficCard(chatID int64, msgID int) {
@@ -55,15 +53,15 @@ func (s *BotService) sendInboundTrafficCard(chatID int64, msgID int) {
 	}
 	body.WriteString(tr(s.cfg.Language, "inbound.total", FormatBytes(total)))
 	body.WriteString(tr(s.cfg.Language, "inbound.note"))
-	rows := [][]tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.refresh"), "menu_inbound_traffic"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "inbound.users"), "menu_traffic")),
+	rows := [][]tgButton{
+		newRow(newButton(tr(s.cfg.Language, "common.refresh"), "menu_inbound_traffic"), newButton(tr(s.cfg.Language, "inbound.users"), "menu_traffic")),
 	}
 	if inboundOff {
 		if len(traffic) > 0 {
 			body.WriteString(tr(s.cfg.Language, "stats.inbound.off"))
 		}
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "stats.open"), "menu_stats")))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "stats.open"), "menu_stats")))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.home"), "menu_main")))
-	s.sendOrEdit(chatID, msgID, body.String(), tgbotapi.NewInlineKeyboardMarkup(rows...))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "menu.home"), "menu_main")))
+	s.sendOrEdit(chatID, msgID, body.String(), newKeyboard(rows...))
 }

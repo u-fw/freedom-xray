@@ -11,8 +11,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type capturedTelegram struct {
@@ -27,12 +25,10 @@ func newCapturedRoutingBot(t *testing.T, cfg *BotConfig) (*BotService, *captured
 	t.Helper()
 	capture := &capturedTelegram{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseForm(); err != nil {
-			t.Errorf("parse Telegram request: %v", err)
-		}
-		if r.FormValue("text") != "" {
+		values := telegramRequestValues(t, r)
+		if values["text"] != "" {
 			capture.mu.Lock()
-			capture.text, capture.markup, capture.method = r.FormValue("text"), r.FormValue("reply_markup"), r.URL.Path
+			capture.text, capture.markup, capture.method = values["text"], values["reply_markup"], r.URL.Path
 			capture.count++
 			capture.mu.Unlock()
 		}
@@ -40,11 +36,7 @@ func newCapturedRoutingBot(t *testing.T, cfg *BotConfig) (*BotService, *captured
 		fmt.Fprint(w, `{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"test","message_id":1}}`)
 	}))
 	t.Cleanup(server.Close)
-	bot, err := tgbotapi.NewBotAPIWithClient("test", server.URL+"/bot%s/%s", server.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &BotService{cfg: cfg, bot: bot}, capture
+	return &BotService{cfg: cfg, tg: newTestTelegramClient(t, testBotToken, server.URL, server.Client())}, capture
 }
 
 func (capture *capturedTelegram) lastMethod() string {
@@ -59,29 +51,29 @@ func (capture *capturedTelegram) messageCount() int {
 	return capture.count
 }
 
-func (capture *capturedTelegram) card(t *testing.T) (string, tgbotapi.InlineKeyboardMarkup) {
+func (capture *capturedTelegram) card(t *testing.T) (string, tgKeyboard) {
 	t.Helper()
 	capture.mu.Lock()
 	defer capture.mu.Unlock()
-	var markup tgbotapi.InlineKeyboardMarkup
-	if err := json.Unmarshal([]byte(capture.markup), &markup); err != nil {
+	markup, err := decodeWireKeyboard(capture.markup)
+	if err != nil {
 		t.Fatalf("decode keyboard %q: %v", capture.markup, err)
 	}
 	return capture.text, markup
 }
 
-func keyboardCallbacks(t *testing.T, markup tgbotapi.InlineKeyboardMarkup) []string {
+func keyboardCallbacks(t *testing.T, markup tgKeyboard) []string {
 	t.Helper()
 	var callbacks []string
 	for _, row := range markup.InlineKeyboard {
 		for _, button := range row {
-			if button.CallbackData == nil {
+			if button.Data == "" {
 				continue
 			}
-			if len(*button.CallbackData) > 64 {
-				t.Fatalf("callback exceeds Telegram limit: %q", *button.CallbackData)
+			if len(button.Data) > 64 {
+				t.Fatalf("callback exceeds Telegram limit: %q", button.Data)
 			}
-			callbacks = append(callbacks, *button.CallbackData)
+			callbacks = append(callbacks, button.Data)
 		}
 	}
 	return callbacks
@@ -157,11 +149,11 @@ func TestGuidedRoutingEditNeedsBoundConfirmation(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.XrayConfigPath, cfg.XrayBinPath, cfg.AllowMutations = h.config, h.xray, true
 	s, _ := newCapturedRoutingBot(t, cfg)
-	chat, admin := &tgbotapi.Chat{ID: 9472, Type: "private"}, &tgbotapi.User{ID: 17}
+	chat, admin := &tgChat{ID: 9472, Type: "private"}, &tgUser{ID: 17}
 	ref := routeRef(t, editableRoutingRoot(t), 2)
-	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: fmt.Sprintf("rt:f:domain:%d:%s", ref.Index, ref.ETag)}
+	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: fmt.Sprintf("rt:f:domain:%d:%s", ref.Index, ref.ETag)}
 	s.handleGuidedRoutingCallback(cb)
-	msg := &tgbotapi.Message{From: admin, Chat: chat, Text: " "}
+	msg := &tgMessage{From: admin, Chat: chat, Text: " "}
 	if !s.handleGuidedRoutingInput(msg) {
 		t.Fatal("invalid input was not handled")
 	}
@@ -178,7 +170,7 @@ func TestGuidedRoutingEditNeedsBoundConfirmation(t *testing.T) {
 		t.Fatal("changed configuration before confirmation")
 	}
 	cb.Data = "routing_confirm:" + pendingRoutingToken(t, chat.ID)
-	cb.From = &tgbotapi.User{ID: 18}
+	cb.From = &tgUser{ID: 18}
 	s.resolveRoutingChange(cb, true)
 	after, _ = os.ReadFile(h.config)
 	if !bytes.Equal(before, after) {
@@ -208,10 +200,10 @@ func TestGuidedRoutingAddAndStaleConfirmation(t *testing.T) {
 			cfg := DefaultConfig()
 			cfg.XrayConfigPath, cfg.XrayBinPath, cfg.AllowMutations = h.config, h.xray, true
 			s, _ := newCapturedRoutingBot(t, cfg)
-			chat, admin := &tgbotapi.Chat{ID: 9473, Type: "private"}, &tgbotapi.User{ID: 17}
-			cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: "rt:nf:domain"}
+			chat, admin := &tgChat{ID: 9473, Type: "private"}, &tgUser{ID: 17}
+			cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: "rt:nf:domain"}
 			s.handleGuidedRoutingCallback(cb)
-			if !s.handleGuidedRoutingInput(&tgbotapi.Message{From: admin, Chat: chat, Text: "domain:new.example"}) {
+			if !s.handleGuidedRoutingInput(&tgMessage{From: admin, Chat: chat, Text: "domain:new.example"}) {
 				t.Fatal("new rule input was not handled")
 			}
 			cb.Data = "rt:np:" + routingTargetKey(routingTarget{Kind: "outboundTag", Tag: "block"})
@@ -270,10 +262,10 @@ func TestReturningToMainCancelsRoutingInput(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.XrayConfigPath, cfg.XrayBinPath = h.config, h.xray
 	s, _ := newCapturedRoutingBot(t, cfg)
-	chat := &tgbotapi.Chat{ID: 9474, Type: "private"}
-	admin := &tgbotapi.User{ID: 17}
+	chat := &tgChat{ID: 9474, Type: "private"}
+	admin := &tgUser{ID: 17}
 	setGuidedRoutingWizard(chat.ID, guidedRoutingWizard{AdminID: admin.ID, Step: "edit", Expires: time.Now().Add(time.Minute)})
-	s.handleCallback(&tgbotapi.CallbackQuery{ID: "test", From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: "menu_main"})
+	s.handleCallback(&tgCallback{ID: "test", From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: "menu_main"})
 	if _, ok := getGuidedRoutingWizard(chat.ID, admin.ID, "edit"); ok {
 		t.Fatal("returning home retained a routing input")
 	}

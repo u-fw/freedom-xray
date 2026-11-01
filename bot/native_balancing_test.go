@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func TestNativeBalancingRejectsCaseAliasProtectionBypasses(t *testing.T) {
@@ -90,9 +88,9 @@ func TestBotNativeBalancingCreateAndReplaceRequiresConfirmation(t *testing.T) {
 			cfg := DefaultConfig()
 			cfg.XrayConfigPath, cfg.XrayBinPath, cfg.AllowMutations = h.config, h.xray, true
 			s, capture := newNativeDocumentBot(t, cfg, nil)
-			chat, admin := &tgbotapi.Chat{ID: 9600 + int64(i), Type: "private"}, &tgbotapi.User{ID: 17}
+			chat, admin := &tgChat{ID: 9600 + int64(i), Type: "private"}, &tgUser{ID: 17}
 			t.Cleanup(func() { clearBalancerWizard(chat.ID) })
-			cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}}
+			cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}}
 			for phase := 0; phase < 2; phase++ {
 				root, _ := decodeBindingMigrationConfig(h.config)
 				payload := map[string]any{"subjectSelector": []any{"direct"}, "probeInterval": "1m", "probeURL": "https://example.test/?token=native-secret", "enableConcurrency": true}
@@ -121,21 +119,21 @@ func TestBotNativeBalancingCreateAndReplaceRequiresConfirmation(t *testing.T) {
 				if _, ok := getBalancerWizard(chat.ID, admin.ID); !ok {
 					t.Fatal("native JSON button did not start a wizard")
 				}
-				if s.handleBalancerInput(&tgbotapi.Message{From: &tgbotapi.User{ID: 18}, Chat: chat, Text: `{}`}) {
+				if s.handleBalancerInput(&tgMessage{From: &tgUser{ID: 18}, Chat: chat, Text: `{}`}) {
 					t.Fatal("another admin consumed the wizard")
 				}
-				s.handleBalancerInput(&tgbotapi.Message{From: admin, Chat: chat, Text: `[`})
+				s.handleBalancerInput(&tgMessage{From: admin, Chat: chat, Text: `[`})
 				if _, ok := getBalancerWizard(chat.ID, admin.ID); !ok {
 					t.Fatal("invalid input discarded the current step")
 				}
 				before, _ := os.ReadFile(h.config)
 				data, _ := json.Marshal(payload)
-				msg := &tgbotapi.Message{From: admin, Chat: chat, Text: string(data)}
+				msg := &tgMessage{From: admin, Chat: chat, Text: string(data)}
 				if (phase+i)%2 == 1 {
 					capture.mu.Lock()
 					capture.payload = data
 					capture.mu.Unlock()
-					msg.Text, msg.Document = "", &tgbotapi.Document{FileID: "test-file"}
+					msg.Text, msg.Document = "", &tgDocument{FileID: "test-file"}
 				}
 				if !s.handleBalancerInput(msg) {
 					t.Fatal("native JSON was not handled")
@@ -148,7 +146,7 @@ func TestBotNativeBalancingCreateAndReplaceRequiresConfirmation(t *testing.T) {
 					t.Fatal("unconfirmed native input wrote configuration or exposed sensitive values")
 				}
 				cb.Data = "routing_confirm:" + pendingRoutingToken(t, chat.ID)
-				cb.From = &tgbotapi.User{ID: 18}
+				cb.From = &tgUser{ID: 18}
 				s.resolveRoutingChange(cb, true)
 				if h.restartCount(t) != phase {
 					t.Fatal("another admin applied the pending native input")
@@ -206,9 +204,9 @@ func TestNativeBalancingConfirmationsRejectStaleConfigurationAndRevokedPermissio
 			cfg := DefaultConfig()
 			cfg.XrayConfigPath, cfg.XrayBinPath, cfg.AllowMutations = h.config, h.xray, true
 			s, _ := newNativeDocumentBot(t, cfg, nil)
-			chat, admin := &tgbotapi.Chat{ID: 9620 + int64(i), Type: "private"}, &tgbotapi.User{ID: 17}
+			chat, admin := &tgChat{ID: 9620 + int64(i), Type: "private"}, &tgUser{ID: 17}
 			t.Cleanup(func() { clearBalancerWizard(chat.ID) })
-			cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}}
+			cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}}
 			for _, revoke := range []bool{false, true} {
 				etag, _ := routingRuleETag(saved)
 				cb.Data = observatoryCallback("json", kind, etag)
@@ -217,7 +215,7 @@ func TestNativeBalancingConfirmationsRejectStaleConfigurationAndRevokedPermissio
 				}
 				s.handleCallback(cb)
 				if kind == "balancer" {
-					s.handleBalancerInput(&tgbotapi.Message{Chat: chat, From: admin, Text: `{"tag":"renamed","selector":["direct"]}`})
+					s.handleBalancerInput(&tgMessage{Chat: chat, From: admin, Text: `{"tag":"renamed","selector":["direct"]}`})
 					if _, ok := getBalancerWizard(chat.ID, admin.ID); !ok {
 						t.Fatal("invalid tag rename discarded the wizard")
 					}
@@ -225,7 +223,7 @@ func TestNativeBalancingConfirmationsRejectStaleConfigurationAndRevokedPermissio
 				payload, _ := copyNativeObjectFields(saved, nil)
 				payload["extension"] = "new-value"
 				input, _ := json.Marshal(payload)
-				s.handleBalancerInput(&tgbotapi.Message{Chat: chat, From: admin, Text: string(input)})
+				s.handleBalancerInput(&tgMessage{Chat: chat, From: admin, Text: string(input)})
 				cb.Data = "routing_confirm:" + pendingRoutingToken(t, chat.ID)
 				if revoke {
 					cfg.AllowMutations = false
@@ -258,12 +256,12 @@ func TestNativeBalancingDownloadCannotRestoreCancelledWizard(t *testing.T) {
 			transport.started, transport.release = make(chan struct{}, 1), make(chan struct{})
 			started, release := transport.started, transport.release
 			transport.mu.Unlock()
-			chat, admin := &tgbotapi.Chat{ID: 9610 + int64(i), Type: "private"}, &tgbotapi.User{ID: 17}
-			cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: callback}
+			chat, admin := &tgChat{ID: 9610 + int64(i), Type: "private"}, &tgUser{ID: 17}
+			cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: callback}
 			s.handleCallback(cb)
 			done := make(chan bool, 1)
 			go func() {
-				done <- s.handleBalancerInput(&tgbotapi.Message{From: admin, Chat: chat, Document: &tgbotapi.Document{FileID: "test-file"}})
+				done <- s.handleBalancerInput(&tgMessage{From: admin, Chat: chat, Document: &tgDocument{FileID: "test-file"}})
 			}()
 			select {
 			case <-started:

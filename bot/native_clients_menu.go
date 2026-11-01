@@ -7,8 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func nativeClientCallback(action string, inbound, client int, etag string) string {
@@ -64,25 +62,25 @@ func (s *BotService) sendNativeClientList(chatID int64, msgID, index, offset int
 	if notice != "" {
 		body += "\n" + mdEsc(notice)
 	}
-	var rows [][]tgbotapi.InlineKeyboardButton
+	var rows [][]tgButton
 	for _, record := range records[offset:end] {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(truncateLabel(nativeClientDescription(record), 64), nativeClientCallback("view", index, record.Index, etag))))
+		rows = append(rows, newRow(newButton(truncateLabel(nativeClientDescription(record), 64), nativeClientCallback("view", index, record.Index, etag))))
 	}
-	var pages []tgbotapi.InlineKeyboardButton
+	var pages []tgButton
 	if offset > 0 {
-		pages = append(pages, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.prev"), nativeClientCallback("list", index, offset-nodesPerPage, etag)))
+		pages = append(pages, newButton(tr(s.cfg.Language, "common.prev"), nativeClientCallback("list", index, offset-nodesPerPage, etag)))
 	}
 	if end < len(records) {
-		pages = append(pages, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.next"), nativeClientCallback("list", index, end, etag)))
+		pages = append(pages, newButton(tr(s.cfg.Language, "common.next"), nativeClientCallback("list", index, end, etag)))
 	}
 	if len(pages) > 0 {
 		rows = append(rows, pages)
 	}
 	if s.cfg.AllowMutations {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "inbound.client.add"), nativeClientCallback("add", index, 0, etag))))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "inbound.client.add"), nativeClientCallback("add", index, 0, etag))))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "inbound.client.back_inbound"), nativeInboundCallback("v", index, etag))))
-	s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "inbound.client.back_inbound"), nativeInboundCallback("v", index, etag))))
+	s.sendOrEdit(chatID, msgID, body, newKeyboard(rows...))
 }
 
 func (s *BotService) sendNativeClientDetail(chatID int64, msgID, inboundIndex, clientIndex int, etag string) {
@@ -106,18 +104,18 @@ func (s *BotService) sendNativeClientDetail(chatID int64, msgID, inboundIndex, c
 		email = tr(s.cfg.Language, "inbound.client.unnamed")
 	}
 	body := tr(s.cfg.Language, "inbound.client.detail", clientIndex, mdEsc(protocol), mdEsc(email), mdEsc(record.Level))
-	var rows [][]tgbotapi.InlineKeyboardButton
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "inbound.client.export"), nativeClientCallback("export", inboundIndex, clientIndex, etag))))
+	var rows [][]tgButton
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "inbound.client.export"), nativeClientCallback("export", inboundIndex, clientIndex, etag))))
 	if s.cfg.AllowMutations {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "inbound.client.email"), nativeClientCallback("email", inboundIndex, clientIndex, etag)),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "inbound.client.level"), nativeClientCallback("level", inboundIndex, clientIndex, etag))))
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "inbound.client.rotate"), nativeClientCallback("rotate", inboundIndex, clientIndex, etag)),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "inbound.client.remove"), nativeClientCallback("remove", inboundIndex, clientIndex, etag))))
+		rows = append(rows, newRow(
+			newButton(tr(s.cfg.Language, "inbound.client.email"), nativeClientCallback("email", inboundIndex, clientIndex, etag)),
+			newButton(tr(s.cfg.Language, "inbound.client.level"), nativeClientCallback("level", inboundIndex, clientIndex, etag))))
+		rows = append(rows, newRow(
+			newButton(tr(s.cfg.Language, "inbound.client.rotate"), nativeClientCallback("rotate", inboundIndex, clientIndex, etag)),
+			newButton(tr(s.cfg.Language, "inbound.client.remove"), nativeClientCallback("remove", inboundIndex, clientIndex, etag))))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "inbound.client.back_list"), nativeClientCallback("list", inboundIndex, 0, etag))))
-	s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "inbound.client.back_list"), nativeClientCallback("list", inboundIndex, 0, etag))))
+	s.sendOrEdit(chatID, msgID, body, newKeyboard(rows...))
 }
 
 func (s *BotService) offerNativeClientChange(chatID, adminID int64, msgID int, change nativeClientChange) {
@@ -166,7 +164,7 @@ func (s *BotService) offerNativeClientChange(chatID, adminID int64, msgID int, c
 	s.queueGuidedRoutingChange(chatID, adminID, msgID, pendingRoutingChange{NativeClient: &change}, body)
 }
 
-func (s *BotService) handleNativeClientInput(msg *tgbotapi.Message, state nativeInboundWizard) bool {
+func (s *BotService) handleNativeClientInput(msg *tgMessage, state nativeInboundWizard) bool {
 	if msg.Command() == "cancel" {
 		clearNativeInboundWizard(msg.Chat.ID)
 		s.returnNativeClientList(msg.Chat.ID, 0, state.Index, tr(s.cfg.Language, "wizard.cancelled"))
@@ -199,7 +197,7 @@ func (s *BotService) handleNativeClientInput(msg *tgbotapi.Message, state native
 	return true
 }
 
-func (s *BotService) handleNativeClientCallback(cb *tgbotapi.CallbackQuery) {
+func (s *BotService) handleNativeClientCallback(cb *tgCallback) {
 	if cb.Message == nil || cb.Message.Chat == nil || cb.From == nil {
 		return
 	}
@@ -242,9 +240,7 @@ func (s *BotService) handleNativeClientCallback(cb *tgbotapi.CallbackQuery) {
 			s.sendAlert(chatID, tr(s.cfg.Language, "inbound.client.export_failed"))
 			return
 		}
-		doc := tgbotapi.NewDocument(chatID, tgbotapi.FileBytes{Name: "xray-client.json", Bytes: append(data, '\n')})
-		doc.Caption = tr(s.cfg.Language, "inbound.client.export_caption")
-		if _, err := s.bot.Send(doc); err != nil {
+		if err := s.tg.sendDocument(chatID, "xray-client.json", append(data, '\n'), tr(s.cfg.Language, "inbound.client.export_caption")); err != nil {
 			s.sendAlert(chatID, tr(s.cfg.Language, "inbound.client.export_failed"))
 		}
 	case "add", "email", "level":
@@ -257,7 +253,7 @@ func (s *BotService) handleNativeClientCallback(cb *tgbotapi.CallbackQuery) {
 		if parts[1] == "level" {
 			prompt = "inbound.client.level_prompt"
 		}
-		markup := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "inbound.client.back_list"), nativeClientCallback("list", inboundIndex, 0, etag))))
+		markup := newKeyboard(newRow(newButton(tr(s.cfg.Language, "inbound.client.back_list"), nativeClientCallback("list", inboundIndex, 0, etag))))
 		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, prompt), markup)
 	case "rotate", "remove":
 		s.offerNativeClientChange(chatID, cb.From.ID, msgID, nativeClientChange{Kind: parts[1], InboundIndex: inboundIndex, InboundETag: etag, ClientIndex: clientIndex})

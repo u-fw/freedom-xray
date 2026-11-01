@@ -53,9 +53,9 @@ jobs:
         run: |
           unformatted="$(gofmt -l .)"
           if [ -n "$unformatted" ]; then printf 'Run gofmt on:\n%s\n' "$unformatted"; exit 1; fi
-          go vet ./...
-          go test ./...
-          go test -race ./...
+          go vet -tags stdjson ./...
+          go test -tags stdjson ./...
+          go test -tags stdjson -race ./...
 
       - name: Build Binaries
         id: build_binaries
@@ -76,10 +76,10 @@ jobs:
           LDFLAGS="-s -w -X main.Commit=${COMMIT} -X main.BuildTime=${BUILD_TIME}"
 
           echo "Building linux/amd64..."
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="${LDFLAGS}" -o ../dist/freedom-bot-linux-amd64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags stdjson -trimpath -ldflags="${LDFLAGS}" -o ../dist/freedom-bot-linux-amd64 .
 
           echo "Building linux/arm64..."
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="${LDFLAGS}" -o ../dist/freedom-bot-linux-arm64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -tags stdjson -trimpath -ldflags="${LDFLAGS}" -o ../dist/freedom-bot-linux-arm64 .
 
           cd ../dist
           sha256sum freedom-bot-linux-amd64 > freedom-bot-linux-amd64.sha256

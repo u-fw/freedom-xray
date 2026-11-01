@@ -7,8 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"testing"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func TestObservatoryCRUDAndProtectedUse(t *testing.T) {
@@ -97,15 +95,15 @@ func TestObservatoryBotConfigurationNeedsConfirmation(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.XrayConfigPath, cfg.XrayBinPath, cfg.AllowMutations = h.config, h.xray, true
 	s, capture := newCapturedRoutingBot(t, cfg)
-	chat, admin := &tgbotapi.Chat{ID: 9502, Type: "private"}, &tgbotapi.User{ID: 17}
-	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: "mo:page"}
+	chat, admin := &tgChat{ID: 9502, Type: "private"}, &tgUser{ID: 17}
+	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: "mo:page"}
 	s.handleObservatoryCallback(cb)
 	_, markup := capture.card(t)
 	keyboardCallbacks(t, markup)
 	cb.Data = "mo:edit:o:new"
 	s.handleObservatoryCallback(cb)
 	before, _ := os.ReadFile(h.config)
-	if !s.handleBalancerInput(&tgbotapi.Message{From: admin, Chat: chat, Text: "direct"}) {
+	if !s.handleBalancerInput(&tgMessage{From: admin, Chat: chat, Text: "direct"}) {
 		t.Fatal("monitor selectors not handled")
 	}
 	after, _ := os.ReadFile(h.config)
@@ -125,7 +123,7 @@ func TestObservatoryBotConfigurationNeedsConfirmation(t *testing.T) {
 	records, _ := observatoryRecords(root, false)
 	cb.Data = observatoryCallback("url", "observatory", records[0].ETag)
 	s.handleObservatoryCallback(cb)
-	if !s.handleBalancerInput(&tgbotapi.Message{From: admin, Chat: chat, Text: "https://example.test/?token=secret-value"}) {
+	if !s.handleBalancerInput(&tgMessage{From: admin, Chat: chat, Text: "https://example.test/?token=secret-value"}) {
 		t.Fatal("URL input not handled")
 	}
 	body, _ := capture.card(t)

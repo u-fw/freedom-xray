@@ -6,8 +6,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func TestOutboundBotDetailsAndEndpointEdit(t *testing.T) {
@@ -16,7 +14,7 @@ func TestOutboundBotDetailsAndEndpointEdit(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.XrayConfigPath, cfg.XrayBinPath, cfg.AllowMutations = h.config, h.xray, true
 	s, capture := newCapturedRoutingBot(t, cfg)
-	chat, admin := &tgbotapi.Chat{ID: 9511, Type: "private"}, &tgbotapi.User{ID: 17}
+	chat, admin := &tgChat{ID: 9511, Type: "private"}, &tgUser{ID: 17}
 	root, _ := decodeBindingMigrationConfig(h.config)
 	records, _ := outboundRecords(root)
 	record := records[3]
@@ -26,10 +24,10 @@ func TestOutboundBotDetailsAndEndpointEdit(t *testing.T) {
 	if !strings.Contains(body, "old.example") || strings.Contains(body, "secret-id") || !strings.Contains(callbacks, "ob:address:") {
 		t.Fatalf("bad outbound card: %s %s", body, callbacks)
 	}
-	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: outboundCallback("address", record.Index, record.ETag)}
+	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: outboundCallback("address", record.Index, record.ETag)}
 	s.handleOutboundCallback(cb)
 	before, _ := os.ReadFile(h.config)
-	if !s.handleOutboundInput(&tgbotapi.Message{From: admin, Chat: chat, Text: "new.example"}) {
+	if !s.handleOutboundInput(&tgMessage{From: admin, Chat: chat, Text: "new.example"}) {
 		t.Fatal("address input not handled")
 	}
 	after, _ := os.ReadFile(h.config)
@@ -55,10 +53,10 @@ func TestOutboundBotCreatesAndProtectsDefault(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.XrayConfigPath, cfg.XrayBinPath, cfg.AllowMutations = h.config, h.xray, true
 	s, capture := newCapturedRoutingBot(t, cfg)
-	chat, admin := &tgbotapi.Chat{ID: 9512, Type: "private"}, &tgbotapi.User{ID: 17}
-	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: "ob:new:blackhole"}
+	chat, admin := &tgChat{ID: 9512, Type: "private"}, &tgUser{ID: 17}
+	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: "ob:new:blackhole"}
 	s.handleOutboundCallback(cb)
-	if !s.handleOutboundInput(&tgbotapi.Message{From: admin, Chat: chat, Text: "new-block"}) {
+	if !s.handleOutboundInput(&tgMessage{From: admin, Chat: chat, Text: "new-block"}) {
 		t.Fatal("tag input not handled")
 	}
 	cb.Data = "routing_confirm:" + pendingRoutingToken(t, chat.ID)

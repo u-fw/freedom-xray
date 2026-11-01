@@ -11,8 +11,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type nativeDocumentTransport struct {
@@ -30,7 +28,8 @@ type nativeDocumentTransport struct {
 }
 
 func (m *nativeDocumentTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	if request.URL.Host == "api.telegram.org" {
+	// The client downloads files from <API server>/file/bot<token>/<path>.
+	if strings.HasPrefix(request.URL.Path, "/file/bot") {
 		m.mu.Lock()
 		m.downloads++
 		redirect, payload, started, release := m.redirect, m.payload, m.started, m.release
@@ -81,13 +80,13 @@ func newNativeDocumentBot(t *testing.T, cfg *BotConfig, payload []byte) (*BotSer
 				m.mu.Unlock()
 			}
 		} else {
-			_ = r.ParseForm()
-			if text := r.FormValue("text"); text != "" {
+			values := telegramRequestValues(t, r)
+			if text := values["text"]; text != "" {
 				m.mu.Lock()
 				m.text = text
 				m.mu.Unlock()
 			}
-			if markup := r.FormValue("reply_markup"); markup != "" {
+			if markup := values["reply_markup"]; markup != "" {
 				m.mu.Lock()
 				m.markup = markup
 				m.mu.Unlock()
@@ -97,19 +96,15 @@ func newNativeDocumentBot(t *testing.T, cfg *BotConfig, payload []byte) (*BotSer
 	}))
 	t.Cleanup(server.Close)
 	client := &http.Client{Transport: m}
-	bot, err := tgbotapi.NewBotAPIWithClient("secret-test-token", server.URL+"/bot%s/%s", client)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &BotService{cfg: cfg, bot: bot}, m
+	return &BotService{cfg: cfg, tg: newTestTelegramClient(t, testSecretBotToken, server.URL, client)}, m
 }
 
 func nativeExportCallback(t *testing.T, capture *nativeDocumentTransport) string {
 	t.Helper()
 	capture.mu.Lock()
 	defer capture.mu.Unlock()
-	var markup tgbotapi.InlineKeyboardMarkup
-	if err := json.Unmarshal([]byte(capture.markup), &markup); err != nil {
+	markup, err := decodeWireKeyboard(capture.markup)
+	if err != nil {
 		t.Fatal(err)
 	}
 	for _, callback := range keyboardCallbacks(t, markup) {
@@ -126,8 +121,8 @@ func TestNativeInboundExportChecksPermissionOwnerAndFreshness(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.XrayConfigPath, cfg.AllowSensitiveBackup = h.config, true
 	s, capture := newNativeDocumentBot(t, cfg, nil)
-	chat, admin := &tgbotapi.Chat{ID: 9563, Type: "private"}, &tgbotapi.User{ID: 17}
-	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}}
+	chat, admin := &tgChat{ID: 9563, Type: "private"}, &tgUser{ID: 17}
+	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}}
 	ask := func() string {
 		root, err := decodeBindingMigrationConfig(h.config)
 		if err != nil {
@@ -161,7 +156,7 @@ func TestNativeInboundExportChecksPermissionOwnerAndFreshness(t *testing.T) {
 	pendingNativeConfigExports.Unlock()
 	cfg.AllowSensitiveBackup = true
 	first := ask()
-	cb.From, cb.Data = &tgbotapi.User{ID: 18}, first
+	cb.From, cb.Data = &tgUser{ID: 18}, first
 	s.handleNativeInboundCallback(cb)
 	if count() != 0 {
 		t.Fatal("another admin exported the inbound")
@@ -215,8 +210,8 @@ func TestNativeInboundExportChecksPermissionOwnerAndFreshness(t *testing.T) {
 func TestNativeInboundDocumentDownloadIsBoundedAndDoesNotFollowRedirects(t *testing.T) {
 	cfg := DefaultConfig()
 	s, transport := newNativeDocumentBot(t, cfg, []byte(`{"protocol":"socks"}`))
-	document := &tgbotapi.Document{FileID: "test-file"}
-	data, err := readTelegramJSONDocument(s.bot, document)
+	document := &tgDocument{FileID: "test-file"}
+	data, err := readTelegramJSONDocument(s.tg, document)
 	if err != nil || !bytes.Contains(data, []byte("socks")) {
 		t.Fatalf("document download failed: %v", err)
 	}
@@ -225,7 +220,7 @@ func TestNativeInboundDocumentDownloadIsBoundedAndDoesNotFollowRedirects(t *test
 		transport.filePath = unsafePath
 		before := transport.downloads
 		transport.mu.Unlock()
-		if _, err := readTelegramJSONDocument(s.bot, document); err == nil || strings.Contains(err.Error(), "secret-test-token") {
+		if _, err := readTelegramJSONDocument(s.tg, document); err == nil || strings.Contains(err.Error(), testSecretBotToken) {
 			t.Fatalf("accepted unsafe path or exposed a token: %q %v", unsafePath, err)
 		}
 		transport.mu.Lock()
@@ -238,7 +233,7 @@ func TestNativeInboundDocumentDownloadIsBoundedAndDoesNotFollowRedirects(t *test
 	transport.mu.Lock()
 	transport.filePath, transport.redirect = "documents/input.json", true
 	transport.mu.Unlock()
-	if _, err := readTelegramJSONDocument(s.bot, document); err == nil || strings.Contains(err.Error(), "secret-test-token") {
+	if _, err := readTelegramJSONDocument(s.tg, document); err == nil || strings.Contains(err.Error(), testSecretBotToken) {
 		t.Fatalf("accepted redirect or exposed token: %v", err)
 	}
 	transport.mu.Lock()
@@ -248,10 +243,10 @@ func TestNativeInboundDocumentDownloadIsBoundedAndDoesNotFollowRedirects(t *test
 	transport.redirect = false
 	transport.payload = bytes.Repeat([]byte("x"), telegramJSONDocumentLimit+1)
 	transport.mu.Unlock()
-	if _, err := readTelegramJSONDocument(s.bot, document); err == nil {
+	if _, err := readTelegramJSONDocument(s.tg, document); err == nil {
 		t.Fatal("accepted an oversized streaming response")
 	}
-	if _, err := readTelegramJSONDocument(s.bot, &tgbotapi.Document{FileID: "test-file", FileSize: telegramJSONDocumentLimit + 1}); err == nil {
+	if _, err := readTelegramJSONDocument(s.tg, &tgDocument{FileID: "test-file", FileSize: telegramJSONDocumentLimit + 1}); err == nil {
 		t.Fatal("accepted an oversized Telegram document")
 	}
 }
@@ -262,13 +257,13 @@ func TestNativeInboundWizardAcceptsJSONDocument(t *testing.T) {
 	cfg.XrayConfigPath, cfg.XrayBinPath, cfg.AllowMutations = h.config, h.xray, true
 	payload, _ := json.Marshal(map[string]any{"tag": "uploaded", "protocol": "socks", "port": 32001, "settings": map[string]any{"auth": "noauth", "extension": strings.Repeat("x", 5000)}})
 	s, _ := newNativeDocumentBot(t, cfg, payload)
-	chat, admin := &tgbotapi.Chat{ID: 9564, Type: "private"}, &tgbotapi.User{ID: 17}
+	chat, admin := &tgChat{ID: 9564, Type: "private"}, &tgUser{ID: 17}
 	root, _ := decodeBindingMigrationConfig(h.config)
 	etag, _ := nativeInboundListETag(root)
-	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: "ni:add:" + etag}
+	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: "ni:add:" + etag}
 	s.handleNativeInboundCallback(cb)
 	before, _ := os.ReadFile(h.config)
-	if !s.handleNativeInboundInput(&tgbotapi.Message{From: admin, Chat: chat, Document: &tgbotapi.Document{FileID: "test-file"}}) {
+	if !s.handleNativeInboundInput(&tgMessage{From: admin, Chat: chat, Document: &tgDocument{FileID: "test-file"}}) {
 		t.Fatal("document was not handled")
 	}
 	after, _ := os.ReadFile(h.config)

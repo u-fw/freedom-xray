@@ -1,15 +1,11 @@
 package main
 
-import (
-	"log"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-)
+import "log"
 
 // Register Telegram slash-command suggestions only for an authorized private
 // chat. This does not change access control; every command is still checked.
 func (s *BotService) registerAdminCommands(chatID int64) {
-	commands := []tgbotapi.BotCommand{
+	commands := []tgCommand{
 		{Command: "start", Description: tr(s.cfg.Language, "command.start")},
 		{Command: "users", Description: tr(s.cfg.Language, "command.users")},
 		{Command: "adduser", Description: tr(s.cfg.Language, "command.adduser")},
@@ -36,8 +32,7 @@ func (s *BotService) registerAdminCommands(chatID int64) {
 		{Command: "cancel", Description: tr(s.cfg.Language, "command.cancel")},
 		{Command: "language", Description: tr(s.cfg.Language, "command.language")},
 	}
-	request := tgbotapi.NewSetMyCommandsWithScope(tgbotapi.NewBotCommandScopeChat(chatID), commands...)
-	if _, err := s.bot.Request(request); err != nil {
+	if err := s.tg.setChatCommands(chatID, commands); err != nil {
 		log.Printf("[Bot] admin command menu registration failed: %v", err)
 	}
 }

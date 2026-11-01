@@ -6,16 +6,14 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func xraySectionCallback(action, name, etag string) string {
 	return fmt.Sprintf("xs:%s:%s:%s", action, name, etag)
 }
 
-func xraySectionsBackMarkup(lang string) tgbotapi.InlineKeyboardMarkup {
-	return tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(lang, "xray.section.back"), "xs:page")))
+func xraySectionsBackMarkup(lang string) tgKeyboard {
+	return newKeyboard(newRow(newButton(tr(lang, "xray.section.back"), "xs:page")))
 }
 
 func (s *BotService) sendXraySectionsPage(chatID int64, msgID int, notice string) {
@@ -32,17 +30,17 @@ func (s *BotService) sendXraySectionsPage(chatID int64, msgID int, notice string
 	if notice != "" {
 		body += "\n" + mdEsc(notice)
 	}
-	var rows [][]tgbotapi.InlineKeyboardButton
+	var rows [][]tgButton
 	for _, record := range records {
 		state := tr(s.cfg.Language, "xray.section.absent")
 		if record.Configured {
 			state = tr(s.cfg.Language, "xray.section.configured")
 		}
 		label := tr(s.cfg.Language, "xray.section."+record.Name) + " · " + state
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(label, xraySectionCallback("v", record.Name, record.ETag))))
+		rows = append(rows, newRow(newButton(label, xraySectionCallback("v", record.Name, record.ETag))))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.tools"), "menu_tools"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.home"), "menu_main")))
-	s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "menu.tools"), "menu_tools"), newButton(tr(s.cfg.Language, "menu.home"), "menu_main")))
+	s.sendOrEdit(chatID, msgID, body, newKeyboard(rows...))
 }
 
 func (s *BotService) sendXraySectionDetail(chatID int64, msgID int, name, etag, notice string) {
@@ -71,18 +69,18 @@ func (s *BotService) sendXraySectionDetail(chatID int64, msgID int, name, etag, 
 	if notice != "" {
 		body += "\n" + mdEsc(notice)
 	}
-	var rows [][]tgbotapi.InlineKeyboardButton
+	var rows [][]tgButton
 	if record.Configured {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "config.export.button"), nativeConfigExportCallback("section", xraySectionIndex(name), etag))))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "config.export.button"), nativeConfigExportCallback("section", xraySectionIndex(name), etag))))
 	}
 	if s.cfg.AllowMutations {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "xray.section.edit"), xraySectionCallback("put", name, etag))))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "xray.section.edit"), xraySectionCallback("put", name, etag))))
 		if record.Configured {
-			rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "xray.section.reset"), xraySectionCallback("reset", name, etag))))
+			rows = append(rows, newRow(newButton(tr(s.cfg.Language, "xray.section.reset"), xraySectionCallback("reset", name, etag))))
 		}
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "xray.section.back"), "xs:page")))
-	s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "xray.section.back"), "xs:page")))
+	s.sendOrEdit(chatID, msgID, body, newKeyboard(rows...))
 }
 
 func (s *BotService) returnXraySection(chatID int64, msgID int, name, notice string) {
@@ -121,7 +119,7 @@ func (s *BotService) offerXraySectionChange(chatID, adminID int64, msgID int, ch
 	s.queueGuidedRoutingChange(chatID, adminID, msgID, pendingRoutingChange{XraySection: &change}, body)
 }
 
-func (s *BotService) handleXraySectionInput(msg *tgbotapi.Message, state routingWizard) bool {
+func (s *BotService) handleXraySectionInput(msg *tgMessage, state routingWizard) bool {
 	if msg.Command() == "cancel" {
 		consumeRoutingWizard(msg.Chat.ID, state)
 		s.returnXraySection(msg.Chat.ID, 0, state.Section, tr(s.cfg.Language, "wizard.cancelled"))
@@ -138,7 +136,7 @@ func (s *BotService) handleXraySectionInput(msg *tgbotapi.Message, state routing
 	input := []byte(msg.Text)
 	if msg.Document != nil {
 		var err error
-		input, err = readTelegramJSONDocument(s.bot, msg.Document)
+		input, err = readTelegramJSONDocument(s.tg, msg.Document)
 		if err != nil {
 			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
 			return true
@@ -169,7 +167,7 @@ func (s *BotService) handleXraySectionInput(msg *tgbotapi.Message, state routing
 	return true
 }
 
-func (s *BotService) handleXraySectionCallback(cb *tgbotapi.CallbackQuery) {
+func (s *BotService) handleXraySectionCallback(cb *tgCallback) {
 	if cb.Message == nil || cb.Message.Chat == nil || cb.From == nil {
 		return
 	}

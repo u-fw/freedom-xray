@@ -11,8 +11,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 const routingPageSize = 6
@@ -37,10 +35,10 @@ func clearGuidedRoutingWizard(chatID int64) {
 	guidedRoutingWizards.Unlock()
 }
 
-func routingPageBackMarkup(lang string) tgbotapi.InlineKeyboardMarkup {
-	return tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(lang, "routing.guide.back"), "rt:page:0"),
-		tgbotapi.NewInlineKeyboardButtonData(tr(lang, "menu.home"), "menu_main")))
+func routingPageBackMarkup(lang string) tgKeyboard {
+	return newKeyboard(newRow(
+		newButton(tr(lang, "routing.guide.back"), "rt:page:0"),
+		newButton(tr(lang, "menu.home"), "menu_main")))
 }
 
 func routingRefData(action string, ref routingRuleRef) string {
@@ -219,41 +217,41 @@ func (s *BotService) sendRoutingPage(chatID int64, msgID, offset int, notice str
 	} else {
 		body.WriteString(tr(s.cfg.Language, "routing.guide.page", offset+1, end, len(records)))
 	}
-	rows := [][]tgbotapi.InlineKeyboardButton{}
+	rows := [][]tgButton{}
 	for _, record := range records[offset:end] {
 		label := fmt.Sprintf("%d. %s → %s", record.Index, routingRuleTitle(record.Rule, record.Index), routingRuleTarget(record.Rule))
 		if record.Protected {
 			label = "🔒 " + label
 		}
 		ref := routingRuleRef{Index: record.Index, ETag: record.ETag}
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(truncateLabel(label, 64), routingRefData("v", ref))))
+		rows = append(rows, newRow(newButton(truncateLabel(label, 64), routingRefData("v", ref))))
 	}
-	var pages []tgbotapi.InlineKeyboardButton
+	var pages []tgButton
 	if offset > 0 {
 		prev := offset - routingPageSize
 		if prev < 0 {
 			prev = 0
 		}
-		pages = append(pages, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.prev"), fmt.Sprintf("rt:page:%d", prev)))
+		pages = append(pages, newButton(tr(s.cfg.Language, "common.prev"), fmt.Sprintf("rt:page:%d", prev)))
 	}
 	if end < len(records) {
-		pages = append(pages, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.next"), fmt.Sprintf("rt:page:%d", end)))
+		pages = append(pages, newButton(tr(s.cfg.Language, "common.next"), fmt.Sprintf("rt:page:%d", end)))
 	}
 	if len(pages) > 0 {
 		rows = append(rows, pages)
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "outbound.button"), "ob:page:0"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.button"), "bl:page:0"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "dns.button"), "dn:page:0")))
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "route.test.button"), "rt:test")))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "outbound.button"), "ob:page:0"), newButton(tr(s.cfg.Language, "balancer.button"), "bl:page:0"), newButton(tr(s.cfg.Language, "dns.button"), "dn:page:0")))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "route.test.button"), "rt:test")))
 	if s.cfg.AllowMutations && script == "" {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.add"), "rt:add"),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.advanced"), "rt:advanced")))
+		rows = append(rows, newRow(
+			newButton(tr(s.cfg.Language, "routing.guide.add"), "rt:add"),
+			newButton(tr(s.cfg.Language, "routing.guide.advanced"), "rt:advanced")))
 	}
 	if s.cfg.AllowMutations && script != "" {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.advanced"), "rt:advanced")))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "routing.guide.advanced"), "rt:advanced")))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.refresh"), fmt.Sprintf("rt:page:%d", offset)), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.home"), "menu_main")))
-	s.sendOrEdit(chatID, msgID, body.String(), tgbotapi.NewInlineKeyboardMarkup(rows...))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "common.refresh"), fmt.Sprintf("rt:page:%d", offset)), newButton(tr(s.cfg.Language, "menu.home"), "menu_main")))
+	s.sendOrEdit(chatID, msgID, body.String(), newKeyboard(rows...))
 }
 
 func (s *BotService) sendRoutingRuleDetail(chatID int64, msgID int, ref routingRuleRef) {
@@ -271,35 +269,35 @@ func (s *BotService) sendRoutingRuleDetail(chatID int64, msgID int, ref routingR
 		return
 	}
 	record := records[ref.Index-1]
-	rows := [][]tgbotapi.InlineKeyboardButton{}
+	rows := [][]tgButton{}
 	routing, _ := getMap(root["routing"])
 	script, _ := routing["script"].(string)
 	if s.cfg.AllowMutations && !record.Protected && script == "" {
-		button := func(field string) tgbotapi.InlineKeyboardButton {
-			return tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.field."+field), fmt.Sprintf("rt:f:%s:%d:%s", field, ref.Index, ref.ETag))
+		button := func(field string) tgButton {
+			return newButton(tr(s.cfg.Language, "routing.field."+field), fmt.Sprintf("rt:f:%s:%d:%s", field, ref.Index, ref.ETag))
 		}
 		domainField := "domain"
 		if record.Rule["domains"] != nil {
 			domainField = "domains"
 		}
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(button(domainField), button("ip"), button("port")))
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(button("inboundTag"), button("network"), button("protocol")))
+		rows = append(rows, newRow(button(domainField), button("ip"), button("port")))
+		rows = append(rows, newRow(button("inboundTag"), button("network"), button("protocol")))
 		sourceField := "source"
 		if record.Rule["sourceIP"] != nil {
 			sourceField = "sourceIP"
 		}
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(button(sourceField), button("user"), button("ruleTag")))
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.more_fields"), routingRefData("more", ref))))
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.target"), routingRefData("t", ref))))
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.up"), routingRefData("up", ref)),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.down"), routingRefData("down", ref)),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.delete"), routingRefData("del", ref))))
+		rows = append(rows, newRow(button(sourceField), button("user"), button("ruleTag")))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "routing.guide.more_fields"), routingRefData("more", ref))))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "routing.guide.target"), routingRefData("t", ref))))
+		rows = append(rows, newRow(
+			newButton(tr(s.cfg.Language, "routing.guide.up"), routingRefData("up", ref)),
+			newButton(tr(s.cfg.Language, "routing.guide.down"), routingRefData("down", ref)),
+			newButton(tr(s.cfg.Language, "routing.guide.delete"), routingRefData("del", ref))))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "config.export.button"), nativeConfigExportCallback("rule", ref.Index, ref.ETag))))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "config.export.button"), nativeConfigExportCallback("rule", ref.Index, ref.ETag))))
 	offset := ((ref.Index - 1) / routingPageSize) * routingPageSize
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.back"), fmt.Sprintf("rt:page:%d", offset)), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.home"), "menu_main")))
-	s.sendOrEdit(chatID, msgID, routingRuleDetailText(s.cfg.Language, record, root), tgbotapi.NewInlineKeyboardMarkup(rows...))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "routing.guide.back"), fmt.Sprintf("rt:page:%d", offset)), newButton(tr(s.cfg.Language, "menu.home"), "menu_main")))
+	s.sendOrEdit(chatID, msgID, routingRuleDetailText(s.cfg.Language, record, root), newKeyboard(rows...))
 }
 
 func (s *BotService) sendRoutingMoreFields(chatID int64, msgID int, ref routingRuleRef) {
@@ -313,15 +311,15 @@ func (s *BotService) sendRoutingMoreFields(chatID int64, msgID int, ref routingR
 		s.sendRoutingPage(chatID, msgID, 0, tr(s.cfg.Language, "routing.guide.changed"))
 		return
 	}
-	button := func(field string) tgbotapi.InlineKeyboardButton {
-		return tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.field."+field), fmt.Sprintf("rt:f:%s:%d:%s", field, ref.Index, ref.ETag))
+	button := func(field string) tgButton {
+		return newButton(tr(s.cfg.Language, "routing.field."+field), fmt.Sprintf("rt:f:%s:%d:%s", field, ref.Index, ref.ETag))
 	}
-	rows := [][]tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardRow(button("sourcePort"), button("localIP")),
-		tgbotapi.NewInlineKeyboardRow(button("localPort"), button("vlessRoute")),
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.back"), routingRefData("v", ref))),
+	rows := [][]tgButton{
+		newRow(button("sourcePort"), button("localIP")),
+		newRow(button("localPort"), button("vlessRoute")),
+		newRow(newButton(tr(s.cfg.Language, "common.back"), routingRefData("v", ref))),
 	}
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.guide.more_fields_text"), tgbotapi.NewInlineKeyboardMarkup(rows...))
+	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.guide.more_fields_text"), newKeyboard(rows...))
 }
 
 type routingTarget struct{ Kind, Tag, Protocol string }
@@ -364,7 +362,7 @@ func findRoutingTarget(root map[string]any, key string) (routingTarget, bool) {
 	return found, count == 1
 }
 
-func (s *BotService) sendRoutingTargets(cb *tgbotapi.CallbackQuery, ref *routingRuleRef, offset int) {
+func (s *BotService) sendRoutingTargets(cb *tgCallback, ref *routingRuleRef, offset int) {
 	chatID, msgID := cb.Message.Chat.ID, cb.Message.MessageID
 	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
 	if err == nil && ref != nil {
@@ -385,7 +383,7 @@ func (s *BotService) sendRoutingTargets(cb *tgbotapi.CallbackQuery, ref *routing
 	if end > len(targets) {
 		end = len(targets)
 	}
-	rows := [][]tgbotapi.InlineKeyboardButton{}
+	rows := [][]tgButton{}
 	for _, target := range targets[offset:end] {
 		label := target.Tag
 		if target.Kind == "balancerTag" {
@@ -397,9 +395,9 @@ func (s *BotService) sendRoutingTargets(cb *tgbotapi.CallbackQuery, ref *routing
 		if ref != nil {
 			data = fmt.Sprintf("rt:p:%d:%s:%s", ref.Index, ref.ETag, routingTargetKey(target))
 		}
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(truncateLabel(label, 60), data)))
+		rows = append(rows, newRow(newButton(truncateLabel(label, 60), data)))
 	}
-	var pages []tgbotapi.InlineKeyboardButton
+	var pages []tgButton
 	pageData := func(next int) string {
 		if ref == nil {
 			return fmt.Sprintf("rt:nt:%d", next)
@@ -411,10 +409,10 @@ func (s *BotService) sendRoutingTargets(cb *tgbotapi.CallbackQuery, ref *routing
 		if prev < 0 {
 			prev = 0
 		}
-		pages = append(pages, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.prev"), pageData(prev)))
+		pages = append(pages, newButton(tr(s.cfg.Language, "common.prev"), pageData(prev)))
 	}
 	if end < len(targets) {
-		pages = append(pages, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.next"), pageData(end)))
+		pages = append(pages, newButton(tr(s.cfg.Language, "common.next"), pageData(end)))
 	}
 	if len(pages) > 0 {
 		rows = append(rows, pages)
@@ -423,12 +421,12 @@ func (s *BotService) sendRoutingTargets(cb *tgbotapi.CallbackQuery, ref *routing
 	if ref != nil {
 		back = routingRefData("v", *ref)
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.back"), back)))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "common.back"), back)))
 	body := tr(s.cfg.Language, "routing.guide.choose_target")
 	if len(targets) == 0 {
 		body += "\n" + tr(s.cfg.Language, "routing.guide.no_targets")
 	}
-	s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))
+	s.sendOrEdit(chatID, msgID, body, newKeyboard(rows...))
 }
 
 func (s *BotService) sendRoutingAdvanced(chatID int64, msgID int) {
@@ -436,13 +434,13 @@ func (s *BotService) sendRoutingAdvanced(chatID int64, msgID int) {
 		s.sendRoutingPage(chatID, msgID, 0, "")
 		return
 	}
-	rows := [][]tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.edit.add"), "routing_manage:add"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.edit.update"), "routing_manage:update"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.edit.delete"), "routing_manage:delete")),
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "network.outbound.put"), "routing_manage:outbound_put"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "network.outbound.delete"), "routing_manage:outbound_delete")),
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "network.dns.put"), "routing_manage:dns_put")),
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.back"), "rt:page:0")),
+	rows := [][]tgButton{
+		newRow(newButton(tr(s.cfg.Language, "routing.edit.add"), "routing_manage:add"), newButton(tr(s.cfg.Language, "routing.edit.update"), "routing_manage:update"), newButton(tr(s.cfg.Language, "routing.edit.delete"), "routing_manage:delete")),
+		newRow(newButton(tr(s.cfg.Language, "network.outbound.put"), "routing_manage:outbound_put"), newButton(tr(s.cfg.Language, "network.outbound.delete"), "routing_manage:outbound_delete")),
+		newRow(newButton(tr(s.cfg.Language, "network.dns.put"), "routing_manage:dns_put")),
+		newRow(newButton(tr(s.cfg.Language, "routing.guide.back"), "rt:page:0")),
 	}
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.guide.advanced_text"), tgbotapi.NewInlineKeyboardMarkup(rows...))
+	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.guide.advanced_text"), newKeyboard(rows...))
 }
 
 func (s *BotService) sendRoutingAddPicker(chatID int64, msgID int) {
@@ -450,12 +448,12 @@ func (s *BotService) sendRoutingAddPicker(chatID int64, msgID int) {
 		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), routingPageBackMarkup(s.cfg.Language))
 		return
 	}
-	rows := [][]tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.field.domain"), "rt:nf:domain"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.field.ip"), "rt:nf:ip")),
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.field.port"), "rt:nf:port"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.field.inboundTag"), "rt:nf:inboundTag")),
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.back"), "rt:page:0")),
+	rows := [][]tgButton{
+		newRow(newButton(tr(s.cfg.Language, "routing.field.domain"), "rt:nf:domain"), newButton(tr(s.cfg.Language, "routing.field.ip"), "rt:nf:ip")),
+		newRow(newButton(tr(s.cfg.Language, "routing.field.port"), "rt:nf:port"), newButton(tr(s.cfg.Language, "routing.field.inboundTag"), "rt:nf:inboundTag")),
+		newRow(newButton(tr(s.cfg.Language, "routing.guide.back"), "rt:page:0")),
 	}
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.guide.add_picker"), tgbotapi.NewInlineKeyboardMarkup(rows...))
+	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.guide.add_picker"), newKeyboard(rows...))
 }
 
 func clearOtherRoutingInputs(chatID int64) {
@@ -521,7 +519,7 @@ func parseGuidedRoutingValue(field, text string) (any, error) {
 	}
 }
 
-func (s *BotService) startGuidedRoutingInput(cb *tgbotapi.CallbackQuery, ref routingRuleRef, field string, newRule bool) {
+func (s *BotService) startGuidedRoutingInput(cb *tgCallback, ref routingRuleRef, field string, newRule bool) {
 	chatID, msgID := cb.Message.Chat.ID, cb.Message.MessageID
 	if !s.cfg.AllowMutations {
 		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), routingPageBackMarkup(s.cfg.Language))
@@ -571,7 +569,7 @@ func (s *BotService) startGuidedRoutingInput(cb *tgbotapi.CallbackQuery, ref rou
 	if !newRule {
 		back = routingRefData("v", ref)
 	}
-	markup := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.cancel"), back)))
+	markup := newKeyboard(newRow(newButton(tr(s.cfg.Language, "common.cancel"), back)))
 	s.sendOrEdit(chatID, msgID, prompt, markup)
 }
 
@@ -593,7 +591,7 @@ func (s *BotService) queueGuidedRoutingChange(chatID, adminID int64, msgID int, 
 	}
 	pendingRoutingChanges.items[key] = pending
 	pendingRoutingChanges.Unlock()
-	markup := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.confirm"), "routing_confirm:"+key), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.cancel"), "routing_cancel:"+key)))
+	markup := newKeyboard(newRow(newButton(tr(s.cfg.Language, "common.confirm"), "routing_confirm:"+key), newButton(tr(s.cfg.Language, "common.cancel"), "routing_cancel:"+key)))
 	s.sendOrEdit(chatID, msgID, body, markup)
 }
 
@@ -658,7 +656,7 @@ func (s *BotService) offerGuidedRoutingRuleChange(chatID, adminID int64, msgID i
 	s.queueGuidedRoutingChange(chatID, adminID, msgID, pendingRoutingChange{RuleEdit: &change}, body)
 }
 
-func (s *BotService) handleGuidedRoutingInput(msg *tgbotapi.Message) bool {
+func (s *BotService) handleGuidedRoutingInput(msg *tgMessage) bool {
 	if msg.Chat == nil || msg.From == nil {
 		return false
 	}
@@ -720,12 +718,12 @@ func (s *BotService) handleGuidedRoutingInput(msg *tgbotapi.Message) bool {
 	state.Step = "new-target"
 	state.Expires = time.Now().Add(5 * time.Minute)
 	setGuidedRoutingWizard(chatID, state)
-	cb := &tgbotapi.CallbackQuery{From: msg.From, Message: &tgbotapi.Message{Chat: msg.Chat, MessageID: 0}}
+	cb := &tgCallback{From: msg.From, Message: &tgMessage{Chat: msg.Chat, MessageID: 0}}
 	s.sendRoutingTargets(cb, nil, 0)
 	return true
 }
 
-func (s *BotService) handleGuidedRoutingCallback(cb *tgbotapi.CallbackQuery) {
+func (s *BotService) handleGuidedRoutingCallback(cb *tgCallback) {
 	if cb.Message == nil || cb.From == nil {
 		return
 	}
@@ -795,10 +793,10 @@ func (s *BotService) handleGuidedRoutingCallback(cb *tgbotapi.CallbackQuery) {
 		state.Step = "new-position"
 		state.Expires = time.Now().Add(5 * time.Minute)
 		setGuidedRoutingWizard(chatID, state)
-		rows := [][]tgbotapi.InlineKeyboardButton{
-			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.first"), "rt:npos:first"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.last"), "rt:npos:last")),
-			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.cancel"), "rt:page:0"))}
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.guide.position"), tgbotapi.NewInlineKeyboardMarkup(rows...))
+		rows := [][]tgButton{
+			newRow(newButton(tr(s.cfg.Language, "routing.guide.first"), "rt:npos:first"), newButton(tr(s.cfg.Language, "routing.guide.last"), "rt:npos:last")),
+			newRow(newButton(tr(s.cfg.Language, "common.cancel"), "rt:page:0"))}
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "routing.guide.position"), newKeyboard(rows...))
 		return
 	}
 	if action == "npos" && len(parts) == 3 {

@@ -7,8 +7,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type outboundWizard struct {
@@ -53,10 +51,10 @@ func outboundCallback(action string, index int, etag string) string {
 	return fmt.Sprintf("ob:%s:%d:%s", action, index, etag)
 }
 
-func outboundBackMarkup(lang string) tgbotapi.InlineKeyboardMarkup {
-	return tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(lang, "outbound.back"), "ob:page:0"),
-		tgbotapi.NewInlineKeyboardButtonData(tr(lang, "routing.guide.back"), "rt:page:0")))
+func outboundBackMarkup(lang string) tgKeyboard {
+	return newKeyboard(newRow(
+		newButton(tr(lang, "outbound.back"), "ob:page:0"),
+		newButton(tr(lang, "routing.guide.back"), "rt:page:0")))
 }
 
 func (s *BotService) sendOutboundPage(chatID int64, msgID, offset int, notice string) {
@@ -84,7 +82,7 @@ func (s *BotService) sendOutboundPage(chatID int64, msgID, offset int, notice st
 	if notice != "" {
 		body += "\n" + mdEsc(notice) + "\n"
 	}
-	var rows [][]tgbotapi.InlineKeyboardButton
+	var rows [][]tgButton
 	for _, record := range records[offset:end] {
 		tag := record.Tag
 		if tag == "" {
@@ -94,23 +92,23 @@ func (s *BotService) sendOutboundPage(chatID int64, msgID, offset int, notice st
 		if record.Default {
 			label = "⭐ " + label
 		}
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(truncateLabel(label, 64), outboundCallback("v", record.Index, record.ETag))))
+		rows = append(rows, newRow(newButton(truncateLabel(label, 64), outboundCallback("v", record.Index, record.ETag))))
 	}
-	var pages []tgbotapi.InlineKeyboardButton
+	var pages []tgButton
 	if offset > 0 {
-		pages = append(pages, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.prev"), fmt.Sprintf("ob:page:%d", offset-routingPageSize)))
+		pages = append(pages, newButton(tr(s.cfg.Language, "common.prev"), fmt.Sprintf("ob:page:%d", offset-routingPageSize)))
 	}
 	if end < len(records) {
-		pages = append(pages, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.next"), fmt.Sprintf("ob:page:%d", end)))
+		pages = append(pages, newButton(tr(s.cfg.Language, "common.next"), fmt.Sprintf("ob:page:%d", end)))
 	}
 	if len(pages) > 0 {
 		rows = append(rows, pages)
 	}
 	if s.cfg.AllowMutations {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "outbound.add"), "ob:add")))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "outbound.add"), "ob:add")))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.refresh"), fmt.Sprintf("ob:page:%d", offset)), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.back"), "rt:page:0")))
-	s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "common.refresh"), fmt.Sprintf("ob:page:%d", offset)), newButton(tr(s.cfg.Language, "routing.guide.back"), "rt:page:0")))
+	s.sendOrEdit(chatID, msgID, body, newKeyboard(rows...))
 }
 
 func (s *BotService) sendOutboundDetail(chatID int64, msgID, index int, etag string) {
@@ -141,27 +139,27 @@ func (s *BotService) sendOutboundDetail(chatID int64, msgID, index int, etag str
 		body += tr(s.cfg.Language, "outbound.endpoint", mdEsc(record.Endpoint.Address), record.Endpoint.Port)
 	}
 	body += tr(s.cfg.Language, "outbound.hidden")
-	var rows [][]tgbotapi.InlineKeyboardButton
+	var rows [][]tgButton
 	protected := record.Tag != "" && record.Tag == networkAPITag(root)
 	if s.cfg.AllowMutations && !protected {
 		if record.Endpoint != nil {
-			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "outbound.edit.address"), outboundCallback("address", index, etag)),
-				tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "outbound.edit.port"), outboundCallback("port", index, etag))))
+			rows = append(rows, newRow(
+				newButton(tr(s.cfg.Language, "outbound.edit.address"), outboundCallback("address", index, etag)),
+				newButton(tr(s.cfg.Language, "outbound.edit.port"), outboundCallback("port", index, etag))))
 		}
 		if !record.Default {
-			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "outbound.set_default"), outboundCallback("default", index, etag)),
-				tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "outbound.delete"), outboundCallback("delete", index, etag))))
+			rows = append(rows, newRow(
+				newButton(tr(s.cfg.Language, "outbound.set_default"), outboundCallback("default", index, etag)),
+				newButton(tr(s.cfg.Language, "outbound.delete"), outboundCallback("delete", index, etag))))
 		}
 	}
 	if protected {
 		body += tr(s.cfg.Language, "routing.guide.protected")
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "config.export.button"), nativeConfigExportCallback("outbound", index, etag))))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "config.export.button"), nativeConfigExportCallback("outbound", index, etag))))
 	offset := ((index - 1) / routingPageSize) * routingPageSize
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "outbound.back"), fmt.Sprintf("ob:page:%d", offset)), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.home"), "menu_main")))
-	s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "outbound.back"), fmt.Sprintf("ob:page:%d", offset)), newButton(tr(s.cfg.Language, "menu.home"), "menu_main")))
+	s.sendOrEdit(chatID, msgID, body, newKeyboard(rows...))
 }
 
 func (s *BotService) offerOutboundChange(chatID, adminID int64, msgID int, change outboundChange) {
@@ -207,7 +205,7 @@ func (s *BotService) offerOutboundChange(chatID, adminID int64, msgID int, chang
 	s.queueGuidedRoutingChange(chatID, adminID, msgID, pendingRoutingChange{Outbound: &change}, body)
 }
 
-func (s *BotService) handleOutboundInput(msg *tgbotapi.Message) bool {
+func (s *BotService) handleOutboundInput(msg *tgMessage) bool {
 	if msg.Chat == nil || msg.From == nil {
 		return false
 	}
@@ -251,7 +249,7 @@ func (s *BotService) handleOutboundInput(msg *tgbotapi.Message) bool {
 	return true
 }
 
-func (s *BotService) handleOutboundCallback(cb *tgbotapi.CallbackQuery) {
+func (s *BotService) handleOutboundCallback(cb *tgCallback) {
 	if cb.Message == nil || cb.Message.Chat == nil || cb.From == nil {
 		return
 	}
@@ -273,11 +271,11 @@ func (s *BotService) handleOutboundCallback(cb *tgbotapi.CallbackQuery) {
 			s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.writesdisabled"), outboundBackMarkup(s.cfg.Language))
 			return
 		}
-		rows := [][]tgbotapi.InlineKeyboardButton{
-			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "outbound.create.freedom"), "ob:new:freedom"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "outbound.create.blackhole"), "ob:new:blackhole")),
-			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "outbound.back"), "ob:page:0")),
+		rows := [][]tgButton{
+			newRow(newButton(tr(s.cfg.Language, "outbound.create.freedom"), "ob:new:freedom"), newButton(tr(s.cfg.Language, "outbound.create.blackhole"), "ob:new:blackhole")),
+			newRow(newButton(tr(s.cfg.Language, "outbound.back"), "ob:page:0")),
 		}
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "outbound.add_picker"), tgbotapi.NewInlineKeyboardMarkup(rows...))
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "outbound.add_picker"), newKeyboard(rows...))
 		return
 	}
 	if parts[1] == "new" && len(parts) == 3 {

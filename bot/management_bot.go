@@ -8,8 +8,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type pendingUserChange struct {
@@ -71,10 +69,10 @@ func (s *BotService) offerUserChange(chatID, adminID int64, messageID int, chang
 		s.sendAlert(chatID, tr(s.cfg.Language, "manage.unknown"))
 		return
 	}
-	markup := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "manage.confirm"), "manage_confirm:"+key),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.cancel"), "manage_cancel:"+key),
+	markup := newKeyboard(
+		newRow(
+			newButton(tr(s.cfg.Language, "manage.confirm"), "manage_confirm:"+key),
+			newButton(tr(s.cfg.Language, "common.cancel"), "manage_cancel:"+key),
 		),
 	)
 	s.sendOrEdit(chatID, messageID, tr(s.cfg.Language, "manage.confirmbody", description), markup)
@@ -87,7 +85,7 @@ func scopeLabel(node, lang string) string {
 	return node
 }
 
-func (s *BotService) resolveUserChange(cb *tgbotapi.CallbackQuery, confirm bool) {
+func (s *BotService) resolveUserChange(cb *tgCallback, confirm bool) {
 	if cb.Message == nil || cb.Message.Chat == nil || cb.From == nil {
 		return
 	}
@@ -125,7 +123,7 @@ func (s *BotService) resolveUserChange(cb *tgbotapi.CallbackQuery, confirm bool)
 	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.completed", msg), s.backToMainMarkup())
 }
 
-func (s *BotService) handleUserManagementCommand(msg *tgbotapi.Message) bool {
+func (s *BotService) handleUserManagementCommand(msg *tgMessage) bool {
 	cmd := msg.Command()
 	if cmd != "adduser" && cmd != "renameuser" && cmd != "rotateuser" && cmd != "removeuser" && cmd != "assignuser" && cmd != "unassignuser" && cmd != "disableuser" && cmd != "enableuser" {
 		return false
@@ -205,7 +203,7 @@ func (s *BotService) sendUserManageCard(chatID int64, msgID int, key string) {
 		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "users.empty"), s.backToMainMarkup())
 		return
 	}
-	var rows [][]tgbotapi.InlineKeyboardButton
+	var rows [][]tgButton
 	var content strings.Builder
 	var usedBytes uint64
 	content.WriteString(tr(s.cfg.Language, "account.title", email))
@@ -298,40 +296,40 @@ func (s *BotService) sendUserManageCard(chatID int64, msgID int, key string) {
 			status = tr(s.cfg.Language, "account.assigned")
 		}
 		content.WriteString(fmt.Sprintf("• %s (%d): %s\n", node.Tag, node.Port, status))
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(mark+" "+truncateLabel(node.Tag, 28), "manage_node:"+op+":"+key+":"+userCallbackKey(node.Tag)),
+		rows = append(rows, newRow(
+			newButton(mark+" "+truncateLabel(node.Tag, 28), "manage_node:"+op+":"+key+":"+userCallbackKey(node.Tag)),
 		))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "account.refresh"), "manage_user:"+key),
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "account.export"), "user_links:"+key),
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "account.rename"), "manage_rename:"+key),
+	rows = append(rows, newRow(
+		newButton(tr(s.cfg.Language, "account.refresh"), "manage_user:"+key),
+		newButton(tr(s.cfg.Language, "account.export"), "user_links:"+key),
+		newButton(tr(s.cfg.Language, "account.rename"), "manage_rename:"+key),
 	))
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "account.rotate"), "manage_rotate:"+key),
+	rows = append(rows, newRow(
+		newButton(tr(s.cfg.Language, "account.rotate"), "manage_rotate:"+key),
 	))
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "account.suspend"), "manage_disable:"+key),
+	rows = append(rows, newRow(
+		newButton(tr(s.cfg.Language, "account.suspend"), "manage_disable:"+key),
 	))
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "account.quota"), "manage_quota:"+key),
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "account.expiry"), "manage_expiry:"+key),
+	rows = append(rows, newRow(
+		newButton(tr(s.cfg.Language, "account.quota"), "manage_quota:"+key),
+		newButton(tr(s.cfg.Language, "account.expiry"), "manage_expiry:"+key),
 	))
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "account.limitsclear"), "manage_limitclear:"+key),
+	rows = append(rows, newRow(
+		newButton(tr(s.cfg.Language, "account.limitsclear"), "manage_limitclear:"+key),
 	))
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "account.trafficreset"), "manage_traffic:"+key),
+	rows = append(rows, newRow(
+		newButton(tr(s.cfg.Language, "account.trafficreset"), "manage_traffic:"+key),
 	))
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "account.delete"), "manage_delete:"+key),
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "account.list"), "menu_users"),
+	rows = append(rows, newRow(
+		newButton(tr(s.cfg.Language, "account.delete"), "manage_delete:"+key),
+		newButton(tr(s.cfg.Language, "account.list"), "menu_users"),
 	))
 	content.WriteString(tr(s.cfg.Language, "account.footer"))
-	s.sendOrEdit(chatID, msgID, content.String(), tgbotapi.NewInlineKeyboardMarkup(rows...))
+	s.sendOrEdit(chatID, msgID, content.String(), newKeyboard(rows...))
 }
 
-func (s *BotService) handleManagedUserCallback(cb *tgbotapi.CallbackQuery) {
+func (s *BotService) handleManagedUserCallback(cb *tgCallback) {
 	if cb.Message == nil {
 		return
 	}
@@ -423,7 +421,7 @@ func (s *BotService) handleManagedUserCallback(cb *tgbotapi.CallbackQuery) {
 // askUserTrafficReset confirms a per-user traffic reset. The shell menu has
 // always supported this; without it a quota-suspended user could only be
 // restored after clearing the quota entirely.
-func (s *BotService) askUserTrafficReset(cb *tgbotapi.CallbackQuery) {
+func (s *BotService) askUserTrafficReset(cb *tgCallback) {
 	if cb.Message == nil || cb.Message.Chat == nil || cb.From == nil {
 		return
 	}
@@ -458,16 +456,16 @@ func (s *BotService) askUserTrafficReset(cb *tgbotapi.CallbackQuery) {
 	}
 	pendingTrafficResets.items[token] = pendingTrafficReset{ChatID: chatID, AdminID: cb.From.ID, User: email, Identity: identity, Expires: time.Now().Add(3 * time.Minute)}
 	pendingTrafficResets.Unlock()
-	markup := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.confirm"), "manage_traffic_confirm:"+token),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.cancel"), "manage_traffic_cancel:"+token),
+	markup := newKeyboard(
+		newRow(
+			newButton(tr(s.cfg.Language, "common.confirm"), "manage_traffic_confirm:"+token),
+			newButton(tr(s.cfg.Language, "common.cancel"), "manage_traffic_cancel:"+token),
 		),
 	)
 	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "traffic.userreset.confirm", mdCode(email)), markup)
 }
 
-func (s *BotService) resolveUserTrafficReset(cb *tgbotapi.CallbackQuery, confirm bool) {
+func (s *BotService) resolveUserTrafficReset(cb *tgCallback, confirm bool) {
 	if cb.Message == nil || cb.Message.Chat == nil || cb.From == nil {
 		return
 	}
@@ -513,23 +511,23 @@ func (s *BotService) sendDisabledUsersCard(chatID int64, msgID int) {
 		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "manage.suspended.loadfailed", err.Error()), s.backToMainMarkup())
 		return
 	}
-	rows := [][]tgbotapi.InlineKeyboardButton{}
+	rows := [][]tgButton{}
 	for _, name := range names {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "manage.suspended.restore", truncateLabel(name, 40)), "manage_enable:"+userCallbackKey(name)),
+		rows = append(rows, newRow(
+			newButton(tr(s.cfg.Language, "manage.suspended.restore", truncateLabel(name, 40)), "manage_enable:"+userCallbackKey(name)),
 		))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "manage.suspended.back"), "menu_users"),
+	rows = append(rows, newRow(
+		newButton(tr(s.cfg.Language, "manage.suspended.back"), "menu_users"),
 	))
 	message := tr(s.cfg.Language, "manage.suspended.title")
 	if len(names) == 0 {
 		message = tr(s.cfg.Language, "manage.suspended.empty")
 	}
-	s.sendOrEdit(chatID, msgID, message, tgbotapi.NewInlineKeyboardMarkup(rows...))
+	s.sendOrEdit(chatID, msgID, message, newKeyboard(rows...))
 }
 
-func (s *BotService) enableDisabledUserCallback(cb *tgbotapi.CallbackQuery) {
+func (s *BotService) enableDisabledUserCallback(cb *tgCallback) {
 	if cb.Message == nil {
 		return
 	}

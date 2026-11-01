@@ -2,17 +2,15 @@ package main
 
 import (
 	"errors"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // The wizard survives invalid input. Consuming the exact state after a download
 // ensures a cancelled or replaced wizard cannot later queue a confirmation.
-func (s *BotService) handleNativeBalancingInput(msg *tgbotapi.Message, state balancerWizard) bool {
+func (s *BotService) handleNativeBalancingInput(msg *tgMessage, state balancerWizard) bool {
 	input := []byte(msg.Text)
 	if msg.Document != nil {
 		var err error
-		input, err = readTelegramJSONDocument(s.bot, msg.Document)
+		input, err = readTelegramJSONDocument(s.tg, msg.Document)
 		if err != nil {
 			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
 			return true

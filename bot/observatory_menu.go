@@ -4,8 +4,6 @@ import (
 	"errors"
 	"strings"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func observatoryShort(kind string) string {
@@ -39,10 +37,10 @@ func observatoryCallback(action, kind, ref string) string {
 	return "mo:" + action + ":" + observatoryShort(kind) + ":" + ref
 }
 
-func observatoryBackMarkup(lang string) tgbotapi.InlineKeyboardMarkup {
-	return tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(lang, "monitor.back"), "mo:page"),
-		tgbotapi.NewInlineKeyboardButtonData(tr(lang, "balancer.back"), "bl:page:0")))
+func observatoryBackMarkup(lang string) tgKeyboard {
+	return newKeyboard(newRow(
+		newButton(tr(lang, "monitor.back"), "mo:page"),
+		newButton(tr(lang, "balancer.back"), "bl:page:0")))
 }
 
 func (s *BotService) sendObservatoryPage(chatID int64, msgID int, notice string) {
@@ -60,16 +58,16 @@ func (s *BotService) sendObservatoryPage(chatID int64, msgID int, notice string)
 	if notice != "" {
 		body += "\n" + mdEsc(notice) + "\n"
 	}
-	var rows [][]tgbotapi.InlineKeyboardButton
+	var rows [][]tgButton
 	for _, record := range records {
 		state := tr(s.cfg.Language, "monitor.notconfigured")
 		if record.Configured {
 			state = tr(s.cfg.Language, "monitor.configured")
 		}
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(record.Kind+" · "+state, observatoryCallback("v", record.Kind, observatoryRef(record)))))
+		rows = append(rows, newRow(newButton(record.Kind+" · "+state, observatoryCallback("v", record.Kind, observatoryRef(record)))))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.back"), "bl:page:0")))
-	s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "balancer.back"), "bl:page:0")))
+	s.sendOrEdit(chatID, msgID, body, newKeyboard(rows...))
 }
 
 func currentObservatoryRecord(root map[string]any, kind, ref string) (observatoryRecord, error) {
@@ -138,26 +136,26 @@ func (s *BotService) sendObservatoryDetailNotice(chatID int64, msgID int, kind, 
 	} else {
 		body += tr(s.cfg.Language, "monitor.notconfigured_detail")
 	}
-	var rows [][]tgbotapi.InlineKeyboardButton
+	var rows [][]tgButton
 	if s.cfg.AllowMutations {
 		label := tr(s.cfg.Language, "monitor.edit")
 		if !record.Configured {
 			label = tr(s.cfg.Language, "monitor.create")
 		}
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(label, observatoryCallback("edit", kind, ref))))
+		rows = append(rows, newRow(newButton(label, observatoryCallback("edit", kind, ref))))
 		if record.Configured {
-			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "monitor.edit_interval"), observatoryCallback("interval", kind, ref)),
-				tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "monitor.edit_url"), observatoryCallback("url", kind, ref))))
-			rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "monitor.delete"), observatoryCallback("delete", kind, ref))))
+			rows = append(rows, newRow(
+				newButton(tr(s.cfg.Language, "monitor.edit_interval"), observatoryCallback("interval", kind, ref)),
+				newButton(tr(s.cfg.Language, "monitor.edit_url"), observatoryCallback("url", kind, ref))))
+			rows = append(rows, newRow(newButton(tr(s.cfg.Language, "monitor.delete"), observatoryCallback("delete", kind, ref))))
 		}
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "monitor.native.edit"), observatoryCallback("json", kind, ref))))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "monitor.native.edit"), observatoryCallback("json", kind, ref))))
 	}
 	if record.Configured && s.cfg.AllowSensitiveBackup {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "config.export.button"), nativeConfigExportCallback("monitor", observatoryIndex(kind), record.ETag))))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "config.export.button"), nativeConfigExportCallback("monitor", observatoryIndex(kind), record.ETag))))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "monitor.back"), "mo:page"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.back"), "bl:page:0")))
-	s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "monitor.back"), "mo:page"), newButton(tr(s.cfg.Language, "balancer.back"), "bl:page:0")))
+	s.sendOrEdit(chatID, msgID, body, newKeyboard(rows...))
 }
 
 func (s *BotService) offerObservatoryChange(chatID, adminID int64, msgID int, change observatoryChange) {
@@ -199,7 +197,7 @@ func (s *BotService) offerObservatoryChange(chatID, adminID int64, msgID int, ch
 	s.queueGuidedRoutingChange(chatID, adminID, msgID, pendingRoutingChange{Observatory: &change}, detail)
 }
 
-func (s *BotService) handleObservatoryCallback(cb *tgbotapi.CallbackQuery) {
+func (s *BotService) handleObservatoryCallback(cb *tgCallback) {
 	if cb.Message == nil || cb.Message.Chat == nil || cb.From == nil {
 		return
 	}

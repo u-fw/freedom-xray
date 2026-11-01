@@ -6,8 +6,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // statsSwitchReport is the read-only view of every Xray switch the Bot needs
@@ -216,25 +214,25 @@ func statsSwitchesText(lang string, report statsSwitchReport, readErr error) str
 	return out.String()
 }
 
-func statsSwitchesMarkup(lang string, report statsSwitchReport, readErr error) tgbotapi.InlineKeyboardMarkup {
-	rows := [][]tgbotapi.InlineKeyboardButton{}
+func statsSwitchesMarkup(lang string, report statsSwitchReport, readErr error) tgKeyboard {
+	rows := [][]tgButton{}
 	if readErr == nil && !report.allReady() {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(lang, "stats.repair"), "stats_repair_ask"),
+		rows = append(rows, newRow(
+			newButton(tr(lang, "stats.repair"), "stats_repair_ask"),
 		))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(lang, "common.refresh"), "menu_stats"),
-		tgbotapi.NewInlineKeyboardButtonData(tr(lang, "common.main"), "menu_main"),
+	rows = append(rows, newRow(
+		newButton(tr(lang, "common.refresh"), "menu_stats"),
+		newButton(tr(lang, "common.main"), "menu_main"),
 	))
-	return tgbotapi.NewInlineKeyboardMarkup(rows...)
+	return newKeyboard(rows...)
 }
 
-func statsSwitchesBackMarkup(lang string) tgbotapi.InlineKeyboardMarkup {
-	return tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(lang, "common.refresh"), "menu_stats"),
-			tgbotapi.NewInlineKeyboardButtonData(tr(lang, "common.main"), "menu_main"),
+func statsSwitchesBackMarkup(lang string) tgKeyboard {
+	return newKeyboard(
+		newRow(
+			newButton(tr(lang, "common.refresh"), "menu_stats"),
+			newButton(tr(lang, "common.main"), "menu_main"),
 		),
 	)
 }
@@ -249,10 +247,10 @@ func (s *BotService) askStatsRepair(chatID int64, msgID int) {
 		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "online.doctor.mutations"), statsSwitchesBackMarkup(s.cfg.Language))
 		return
 	}
-	markup := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.confirm"), "stats_repair_confirm"),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.cancel"), "menu_stats"),
+	markup := newKeyboard(
+		newRow(
+			newButton(tr(s.cfg.Language, "common.confirm"), "stats_repair_confirm"),
+			newButton(tr(s.cfg.Language, "common.cancel"), "menu_stats"),
 		),
 	)
 	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "stats.repairconfirm"), markup)

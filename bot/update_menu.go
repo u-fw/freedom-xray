@@ -8,8 +8,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 var safeUpdateMutex sync.Mutex
@@ -60,9 +58,9 @@ func (s *BotService) runSafeUpdates(chatID int64, msgID int, components []string
 			results = append(results, tr(s.cfg.Language, "update.refuse", comp))
 		}
 	}
-	rows := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "update.opencenter"), "menu_update_center"),
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.main"), "menu_main")))
+	rows := newKeyboard(newRow(
+		newButton(tr(s.cfg.Language, "update.opencenter"), "menu_update_center"),
+		newButton(tr(s.cfg.Language, "common.main"), "menu_main")))
 	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "update.result", strings.Join(results, "\n\n")), rows)
 }
 
@@ -88,7 +86,7 @@ func (s *BotService) showUpdatesMenu(chatID int64, msgID int) {
 	defer cancel()
 	var out strings.Builder
 	out.WriteString(tr(s.cfg.Language, "update.center.title"))
-	rows := [][]tgbotapi.InlineKeyboardButton{}
+	rows := [][]tgButton{}
 	for _, comp := range []string{"script", "bot", "core"} {
 		if comp == "core" && !s.cfg.AllowCoreUpdates {
 			out.WriteString(tr(s.cfg.Language, "update.core.disabled"))
@@ -106,15 +104,15 @@ func (s *BotService) showUpdatesMenu(chatID int64, msgID int) {
 		} else {
 			out.WriteString(tr(s.cfg.Language, "update.row.upstream", label, current, remote))
 		}
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "update.update.now", label), "update_ask:"+comp)))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "update.update.now", label), "update_ask:"+comp)))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "update.update.both"), "update_all")))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "update.update.both"), "update_all")))
 	if s.cfg.AllowCoreUpdates {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "update.rollback"), "update_ask:core-rollback")))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "update.rollback"), "update_ask:core-rollback")))
 	}
 	out.WriteString(tr(s.cfg.Language, "update.note"))
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.main"), "menu_main")))
-	s.sendOrEdit(chatID, msgID, out.String(), tgbotapi.NewInlineKeyboardMarkup(rows...))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "common.main"), "menu_main")))
+	s.sendOrEdit(chatID, msgID, out.String(), newKeyboard(rows...))
 }
 
 func componentLabel(comp string) string {
@@ -131,7 +129,7 @@ func componentLabel(comp string) string {
 	return comp
 }
 
-func (s *BotService) askUpdate(cb *tgbotapi.CallbackQuery, comp string) {
+func (s *BotService) askUpdate(cb *tgCallback, comp string) {
 	if cb.Message == nil || cb.Message.Chat == nil || cb.From == nil {
 		return
 	}
@@ -179,13 +177,13 @@ func (s *BotService) askUpdate(cb *tgbotapi.CallbackQuery, comp string) {
 		note = tr(s.cfg.Language, "update.corenote")
 	}
 	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "update.confirmbody", componentLabel(comp), version, currentComponentVersion(comp, s.cfg.XrayBinPath), note),
-		tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "update.confirm"), "update_confirm:"+token),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.cancel"), "update_cancel:"+token),
+		newKeyboard(newRow(
+			newButton(tr(s.cfg.Language, "update.confirm"), "update_confirm:"+token),
+			newButton(tr(s.cfg.Language, "common.cancel"), "update_cancel:"+token),
 		)))
 }
 
-func (s *BotService) resolveUpdate(cb *tgbotapi.CallbackQuery, confirm bool) {
+func (s *BotService) resolveUpdate(cb *tgCallback, confirm bool) {
 	if cb.Message == nil || cb.Message.Chat == nil || cb.From == nil {
 		return
 	}
@@ -214,7 +212,7 @@ func (s *BotService) resolveUpdate(cb *tgbotapi.CallbackQuery, confirm bool) {
 		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "update.permissions"), s.backToMainMarkup())
 		return
 	}
-	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "update.verifying"), tgbotapi.InlineKeyboardMarkup{})
+	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "update.verifying"), tgKeyboard{})
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	// Check a mutable upstream release label again before downloading.

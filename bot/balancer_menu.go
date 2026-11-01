@@ -7,8 +7,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type balancerWizard struct {
@@ -58,10 +56,10 @@ func consumeBalancerWizard(chatID int64, expected balancerWizard) bool {
 	return time.Now().Before(current.Expires)
 }
 
-func balancerBackMarkup(lang string) tgbotapi.InlineKeyboardMarkup {
-	return tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(lang, "balancer.back"), "bl:page:0"),
-		tgbotapi.NewInlineKeyboardButtonData(tr(lang, "routing.guide.back"), "rt:page:0")))
+func balancerBackMarkup(lang string) tgKeyboard {
+	return newKeyboard(newRow(
+		newButton(tr(lang, "balancer.back"), "bl:page:0"),
+		newButton(tr(lang, "routing.guide.back"), "rt:page:0")))
 }
 
 func balancerCallback(action, tag, etag string) string {
@@ -190,29 +188,29 @@ func (s *BotService) sendBalancerPage(chatID int64, msgID, offset int, notice st
 	if len(records) == 0 {
 		body += tr(s.cfg.Language, "balancer.empty")
 	}
-	var rows [][]tgbotapi.InlineKeyboardButton
+	var rows [][]tgButton
 	for _, record := range records[offset:end] {
 		label := fmt.Sprintf("%s · %s", record.Tag, balancerStrategy(record.Balancer))
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(truncateLabel(label, 64), balancerCallback("v", record.Tag, record.ETag))))
+		rows = append(rows, newRow(newButton(truncateLabel(label, 64), balancerCallback("v", record.Tag, record.ETag))))
 	}
-	var pages []tgbotapi.InlineKeyboardButton
+	var pages []tgButton
 	if offset > 0 {
-		pages = append(pages, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.prev"), fmt.Sprintf("bl:page:%d", offset-routingPageSize)))
+		pages = append(pages, newButton(tr(s.cfg.Language, "common.prev"), fmt.Sprintf("bl:page:%d", offset-routingPageSize)))
 	}
 	if end < len(records) {
-		pages = append(pages, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.next"), fmt.Sprintf("bl:page:%d", end)))
+		pages = append(pages, newButton(tr(s.cfg.Language, "common.next"), fmt.Sprintf("bl:page:%d", end)))
 	}
 	if len(pages) > 0 {
 		rows = append(rows, pages)
 	}
 	if s.cfg.AllowMutations {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.add"), "bl:add"),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.native.add"), "bl:jsonnew")))
+		rows = append(rows, newRow(
+			newButton(tr(s.cfg.Language, "balancer.add"), "bl:add"),
+			newButton(tr(s.cfg.Language, "balancer.native.add"), "bl:jsonnew")))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "monitor.button"), "mo:page")))
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.refresh"), fmt.Sprintf("bl:page:%d", offset)), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.back"), "rt:page:0")))
-	s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "monitor.button"), "mo:page")))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "common.refresh"), fmt.Sprintf("bl:page:%d", offset)), newButton(tr(s.cfg.Language, "routing.guide.back"), "rt:page:0")))
+	s.sendOrEdit(chatID, msgID, body, newKeyboard(rows...))
 }
 
 func (s *BotService) sendBalancerDetail(chatID int64, msgID int, key, etag string) {
@@ -266,25 +264,25 @@ func (s *BotService) sendBalancerDetailNotice(chatID int64, msgID int, key, etag
 	if len(redacted.RedactedFields) > 0 {
 		body += tr(s.cfg.Language, "balancer.hidden")
 	}
-	var rows [][]tgbotapi.InlineKeyboardButton
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.live"), balancerCallback("live", record.Tag, record.ETag))))
+	var rows [][]tgButton
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "balancer.live"), balancerCallback("live", record.Tag, record.ETag))))
 	if s.cfg.AllowMutations {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.edit.selectors"), balancerCallback("selector", record.Tag, record.ETag)),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.edit.strategy"), balancerCallback("strategy", record.Tag, record.ETag))))
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.edit.fallback"), balancerCallback("fallback", record.Tag, record.ETag)),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.delete"), balancerCallback("delete", record.Tag, record.ETag))))
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.native.edit"), balancerCallback("json", record.Tag, record.ETag))))
+		rows = append(rows, newRow(
+			newButton(tr(s.cfg.Language, "balancer.edit.selectors"), balancerCallback("selector", record.Tag, record.ETag)),
+			newButton(tr(s.cfg.Language, "balancer.edit.strategy"), balancerCallback("strategy", record.Tag, record.ETag))))
+		rows = append(rows, newRow(
+			newButton(tr(s.cfg.Language, "balancer.edit.fallback"), balancerCallback("fallback", record.Tag, record.ETag)),
+			newButton(tr(s.cfg.Language, "balancer.delete"), balancerCallback("delete", record.Tag, record.ETag))))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "balancer.native.edit"), balancerCallback("json", record.Tag, record.ETag))))
 	}
 	if s.cfg.AllowSensitiveBackup {
 		index, _, err := findBalancer(root, record.Tag)
 		if err == nil && index >= 0 {
-			rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "config.export.button"), nativeConfigExportCallback("balancer", index+1, record.ETag))))
+			rows = append(rows, newRow(newButton(tr(s.cfg.Language, "config.export.button"), nativeConfigExportCallback("balancer", index+1, record.ETag))))
 		}
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.back"), "bl:page:0"), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.home"), "menu_main")))
-	s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "balancer.back"), "bl:page:0"), newButton(tr(s.cfg.Language, "menu.home"), "menu_main")))
+	s.sendOrEdit(chatID, msgID, body, newKeyboard(rows...))
 }
 
 func (s *BotService) sendBalancerLive(chatID int64, msgID int, record balancerRecord) {
@@ -297,11 +295,11 @@ func (s *BotService) sendBalancerLiveNotice(chatID int64, msgID int, record bala
 	if notice != "" {
 		body = mdEsc(notice) + "\n\n" + body
 	}
-	var rows [][]tgbotapi.InlineKeyboardButton
+	var rows [][]tgButton
 	if errors.Is(err, errRoutingServiceDisabled) {
 		body += tr(s.cfg.Language, "balancer.live.disabled")
 		if s.cfg.AllowMutations {
-			rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.live.enable"), balancerCallback("enable", record.Tag, record.ETag))))
+			rows = append(rows, newRow(newButton(tr(s.cfg.Language, "balancer.live.enable"), balancerCallback("enable", record.Tag, record.ETag))))
 		}
 	} else if err != nil {
 		body += tr(s.cfg.Language, "balancer.live.failed", mdEsc(err.Error()))
@@ -317,13 +315,13 @@ func (s *BotService) sendBalancerLiveNotice(chatID int64, msgID int, record bala
 		body += tr(s.cfg.Language, "balancer.live.result", mdEsc(selected), mdEsc(override))
 		body += tr(s.cfg.Language, "balancer.override.runtime_note")
 		if s.cfg.AllowMutations {
-			rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.override.button"), balancerCallback("override", record.Tag, record.ETag))))
+			rows = append(rows, newRow(newButton(tr(s.cfg.Language, "balancer.override.button"), balancerCallback("override", record.Tag, record.ETag))))
 		}
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.refresh"), balancerCallback("live", record.Tag, record.ETag)),
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.back"), balancerCallback("v", record.Tag, record.ETag))))
-	s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))
+	rows = append(rows, newRow(
+		newButton(tr(s.cfg.Language, "common.refresh"), balancerCallback("live", record.Tag, record.ETag)),
+		newButton(tr(s.cfg.Language, "common.back"), balancerCallback("v", record.Tag, record.ETag))))
+	s.sendOrEdit(chatID, msgID, body, newKeyboard(rows...))
 }
 
 func (s *BotService) returnToBalancerLive(chatID int64, msgID int, tag, etag string) {
@@ -387,7 +385,7 @@ func (s *BotService) offerBalancerChange(chatID, adminID int64, msgID int, chang
 	s.queueGuidedRoutingChange(chatID, adminID, msgID, pendingRoutingChange{Balancer: &change}, detail)
 }
 
-func (s *BotService) handleBalancerInput(msg *tgbotapi.Message) bool {
+func (s *BotService) handleBalancerInput(msg *tgMessage) bool {
 	if msg.Chat == nil || msg.From == nil {
 		return false
 	}
@@ -521,7 +519,7 @@ func (s *BotService) handleBalancerInput(msg *tgbotapi.Message) bool {
 	return true
 }
 
-func (s *BotService) handleBalancerCallback(cb *tgbotapi.CallbackQuery) {
+func (s *BotService) handleBalancerCallback(cb *tgCallback) {
 	if cb.Message == nil || cb.Message.Chat == nil || cb.From == nil {
 		return
 	}
@@ -630,16 +628,16 @@ func (s *BotService) handleBalancerCallback(cb *tgbotapi.CallbackQuery) {
 		if len(parts) != 4 {
 			return
 		}
-		var rows [][]tgbotapi.InlineKeyboardButton
+		var rows [][]tgButton
 		for _, choices := range [][]string{{"random", "roundRobin"}, {"leastPing", "leastLoad"}} {
-			var buttons []tgbotapi.InlineKeyboardButton
+			var buttons []tgButton
 			for _, choice := range choices {
-				buttons = append(buttons, tgbotapi.NewInlineKeyboardButtonData(choice, balancerCallback("ss", record.Tag, record.ETag)+":"+choice))
+				buttons = append(buttons, newButton(choice, balancerCallback("ss", record.Tag, record.ETag)+":"+choice))
 			}
 			rows = append(rows, buttons)
 		}
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.back"), balancerCallback("v", record.Tag, record.ETag))))
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "balancer.strategy_prompt"), tgbotapi.NewInlineKeyboardMarkup(rows...))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "common.back"), balancerCallback("v", record.Tag, record.ETag))))
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "balancer.strategy_prompt"), newKeyboard(rows...))
 	case "ss":
 		if len(parts) != 5 {
 			return
@@ -672,23 +670,23 @@ func (s *BotService) handleBalancerCallback(cb *tgbotapi.CallbackQuery) {
 		if end > len(targets) {
 			end = len(targets)
 		}
-		var rows [][]tgbotapi.InlineKeyboardButton
+		var rows [][]tgButton
 		for _, target := range targets[offset:end] {
-			rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(truncateLabel(target.Tag, 50), balancerCallback("sf", record.Tag, record.ETag)+":"+routingTargetKey(target))))
+			rows = append(rows, newRow(newButton(truncateLabel(target.Tag, 50), balancerCallback("sf", record.Tag, record.ETag)+":"+routingTargetKey(target))))
 		}
-		var pages []tgbotapi.InlineKeyboardButton
+		var pages []tgButton
 		if offset > 0 {
-			pages = append(pages, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.prev"), fmt.Sprintf("%s:%d", balancerCallback("fallback", record.Tag, record.ETag), offset-routingPageSize)))
+			pages = append(pages, newButton(tr(s.cfg.Language, "common.prev"), fmt.Sprintf("%s:%d", balancerCallback("fallback", record.Tag, record.ETag), offset-routingPageSize)))
 		}
 		if end < len(targets) {
-			pages = append(pages, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.next"), fmt.Sprintf("%s:%d", balancerCallback("fallback", record.Tag, record.ETag), end)))
+			pages = append(pages, newButton(tr(s.cfg.Language, "common.next"), fmt.Sprintf("%s:%d", balancerCallback("fallback", record.Tag, record.ETag), end)))
 		}
 		if len(pages) > 0 {
 			rows = append(rows, pages)
 		}
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.clear_fallback"), balancerCallback("sf", record.Tag, record.ETag)+":none")))
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.back"), balancerCallback("v", record.Tag, record.ETag))))
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "balancer.fallback_prompt"), tgbotapi.NewInlineKeyboardMarkup(rows...))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "balancer.clear_fallback"), balancerCallback("sf", record.Tag, record.ETag)+":none")))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "common.back"), balancerCallback("v", record.Tag, record.ETag))))
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "balancer.fallback_prompt"), newKeyboard(rows...))
 	case "sf":
 		if len(parts) != 5 {
 			return

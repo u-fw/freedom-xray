@@ -9,8 +9,6 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func TestNativeInboundCRUDPreservesProtectedData(t *testing.T) {
@@ -108,14 +106,14 @@ func TestNativeInboundBotCreateEditAndDelete(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.XrayConfigPath, cfg.XrayBinPath, cfg.AllowMutations = h.config, h.xray, true
 	s, capture := newCapturedRoutingBot(t, cfg)
-	chat, admin := &tgbotapi.Chat{ID: 9551, Type: "private"}, &tgbotapi.User{ID: 17}
-	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}}
+	chat, admin := &tgChat{ID: 9551, Type: "private"}, &tgUser{ID: 17}
+	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}}
 	root, _ := decodeBindingMigrationConfig(h.config)
 	list, _ := nativeInboundListETag(root)
 	cb.Data = "ni:add:" + list
 	s.handleNativeInboundCallback(cb)
 	input := `{"tag":"trojan-node","protocol":"trojan","listen":"127.0.0.1","port":31001,"settings":{"clients":[{"email":"tr-user","password":"test-secret-value"}]}}`
-	if !s.handleNativeInboundInput(&tgbotapi.Message{From: admin, Chat: chat, Text: input}) {
+	if !s.handleNativeInboundInput(&tgMessage{From: admin, Chat: chat, Text: input}) {
 		t.Fatal("native inbound creation was not handled")
 	}
 	body, _ := capture.card(t)
@@ -124,7 +122,7 @@ func TestNativeInboundBotCreateEditAndDelete(t *testing.T) {
 	}
 	before, _ := os.ReadFile(h.config)
 	cb.Data = "routing_confirm:" + pendingRoutingToken(t, chat.ID)
-	cb.From = &tgbotapi.User{ID: 18}
+	cb.From = &tgUser{ID: 18}
 	s.resolveRoutingChange(cb, true)
 	after, _ := os.ReadFile(h.config)
 	if !bytes.Equal(before, after) || h.restartCount(t) != 0 {
@@ -144,7 +142,7 @@ func TestNativeInboundBotCreateEditAndDelete(t *testing.T) {
 	}
 	cb.Data = nativeInboundCallback("port", 2, records[1].ETag)
 	s.handleNativeInboundCallback(cb)
-	if !s.handleNativeInboundInput(&tgbotapi.Message{From: admin, Chat: chat, Text: "31002"}) {
+	if !s.handleNativeInboundInput(&tgMessage{From: admin, Chat: chat, Text: "31002"}) {
 		t.Fatal("native port input was not handled")
 	}
 	cb.Data = "routing_confirm:" + pendingRoutingToken(t, chat.ID)

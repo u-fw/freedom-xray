@@ -10,8 +10,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func newBalancerOverrideHarness(t *testing.T) (*BotConfig, *bindingMigrationHarness) {
@@ -143,8 +141,8 @@ func TestBalancerOverrideRejectsChangedConfigurationAndReportsUncertainOutcomes(
 func TestBotBalancerOverrideIsOwnerBoundAndReturnsToLiveStatus(t *testing.T) {
 	cfg, h := newBalancerOverrideHarness(t)
 	s, capture := newCapturedRoutingBot(t, cfg)
-	chat, admin := &tgbotapi.Chat{ID: 9630, Type: "private"}, &tgbotapi.User{ID: 17}
-	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}}
+	chat, admin := &tgChat{ID: 9630, Type: "private"}, &tgUser{ID: 17}
+	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}}
 	status, _ := queryBalancerLive(cfg, "pool")
 	root, _ := decodeBindingMigrationConfig(h.config)
 	records, _ := balancerRecords(root)
@@ -162,7 +160,7 @@ func TestBotBalancerOverrideIsOwnerBoundAndReturnsToLiveStatus(t *testing.T) {
 		t.Fatal("target selection applied without confirmation")
 	}
 	cb.Data = "routing_confirm:" + pendingRoutingToken(t, chat.ID)
-	cb.From = &tgbotapi.User{ID: 18}
+	cb.From = &tgUser{ID: 18}
 	s.resolveRoutingChange(cb, true)
 	if overrideRequestCount(t, cfg) != 0 {
 		t.Fatal("another administrator applied a runtime change")
@@ -205,8 +203,8 @@ func TestBotBalancerOverrideConfirmationExpiresAndCancelsWithoutMutation(t *test
 			cfg, h := newBalancerOverrideHarness(t)
 			s, _ := newCapturedRoutingBot(t, cfg)
 			status, _ := queryBalancerLive(cfg, "pool")
-			chat := &tgbotapi.Chat{ID: 9631 + int64(i), Type: "private"}
-			cb := &tgbotapi.CallbackQuery{From: &tgbotapi.User{ID: 17}, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: balancerOverrideCallback("op", "pool", status.StateETag, userCallbackKey("direct2"))}
+			chat := &tgChat{ID: 9631 + int64(i), Type: "private"}
+			cb := &tgCallback{From: &tgUser{ID: 17}, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: balancerOverrideCallback("op", "pool", status.StateETag, userCallbackKey("direct2"))}
 			s.handleCallback(cb)
 			key := pendingRoutingToken(t, chat.ID)
 			cb.Data = "routing_confirm:" + key
@@ -264,8 +262,8 @@ func TestBalancerOverridePickerPaginationKeepsReviewedStateAndCallbackLimits(t *
 	}
 	s, capture := newCapturedRoutingBot(t, cfg)
 	status, _ := queryBalancerLive(cfg, "pool")
-	chat := &tgbotapi.Chat{ID: 9635, Type: "private"}
-	cb := &tgbotapi.CallbackQuery{From: &tgbotapi.User{ID: 17}, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: balancerOverrideCallback("ol", "pool", status.StateETag, "0")}
+	chat := &tgChat{ID: 9635, Type: "private"}
+	cb := &tgCallback{From: &tgUser{ID: 17}, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: balancerOverrideCallback("ol", "pool", status.StateETag, "0")}
 	s.handleCallback(cb)
 	_, markup := capture.card(t)
 	callbacks := strings.Join(keyboardCallbacks(t, markup), " ")

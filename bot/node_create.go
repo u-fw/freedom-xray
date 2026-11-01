@@ -11,8 +11,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type nodeCreateState struct {
@@ -146,20 +144,20 @@ func (s *BotService) promptNodeCreate(chatID int64, msgID int, state nodeCreateS
 	default:
 		prompt = tr(s.cfg.Language, "node.create.cancelled")
 	}
-	markup := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.cancel"), "menu_nodes"),
+	markup := newKeyboard(
+		newRow(
+			newButton(tr(s.cfg.Language, "common.cancel"), "menu_nodes"),
 		),
 	)
 	if state.Step == "cert_source" {
 		prompt = tr(s.cfg.Language, "node.create.certsource")
-		markup = tgbotapi.NewInlineKeyboardMarkup(
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.create.certself"), "node_cert_source:self"),
-				tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.create.certexisting"), "node_cert_source:existing"),
+		markup = newKeyboard(
+			newRow(
+				newButton(tr(s.cfg.Language, "node.create.certself"), "node_cert_source:self"),
+				newButton(tr(s.cfg.Language, "node.create.certexisting"), "node_cert_source:existing"),
 			),
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.cancel"), "menu_nodes"),
+			newRow(
+				newButton(tr(s.cfg.Language, "common.cancel"), "menu_nodes"),
 			),
 		)
 	}
@@ -222,7 +220,7 @@ func parseYesNo(value string) (bool, bool) {
 	return false, false
 }
 
-func (s *BotService) handleNodeCreateInput(msg *tgbotapi.Message) bool {
+func (s *BotService) handleNodeCreateInput(msg *tgMessage) bool {
 	chatID := msg.Chat.ID
 	nodeCreateStates.Lock()
 	state, ok := nodeCreateStates.items[chatID]
@@ -406,7 +404,7 @@ func (s *BotService) handleNodeCreateInput(msg *tgbotapi.Message) bool {
 	return true
 }
 
-func (s *BotService) handleNodeCertSource(cb *tgbotapi.CallbackQuery) {
+func (s *BotService) handleNodeCertSource(cb *tgCallback) {
 	if cb.Message == nil || cb.Message.Chat == nil || cb.From == nil {
 		return
 	}
@@ -456,21 +454,21 @@ func (s *BotService) handleNodeCertSource(cb *tgbotapi.CallbackQuery) {
 
 func (s *BotService) sendNodeTemplatePicker(chatID int64, msgID int) {
 	text := tr(s.cfg.Language, "node.create.picker")
-	markup := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.create.tcp"), "node_new:"+string(NodeTemplateTCPReality)),
+	markup := newKeyboard(
+		newRow(
+			newButton(tr(s.cfg.Language, "node.create.tcp"), "node_new:"+string(NodeTemplateTCPReality)),
 		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.create.xhttpreality"), "node_new:"+string(NodeTemplateXHTTPReality)),
+		newRow(
+			newButton(tr(s.cfg.Language, "node.create.xhttpreality"), "node_new:"+string(NodeTemplateXHTTPReality)),
 		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.create.xhttptls"), "node_new:"+string(NodeTemplateXHTTPTLS)),
+		newRow(
+			newButton(tr(s.cfg.Language, "node.create.xhttptls"), "node_new:"+string(NodeTemplateXHTTPTLS)),
 		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "inbound.native.button"), "ni:page:0"),
+		newRow(
+			newButton(tr(s.cfg.Language, "inbound.native.button"), "ni:page:0"),
 		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.back"), "menu_nodes"),
+		newRow(
+			newButton(tr(s.cfg.Language, "common.back"), "menu_nodes"),
 		),
 	)
 	s.sendOrEdit(chatID, msgID, text, markup)
@@ -562,16 +560,16 @@ func (s *BotService) showNodeCreateSummary(chatID, adminID int64, msgID int, sta
 	}
 	pendingNodeCreates.items[token] = pendingNodeCreate{ChatID: chatID, AdminID: adminID, Expires: time.Now().Add(3 * time.Minute), Request: request}
 	pendingNodeCreates.Unlock()
-	markup := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.create.confirm"), "node_create_confirm:"+token),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.cancel"), "node_create_cancel:"+token),
+	markup := newKeyboard(
+		newRow(
+			newButton(tr(s.cfg.Language, "node.create.confirm"), "node_create_confirm:"+token),
+			newButton(tr(s.cfg.Language, "common.cancel"), "node_create_cancel:"+token),
 		),
 	)
 	s.sendOrEdit(chatID, msgID, nodeCreateSummaryText(s.cfg.Language, state), markup)
 }
 
-func (s *BotService) confirmNodeCreate(cb *tgbotapi.CallbackQuery, confirm bool) {
+func (s *BotService) confirmNodeCreate(cb *tgCallback, confirm bool) {
 	if cb.Message == nil || cb.Message.Chat == nil || cb.From == nil {
 		return
 	}
@@ -658,16 +656,16 @@ func (s *BotService) showNodeDeleteConfirm(chatID, adminID int64, msgID int, key
 	}
 	pendingNodeDeletes.items[token] = pendingNodeDelete{ChatID: chatID, AdminID: adminID, Expires: time.Now().Add(3 * time.Minute), Tag: node.Tag, ETag: etag}
 	pendingNodeDeletes.Unlock()
-	markup := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.delete.confirm"), "node_delete_confirm:"+token),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.cancel"), "node_delete_cancel:"+token),
+	markup := newKeyboard(
+		newRow(
+			newButton(tr(s.cfg.Language, "node.delete.confirm"), "node_delete_confirm:"+token),
+			newButton(tr(s.cfg.Language, "common.cancel"), "node_delete_cancel:"+token),
 		),
 	)
 	s.sendOrEdit(chatID, msgID, text, markup)
 }
 
-func (s *BotService) confirmNodeDelete(cb *tgbotapi.CallbackQuery, confirm bool) {
+func (s *BotService) confirmNodeDelete(cb *tgCallback, confirm bool) {
 	if cb.Message == nil || cb.Message.Chat == nil || cb.From == nil {
 		return
 	}

@@ -4,14 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/u-fw/freedom-xray/bot/internal/xrayapi"
 	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/u-fw/freedom-xray/bot/internal/xrayapi"
 )
 
 func TestBotRouteQuerySupportsReadOnlyTextDocumentAndRepeatedTargets(t *testing.T) {
@@ -25,7 +23,7 @@ func TestBotRouteQuerySupportsReadOnlyTextDocumentAndRepeatedTargets(t *testing.
 	})
 	payload := []byte(`{"domain":"example.com","port":8443,"user":"private-input-secret","attributes":{"x-test":"value"}}`)
 	s, capture := newNativeDocumentBot(t, cfg, payload)
-	chat, admin := &tgbotapi.Chat{ID: 9640, Type: "private"}, &tgbotapi.User{ID: 17}
+	chat, admin := &tgChat{ID: 9640, Type: "private"}, &tgUser{ID: 17}
 	t.Cleanup(func() { clearRoutingWizard(chat.ID) })
 	s.sendRoutingPage(chat.ID, 1, 0, "")
 	capture.mu.Lock()
@@ -34,19 +32,19 @@ func TestBotRouteQuerySupportsReadOnlyTextDocumentAndRepeatedTargets(t *testing.
 	if !strings.Contains(markup, "rt:test") {
 		t.Fatal("read-only routing menu omitted route queries")
 	}
-	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: "rt:test"}
+	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: "rt:test"}
 	s.handleCallback(cb)
-	if s.handleRoutingInput(&tgbotapi.Message{From: &tgbotapi.User{ID: 18}, Chat: chat, Text: "example.com"}) {
+	if s.handleRoutingInput(&tgMessage{From: &tgUser{ID: 18}, Chat: chat, Text: "example.com"}) {
 		t.Fatal("another administrator consumed the query wizard")
 	}
-	s.handleRoutingInput(&tgbotapi.Message{From: admin, Chat: chat, Text: "https://example.com/private"})
+	s.handleRoutingInput(&tgMessage{From: admin, Chat: chat, Text: "https://example.com/private"})
 	if calls.Load() != 0 {
 		t.Fatal("invalid input reached the routing API")
 	}
 	before, _ := os.ReadFile(h.config)
-	for _, message := range []*tgbotapi.Message{
+	for _, message := range []*tgMessage{
 		{From: admin, Chat: chat, Text: "example.com:8443"},
-		{From: admin, Chat: chat, Document: &tgbotapi.Document{FileID: "test-file"}},
+		{From: admin, Chat: chat, Document: &tgDocument{FileID: "test-file"}},
 		{From: admin, Chat: chat, Text: "udp [2001:db8::1]:53"},
 	} {
 		if !s.handleRoutingInput(message) {
@@ -59,8 +57,8 @@ func TestBotRouteQuerySupportsReadOnlyTextDocumentAndRepeatedTargets(t *testing.
 			t.Fatalf("route result omitted its decision or exposed extra context: %s", body)
 		}
 	}
-	s.handleRoutingInput(&tgbotapi.Message{From: admin, Chat: chat, Text: "/cancel", Entities: []tgbotapi.MessageEntity{{Type: "bot_command", Offset: 0, Length: 7}}})
-	if s.handleRoutingInput(&tgbotapi.Message{From: admin, Chat: chat, Text: "example.com"}) {
+	s.handleRoutingInput(&tgMessage{From: admin, Chat: chat, Text: "/cancel", Entities: []tgEntity{{Type: "bot_command", Offset: 0, Length: 7}}})
+	if s.handleRoutingInput(&tgMessage{From: admin, Chat: chat, Text: "example.com"}) {
 		t.Fatal("cancelled query flow consumed more input")
 	}
 	after, _ := os.ReadFile(h.config)
@@ -81,11 +79,11 @@ func TestBotRouteQueryNavigationDuringRPCDoesNotOverwriteTheNewMenu(t *testing.T
 		}
 	})
 	s, capture := newCapturedRoutingBot(t, cfg)
-	chat, admin := &tgbotapi.Chat{ID: 9641, Type: "private"}, &tgbotapi.User{ID: 17}
-	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: "rt:test"}
+	chat, admin := &tgChat{ID: 9641, Type: "private"}, &tgUser{ID: 17}
+	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: "rt:test"}
 	s.handleCallback(cb)
 	done := make(chan bool, 1)
-	go func() { done <- s.handleRoutingInput(&tgbotapi.Message{From: admin, Chat: chat, Text: "example.com"}) }()
+	go func() { done <- s.handleRoutingInput(&tgMessage{From: admin, Chat: chat, Text: "example.com"}) }()
 	select {
 	case <-started:
 	case <-time.After(5 * time.Second):
@@ -116,12 +114,12 @@ func TestBotRouteQueryCancellationDuringDocumentDownloadPreventsRPC(t *testing.T
 	transport.started, transport.release = make(chan struct{}, 1), make(chan struct{})
 	started, release := transport.started, transport.release
 	transport.mu.Unlock()
-	chat, admin := &tgbotapi.Chat{ID: 9642, Type: "private"}, &tgbotapi.User{ID: 17}
-	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: "rt:test"}
+	chat, admin := &tgChat{ID: 9642, Type: "private"}, &tgUser{ID: 17}
+	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: "rt:test"}
 	s.handleCallback(cb)
 	done := make(chan bool, 1)
 	go func() {
-		done <- s.handleRoutingInput(&tgbotapi.Message{From: admin, Chat: chat, Document: &tgbotapi.Document{FileID: "test-file"}})
+		done <- s.handleRoutingInput(&tgMessage{From: admin, Chat: chat, Document: &tgDocument{FileID: "test-file"}})
 	}()
 	select {
 	case <-started:
@@ -146,9 +144,9 @@ func TestBotRouteQueryServiceEnableRequiresConfirmationAndReturnsToQueryContext(
 	cfg := DefaultConfig()
 	cfg.XrayConfigPath, cfg.XrayBinPath, cfg.AllowMutations = h.config, h.xray, true
 	s, capture := newCapturedRoutingBot(t, cfg)
-	chat, admin := &tgbotapi.Chat{ID: 9643, Type: "private"}, &tgbotapi.User{ID: 17}
+	chat, admin := &tgChat{ID: 9643, Type: "private"}, &tgUser{ID: 17}
 	t.Cleanup(func() { clearRoutingWizard(chat.ID) })
-	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: "rt:test"}
+	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: "rt:test"}
 	s.handleCallback(cb)
 	_, markup := capture.card(t)
 	if !strings.Contains(strings.Join(keyboardCallbacks(t, markup), " "), "rt:testenable") {
@@ -165,7 +163,7 @@ func TestBotRouteQueryServiceEnableRequiresConfirmationAndReturnsToQueryContext(
 	cb.Data = "rt:testenable"
 	s.handleCallback(cb)
 	cb.Data = "routing_confirm:" + pendingRoutingToken(t, chat.ID)
-	cb.From = &tgbotapi.User{ID: 18}
+	cb.From = &tgUser{ID: 18}
 	s.resolveRoutingChange(cb, true)
 	if h.restartCount(t) != 0 {
 		t.Fatal("another administrator enabled RoutingService")

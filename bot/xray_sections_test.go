@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func sectionRef(t *testing.T, root map[string]any, name, kind string, value any) xraySectionChange {
@@ -118,7 +116,7 @@ func TestBotXraySectionDocumentAndArrayExport(t *testing.T) {
 	cfg.XrayConfigPath, cfg.XrayBinPath, cfg.AllowMutations, cfg.AllowSensitiveBackup = h.config, h.xray, true, true
 	payload := []byte(`[{"ipPool":"198.18.0.0/24","poolSize":128}]`)
 	s, capture := newNativeDocumentBot(t, cfg, payload)
-	chat, admin := &tgbotapi.Chat{ID: 9590, Type: "private"}, &tgbotapi.User{ID: 17}
+	chat, admin := &tgChat{ID: 9590, Type: "private"}, &tgUser{ID: 17}
 	s.sendToolsCard(chat.ID, 1)
 	capture.mu.Lock()
 	markup := capture.markup
@@ -128,16 +126,16 @@ func TestBotXraySectionDocumentAndArrayExport(t *testing.T) {
 	}
 	root, _ := decodeBindingMigrationConfig(h.config)
 	record, _ := xraySectionInfo(root, "fakedns")
-	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: xraySectionCallback("put", "fakedns", record.ETag)}
+	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: xraySectionCallback("put", "fakedns", record.ETag)}
 	s.handleCallback(cb)
-	if !s.handleRoutingInput(&tgbotapi.Message{From: admin, Chat: chat, Text: "[]"}) {
+	if !s.handleRoutingInput(&tgMessage{From: admin, Chat: chat, Text: "[]"}) {
 		t.Fatal("invalid input was not handled")
 	}
-	if !s.handleRoutingInput(&tgbotapi.Message{From: admin, Chat: chat, Document: &tgbotapi.Document{FileID: "test-file"}}) {
+	if !s.handleRoutingInput(&tgMessage{From: admin, Chat: chat, Document: &tgDocument{FileID: "test-file"}}) {
 		t.Fatal("section document was not handled after retry")
 	}
 	cb.Data = "routing_confirm:" + pendingRoutingToken(t, chat.ID)
-	cb.From = &tgbotapi.User{ID: 18}
+	cb.From = &tgUser{ID: 18}
 	s.resolveRoutingChange(cb, true)
 	if h.restartCount(t) != 0 {
 		t.Fatal("another admin confirmed a section edit")

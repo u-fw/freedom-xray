@@ -11,8 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // onlineLevelInfo is the read-only view of one policy level that participates
@@ -352,21 +350,21 @@ func (s *BotService) onlineDiagnosticText() string {
 	return out.String()
 }
 
-func (s *BotService) onlineDoctorMarkup() tgbotapi.InlineKeyboardMarkup {
-	rows := [][]tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "online.doctor.repair"), "online_repair_ask"),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.refresh"), "menu_online_doctor"),
+func (s *BotService) onlineDoctorMarkup() tgKeyboard {
+	rows := [][]tgButton{
+		newRow(
+			newButton(tr(s.cfg.Language, "online.doctor.repair"), "online_repair_ask"),
+			newButton(tr(s.cfg.Language, "common.refresh"), "menu_online_doctor"),
 		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "online.doctor.back"), "menu_online"),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.home"), "menu_main"),
+		newRow(
+			newButton(tr(s.cfg.Language, "online.doctor.back"), "menu_online"),
+			newButton(tr(s.cfg.Language, "menu.home"), "menu_main"),
 		),
 	}
 	if s.cfg.AllowMutations {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "service.collector"), "service_ask:collector")))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "service.collector"), "service_ask:collector")))
 	}
-	return tgbotapi.NewInlineKeyboardMarkup(rows...)
+	return newKeyboard(rows...)
 }
 
 func (s *BotService) sendOnlineDiagnostics(chatID int64, msgID int) {
@@ -378,10 +376,10 @@ func (s *BotService) askOnlineRepair(chatID int64, msgID int) {
 		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "online.doctor.mutations"), s.onlineDoctorMarkup())
 		return
 	}
-	markup := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.confirm"), "online_repair_confirm"),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.cancel"), "online_repair_cancel"),
+	markup := newKeyboard(
+		newRow(
+			newButton(tr(s.cfg.Language, "common.confirm"), "online_repair_confirm"),
+			newButton(tr(s.cfg.Language, "common.cancel"), "online_repair_cancel"),
 		),
 	)
 	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "online.doctor.repairconfirm"), markup)

@@ -11,8 +11,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type pendingNodeChange struct {
@@ -131,7 +129,7 @@ func (s *BotService) sendNodeDetailSection(chatID int64, msgID int, key string, 
 	msg := tr(s.cfg.Language, "node.detail",
 		node.Tag, strings.ToUpper(node.Protocol), strings.ToUpper(node.Network), strings.ToUpper(node.Security),
 		node.Port, node.SharePort(), len(node.Clients))
-	rows := [][]tgbotapi.InlineKeyboardButton{}
+	rows := [][]tgButton{}
 	encryptionState := tr(s.cfg.Language, "node.encryption.disabled")
 	if node.Decryption != "" && node.Decryption != "none" {
 		encryptionState = tr(s.cfg.Language, "node.encryption.enabled")
@@ -152,22 +150,22 @@ func (s *BotService) sendNodeDetailSection(chatID int64, msgID int, key string, 
 			target = tr(s.cfg.Language, "node.notconfigured")
 		}
 		msg += tr(s.cfg.Language, "node.realityadvanced", dest, target, encryptionState, mldsaState)
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.edit.sni"), "node_sni:"+key),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.edit.shortid"), "node_short_id:"+key),
+		rows = append(rows, newRow(
+			newButton(tr(s.cfg.Language, "node.edit.sni"), "node_sni:"+key),
+			newButton(tr(s.cfg.Language, "node.edit.shortid"), "node_short_id:"+key),
 		))
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.edit.dest"), "node_dest:"+key),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.edit.target"), "node_target:"+key),
+		rows = append(rows, newRow(
+			newButton(tr(s.cfg.Language, "node.edit.dest"), "node_dest:"+key),
+			newButton(tr(s.cfg.Language, "node.edit.target"), "node_target:"+key),
 		))
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.edit.privatekey"), "node_reality_key:"+key)))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "node.edit.privatekey"), "node_reality_key:"+key)))
 		mldsaLabel := tr(s.cfg.Language, "node.edit.mldsaenable")
 		mldsaAction := "set"
 		if node.MLDSA65Seed != "" {
 			mldsaLabel = tr(s.cfg.Language, "node.edit.mldsadisable")
 			mldsaAction = "clear"
 		}
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(mldsaLabel, "node_mldsa:"+key+":"+mldsaAction)))
+		rows = append(rows, newRow(newButton(mldsaLabel, "node_mldsa:"+key+":"+mldsaAction)))
 	}
 	if node.Network == "xhttp" {
 		mode := node.XHTTPMode
@@ -183,26 +181,26 @@ func (s *BotService) sendNodeDetailSection(chatID int64, msgID int, key string, 
 			padding = tr(s.cfg.Language, "node.default")
 		}
 		msg += tr(s.cfg.Language, "node.xhttpdetail", node.XHTTPPath, mode, host, padding)
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.edit.path"), "node_path:"+key),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.edit.host"), "node_xhttp_host:"+key),
+		rows = append(rows, newRow(
+			newButton(tr(s.cfg.Language, "node.edit.path"), "node_path:"+key),
+			newButton(tr(s.cfg.Language, "node.edit.host"), "node_xhttp_host:"+key),
 		))
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.edit.padding"), "node_xhttp_padding:"+key)))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "node.edit.padding"), "node_xhttp_padding:"+key)))
 		if node.Security == "tls" {
 			msg += tr(s.cfg.Language, "node.publicnote")
-			rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.edit.publicport"), "node_public_port:"+key)))
+			rows = append(rows, newRow(newButton(tr(s.cfg.Language, "node.edit.publicport"), "node_public_port:"+key)))
 		}
 		modes := []string{"auto", "packet-up", "stream-up", "stream-one"}
 		for i := 0; i < len(modes); i += 2 {
-			buttons := make([]tgbotapi.InlineKeyboardButton, 0, 2)
+			buttons := make([]tgButton, 0, 2)
 			for _, option := range modes[i : i+2] {
 				label := option
 				if option == mode {
 					label = "● " + option
 				}
-				buttons = append(buttons, tgbotapi.NewInlineKeyboardButtonData(label, "node_mode:"+key+":"+option))
+				buttons = append(buttons, newButton(label, "node_mode:"+key+":"+option))
 			}
-			rows = append(rows, tgbotapi.NewInlineKeyboardRow(buttons...))
+			rows = append(rows, newRow(buttons...))
 		}
 	}
 	if node.Security == "tls" {
@@ -219,9 +217,9 @@ func (s *BotService) sendNodeDetailSection(chatID int64, msgID int, key string, 
 			alpn = strings.Join(node.ALPN, ", ")
 		}
 		msg += tr(s.cfg.Language, "node.tlsdetail", cert, certKey, alpn)
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.edit.certpair"), "node_cert_pair:"+key),
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.edit.alpn"), "node_alpn:"+key),
+		rows = append(rows, newRow(
+			newButton(tr(s.cfg.Language, "node.edit.certpair"), "node_cert_pair:"+key),
+			newButton(tr(s.cfg.Language, "node.edit.alpn"), "node_alpn:"+key),
 		))
 	}
 	if node.Security == "reality" || (node.Network == "xhttp" && node.Security == "tls") {
@@ -231,24 +229,24 @@ func (s *BotService) sendNodeDetailSection(chatID int64, msgID int, key string, 
 			action = "disable"
 			label = tr(s.cfg.Language, "node.edit.encryptiondisable")
 		}
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(label+" ("+encryptionState+")", "node_decryption:"+key+":"+action),
+		rows = append(rows, newRow(
+			newButton(label+" ("+encryptionState+")", "node_decryption:"+key+":"+action),
 		))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.edit.listenport"), "node_listen_port:"+key),
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.edit.listenaddress"), "node_listen_address:"+key),
+	rows = append(rows, newRow(
+		newButton(tr(s.cfg.Language, "node.edit.listenport"), "node_listen_port:"+key),
+		newButton(tr(s.cfg.Language, "node.edit.listenaddress"), "node_listen_address:"+key),
 	))
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.delete.button"), "node_delete:"+key)))
-	var visible [][]tgbotapi.InlineKeyboardButton
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "node.delete.button"), "node_delete:"+key)))
+	var visible [][]tgButton
 	if s.cfg.AllowMutations {
 		for _, row := range rows {
-			var selected []tgbotapi.InlineKeyboardButton
+			var selected []tgButton
 			for _, button := range row {
-				if button.CallbackData == nil {
+				if button.Data == "" {
 					continue
 				}
-				action := strings.SplitN(*button.CallbackData, ":", 2)[0]
+				action := strings.SplitN(button.Data, ":", 2)[0]
 				basic := action == "node_sni" || action == "node_short_id" || action == "node_path" || action == "node_xhttp_host" || action == "node_mode" || action == "node_public_port" || action == "node_listen_port"
 				if basic != advanced {
 					selected = append(selected, button)
@@ -262,7 +260,7 @@ func (s *BotService) sendNodeDetailSection(chatID int64, msgID int, key string, 
 		if advanced {
 			label, action = tr(s.cfg.Language, "node.basic"), "node_basic:"
 		}
-		visible = append(visible, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(label, action+key)))
+		visible = append(visible, newRow(newButton(label, action+key)))
 	}
 	offset := 0
 	for i := range nodes {
@@ -271,10 +269,10 @@ func (s *BotService) sendNodeDetailSection(chatID int64, msgID int, key string, 
 			break
 		}
 	}
-	visible = append(visible, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "node.backlist"), fmt.Sprintf("nodes_page:%d", offset)),
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.home"), "menu_main")))
-	s.sendOrEdit(chatID, msgID, msg, tgbotapi.NewInlineKeyboardMarkup(visible...))
+	visible = append(visible, newRow(
+		newButton(tr(s.cfg.Language, "node.backlist"), fmt.Sprintf("nodes_page:%d", offset)),
+		newButton(tr(s.cfg.Language, "menu.home"), "menu_main")))
+	s.sendOrEdit(chatID, msgID, msg, newKeyboard(visible...))
 }
 
 func (s *BotService) offerNodeChange(chatID, adminID int64, msgID int, change NodeChange) {
@@ -324,9 +322,9 @@ func (s *BotService) offerNodeChange(chatID, adminID int64, msgID int, change No
 		value = tr(s.cfg.Language, "node.clear")
 	}
 	body := tr(s.cfg.Language, "node.changebody", mdCode(change.Tag), mdEsc(nodeChangeFieldLabel(s.cfg.Language, change.Kind)), mdCode(value), note)
-	keyboard := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.confirm"), "node_confirm:"+key),
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.cancel"), "node_cancel:"+key)))
+	keyboard := newKeyboard(newRow(
+		newButton(tr(s.cfg.Language, "common.confirm"), "node_confirm:"+key),
+		newButton(tr(s.cfg.Language, "common.cancel"), "node_cancel:"+key)))
 	s.sendOrEdit(chatID, msgID, body, keyboard)
 }
 
@@ -352,9 +350,9 @@ func (s *BotService) offerNodeSecretChange(chatID, adminID int64, msgID int, cha
 	pendingNodes.items[key] = pendingNodeChange{Change: change, ChatID: chatID, AdminID: adminID, Expires: time.Now().Add(3 * time.Minute)}
 	pendingNodes.Unlock()
 	body := tr(s.cfg.Language, "node.secretchange", mdCode(change.Tag), mdEsc(nodeChangeFieldLabel(s.cfg.Language, change.Kind)), mdEsc(tr(s.cfg.Language, noteKey)))
-	keyboard := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.confirm"), "node_confirm:"+key),
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.cancel"), "node_cancel:"+key)))
+	keyboard := newKeyboard(newRow(
+		newButton(tr(s.cfg.Language, "common.confirm"), "node_confirm:"+key),
+		newButton(tr(s.cfg.Language, "common.cancel"), "node_cancel:"+key)))
 	s.sendOrEdit(chatID, msgID, body, keyboard)
 }
 
@@ -380,13 +378,13 @@ func (s *BotService) offerNodeTLSPair(chatID, adminID int64, msgID int, change N
 	pendingNodes.items[key] = pendingNodeChange{Change: change, ChatID: chatID, AdminID: adminID, Expires: time.Now().Add(3 * time.Minute)}
 	pendingNodes.Unlock()
 	body := tr(s.cfg.Language, "node.certpairchange", mdCode(change.Tag), mdCode(change.Value), mdCode(change.Secret), mdEsc(tr(s.cfg.Language, noteKey)))
-	keyboard := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.confirm"), "node_confirm:"+key),
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.cancel"), "node_cancel:"+key)))
+	keyboard := newKeyboard(newRow(
+		newButton(tr(s.cfg.Language, "common.confirm"), "node_confirm:"+key),
+		newButton(tr(s.cfg.Language, "common.cancel"), "node_cancel:"+key)))
 	s.sendOrEdit(chatID, msgID, body, keyboard)
 }
 
-func (s *BotService) confirmNodeChange(cb *tgbotapi.CallbackQuery, confirm bool) {
+func (s *BotService) confirmNodeChange(cb *tgCallback, confirm bool) {
 	if cb.Message == nil || cb.Message.Chat == nil || cb.From == nil {
 		return
 	}
@@ -435,7 +433,7 @@ func (s *BotService) confirmNodeChange(cb *tgbotapi.CallbackQuery, confirm bool)
 	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "node.updatesuccess", result), s.backToMainMarkup())
 }
 
-func (s *BotService) handleNodeCallback(cb *tgbotapi.CallbackQuery) {
+func (s *BotService) handleNodeCallback(cb *tgCallback) {
 	if cb.Message == nil {
 		return
 	}
@@ -639,7 +637,7 @@ func (s *BotService) handleNodeCallback(cb *tgbotapi.CallbackQuery) {
 	}
 }
 
-func (s *BotService) handleNodePathInput(msg *tgbotapi.Message) bool {
+func (s *BotService) handleNodePathInput(msg *tgMessage) bool {
 	chatID := msg.Chat.ID
 	nodePathWizards.Lock()
 	state, ok := nodePathWizards.items[chatID]

@@ -6,8 +6,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func TestBalancerBotCreateEditAndStaleConfirmation(t *testing.T) {
@@ -15,14 +13,14 @@ func TestBalancerBotCreateEditAndStaleConfirmation(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.XrayConfigPath, cfg.XrayBinPath, cfg.AllowMutations = h.config, h.xray, true
 	s, capture := newCapturedRoutingBot(t, cfg)
-	chat, admin := &tgbotapi.Chat{ID: 9501, Type: "private"}, &tgbotapi.User{ID: 17}
-	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: "bl:add"}
+	chat, admin := &tgChat{ID: 9501, Type: "private"}, &tgUser{ID: 17}
+	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: "bl:add"}
 	s.handleBalancerCallback(cb)
-	if !s.handleBalancerInput(&tgbotapi.Message{From: admin, Chat: chat, Text: "pool"}) {
+	if !s.handleBalancerInput(&tgMessage{From: admin, Chat: chat, Text: "pool"}) {
 		t.Fatal("tag was not handled")
 	}
 	before, _ := os.ReadFile(h.config)
-	if !s.handleBalancerInput(&tgbotapi.Message{From: admin, Chat: chat, Text: "direct\nblock"}) {
+	if !s.handleBalancerInput(&tgMessage{From: admin, Chat: chat, Text: "direct\nblock"}) {
 		t.Fatal("selectors were not handled")
 	}
 	after, _ := os.ReadFile(h.config)
@@ -30,7 +28,7 @@ func TestBalancerBotCreateEditAndStaleConfirmation(t *testing.T) {
 		t.Fatal("creation changed configuration before confirmation")
 	}
 	cb.Data = "routing_confirm:" + pendingRoutingToken(t, chat.ID)
-	cb.From = &tgbotapi.User{ID: 18}
+	cb.From = &tgUser{ID: 18}
 	s.resolveRoutingChange(cb, true)
 	after, _ = os.ReadFile(h.config)
 	if !bytes.Equal(before, after) {
@@ -67,7 +65,7 @@ func TestBalancerBotCreateEditAndStaleConfirmation(t *testing.T) {
 
 	cb.Data = balancerCallback("selector", "pool", records[0].ETag)
 	s.handleBalancerCallback(cb)
-	if !s.handleBalancerInput(&tgbotapi.Message{From: admin, Chat: chat, Text: "block"}) {
+	if !s.handleBalancerInput(&tgMessage{From: admin, Chat: chat, Text: "block"}) {
 		t.Fatal("edit selector not handled")
 	}
 	token := pendingRoutingToken(t, chat.ID)
@@ -109,9 +107,9 @@ func TestBalancerLiveEnableRequiresConfirmation(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.XrayConfigPath, cfg.XrayBinPath, cfg.AllowMutations = h.config, h.xray, true
 	s, capture := newCapturedRoutingBot(t, cfg)
-	chat, admin := &tgbotapi.Chat{ID: 9503, Type: "private"}, &tgbotapi.User{ID: 17}
+	chat, admin := &tgChat{ID: 9503, Type: "private"}, &tgUser{ID: 17}
 	records, _ := balancerRecords(root)
-	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: balancerCallback("live", "pool", records[0].ETag)}
+	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: balancerCallback("live", "pool", records[0].ETag)}
 	s.handleBalancerCallback(cb)
 	body, markup := capture.card(t)
 	if !strings.Contains(body, "not enabled") || !strings.Contains(strings.Join(keyboardCallbacks(t, markup), " "), "bl:enable:") {
@@ -121,7 +119,7 @@ func TestBalancerLiveEnableRequiresConfirmation(t *testing.T) {
 	s.handleBalancerCallback(cb)
 	before, _ := os.ReadFile(h.config)
 	cb.Data = "routing_confirm:" + pendingRoutingToken(t, chat.ID)
-	cb.From = &tgbotapi.User{ID: 18}
+	cb.From = &tgUser{ID: 18}
 	s.resolveRoutingChange(cb, true)
 	after, _ := os.ReadFile(h.config)
 	if !bytes.Equal(before, after) {

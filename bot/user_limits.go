@@ -12,8 +12,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // Limits are local enforcement metadata: Xray itself has no quota or expiry
@@ -251,9 +249,7 @@ func setLimitCooldown(email string, now time.Time) {
 
 func (s *BotService) notifyAdmins(text string) {
 	for _, adminID := range s.cfg.AdminIDs {
-		msg := tgbotapi.NewMessage(adminID, text)
-		msg.ParseMode = "Markdown"
-		if _, err := s.bot.Send(msg); err != nil {
+		if _, err := s.tg.sendText(adminID, text, "Markdown", nil, false); err != nil {
 			log.Printf("[Limits] notify %d failed: %v", adminID, err)
 		}
 	}
@@ -449,7 +445,7 @@ func (s *BotService) beginUserLimitWizard(chatID, adminID int64, msgID int, emai
 	s.sendOrEdit(chatID, msgID, prompt, s.backToMainMarkup())
 }
 
-func (s *BotService) handleUserLimitInput(msg *tgbotapi.Message) bool {
+func (s *BotService) handleUserLimitInput(msg *tgMessage) bool {
 	chatID := msg.Chat.ID
 	userLimitWizards.Lock()
 	state, ok := userLimitWizards.items[chatID]

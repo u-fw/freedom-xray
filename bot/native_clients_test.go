@@ -13,8 +13,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func nativeClientsFixture(t *testing.T, protocol string) (map[string]any, map[string]any) {
@@ -214,13 +212,9 @@ func TestNativeClientBotExportIsExplicitAndScoped(t *testing.T) {
 		_, _ = w.Write([]byte(`{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"test","message_id":1}}`))
 	}))
 	t.Cleanup(server.Close)
-	bot, err := tgbotapi.NewBotAPIWithClient("test", server.URL+"/bot%s/%s", server.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := &BotService{cfg: cfg, bot: bot}
+	s := &BotService{cfg: cfg, tg: newTestTelegramClient(t, testBotToken, server.URL, server.Client())}
 	records, _ := nativeInboundRecords(root)
-	cb := &tgbotapi.CallbackQuery{From: &tgbotapi.User{ID: 17}, Message: &tgbotapi.Message{MessageID: 1, Chat: &tgbotapi.Chat{ID: 9562, Type: "private"}}, Data: nativeClientCallback("export", 2, 1, records[1].ETag)}
+	cb := &tgCallback{From: &tgUser{ID: 17}, Message: &tgMessage{MessageID: 1, Chat: &tgChat{ID: 9562, Type: "private"}}, Data: nativeClientCallback("export", 2, 1, records[1].ETag)}
 	s.handleNativeClientCallback(cb)
 	mu.Lock()
 	defer mu.Unlock()
@@ -237,7 +231,7 @@ func TestNativeClientBotFlowIsBoundAndRedacted(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.XrayConfigPath, cfg.XrayBinPath, cfg.AllowMutations = h.config, h.xray, true
 	s, capture := newCapturedRoutingBot(t, cfg)
-	chat, admin := &tgbotapi.Chat{ID: 9561, Type: "private"}, &tgbotapi.User{ID: 17}
+	chat, admin := &tgChat{ID: 9561, Type: "private"}, &tgUser{ID: 17}
 	records, _ := nativeInboundRecords(root)
 	etag := records[1].ETag
 	s.sendNativeInboundDetail(chat.ID, 1, 2, etag)
@@ -250,9 +244,9 @@ func TestNativeClientBotFlowIsBoundAndRedacted(t *testing.T) {
 	if strings.Contains(body, "original-test-secret") || !strings.Contains(strings.Join(keyboardCallbacks(t, markup), " "), "nc:rotate:") {
 		t.Fatal("client detail leaked credentials or lacks controls")
 	}
-	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: nativeClientCallback("email", 2, 1, etag)}
+	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: nativeClientCallback("email", 2, 1, etag)}
 	s.handleNativeClientCallback(cb)
-	if !s.handleNativeInboundInput(&tgbotapi.Message{From: admin, Chat: chat, Text: "renamed"}) {
+	if !s.handleNativeInboundInput(&tgMessage{From: admin, Chat: chat, Text: "renamed"}) {
 		t.Fatal("client email input was not handled")
 	}
 	body, _ = capture.card(t)
@@ -260,7 +254,7 @@ func TestNativeClientBotFlowIsBoundAndRedacted(t *testing.T) {
 		t.Fatal("confirmation omitted routing impact or leaked credentials")
 	}
 	cb.Data = "routing_confirm:" + pendingRoutingToken(t, chat.ID)
-	cb.From = &tgbotapi.User{ID: 18}
+	cb.From = &tgUser{ID: 18}
 	s.resolveRoutingChange(cb, true)
 	if h.restartCount(t) != 0 {
 		t.Fatal("another administrator confirmed the change")

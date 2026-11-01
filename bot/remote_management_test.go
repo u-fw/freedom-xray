@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func testRemoteBot(t *testing.T, cfg *BotConfig) *BotService {
@@ -20,11 +18,7 @@ func testRemoteBot(t *testing.T, cfg *BotConfig) *BotService {
 		fmt.Fprint(w, `{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"test","message_id":1}}`)
 	}))
 	t.Cleanup(server.Close)
-	bot, err := tgbotapi.NewBotAPIWithClient("test", server.URL+"/bot%s/%s", server.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &BotService{cfg: cfg, bot: bot}
+	return &BotService{cfg: cfg, tg: newTestTelegramClient(t, testBotToken, server.URL, server.Client())}
 }
 
 func TestRoutingWizardRequiresBoundConfirmation(t *testing.T) {
@@ -34,12 +28,12 @@ func TestRoutingWizardRequiresBoundConfirmation(t *testing.T) {
 	cfg.XrayBinPath = h.xray
 	cfg.AllowMutations = true
 	s := testRemoteBot(t, cfg)
-	chat := &tgbotapi.Chat{ID: 9421, Type: "private"}
-	admin := &tgbotapi.User{ID: 17}
-	other := &tgbotapi.User{ID: 18}
-	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: "routing_manage:add"}
+	chat := &tgChat{ID: 9421, Type: "private"}
+	admin := &tgUser{ID: 17}
+	other := &tgUser{ID: 18}
+	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: "routing_manage:add"}
 	s.beginRoutingWizard(cb)
-	msg := &tgbotapi.Message{From: admin, Chat: chat, Text: `{"ruleTag":"ads","domain":["domain:example.com"],"outboundTag":"block"}`}
+	msg := &tgMessage{From: admin, Chat: chat, Text: `{"ruleTag":"ads","domain":["domain:example.com"],"outboundTag":"block"}`}
 	before, _ := os.ReadFile(h.config)
 	if !s.handleRoutingInput(msg) {
 		t.Fatal("routing input was not captured")
@@ -89,9 +83,9 @@ func TestServiceControlsRespectPermissionAndOneTimeConfirmation(t *testing.T) {
 	cfg.XrayConfigPath = h.config
 	cfg.XrayBinPath = h.xray
 	s := testRemoteBot(t, cfg)
-	chat := &tgbotapi.Chat{ID: 9431, Type: "private"}
-	admin := &tgbotapi.User{ID: 17}
-	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: "service_ask:stop"}
+	chat := &tgChat{ID: 9431, Type: "private"}
+	admin := &tgUser{ID: 17}
+	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: "service_ask:stop"}
 	s.askServiceAction(cb, "stop")
 	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
 		t.Fatal("disabled remote service control ran")

@@ -8,8 +8,6 @@ import (
 	"net/url"
 	"sort"
 	"strings"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // A user only receives links for VLESS inbounds explicitly bound to that user.
@@ -96,33 +94,33 @@ func (s *BotService) sendUserExportMenu(chatID int64, msgID int, email string) {
 	}
 	entries := boundUserExportEntries(nodes, email)
 	key := userCallbackKey(email)
-	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(entries)+3)
+	rows := make([][]tgButton, 0, len(entries)+3)
 	for _, entry := range entries {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🔗 "+truncateLabel(entry.Node.Tag, 29)+" :"+fmt.Sprint(entry.Node.SharePort()),
+		rows = append(rows, newRow(
+			newButton("🔗 "+truncateLabel(entry.Node.Tag, 29)+" :"+fmt.Sprint(entry.Node.SharePort()),
 				"user_export_one:"+key+":"+userCallbackKey(entry.Node.Tag)),
 		))
 	}
 	if len(entries) > 0 {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "export.all"), "user_export_all:"+key),
+		rows = append(rows, newRow(
+			newButton(tr(s.cfg.Language, "export.all"), "user_export_all:"+key),
 		))
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "export.qrs"), "user_export_qrs:"+key),
+		rows = append(rows, newRow(
+			newButton(tr(s.cfg.Language, "export.qrs"), "user_export_qrs:"+key),
 		))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "export.backuser"), "manage_user:"+key),
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "export.userlist"), "menu_users"),
+	rows = append(rows, newRow(
+		newButton(tr(s.cfg.Language, "export.backuser"), "manage_user:"+key),
+		newButton(tr(s.cfg.Language, "export.userlist"), "menu_users"),
 	))
 	content := tr(s.cfg.Language, "export.menu.title", email, len(entries))
 	if len(entries) == 0 {
 		content = tr(s.cfg.Language, "export.menu.empty", email)
 	}
-	s.sendOrEdit(chatID, msgID, content, tgbotapi.NewInlineKeyboardMarkup(rows...))
+	s.sendOrEdit(chatID, msgID, content, newKeyboard(rows...))
 }
 
-func (s *BotService) handleUserExportCallback(cb *tgbotapi.CallbackQuery, mode string) {
+func (s *BotService) handleUserExportCallback(cb *tgCallback, mode string) {
 	if cb.Message == nil {
 		return
 	}
@@ -171,20 +169,17 @@ func (s *BotService) sendUserLink(chatID int64, item userExportEntry, email, uri
 	}
 	payload := label + uri
 	if len(payload) > 3500 {
-		doc := tgbotapi.NewDocument(chatID, tgbotapi.FileBytes{Name: fmt.Sprintf("freedom-node-%s-%d.txt", userCallbackKey(item.Node.Tag)[:8], item.Node.SharePort()), Bytes: []byte(uri + "\n")})
-		doc.Caption = tr(s.cfg.Language, "export.txtcaption", item.Node.Tag, item.Node.SharePort())
-		if _, err := s.bot.Send(doc); err != nil {
+		name := fmt.Sprintf("freedom-node-%s-%d.txt", userCallbackKey(item.Node.Tag)[:8], item.Node.SharePort())
+		if err := s.tg.sendDocument(chatID, name, []byte(uri+"\n"), tr(s.cfg.Language, "export.txtcaption", item.Node.Tag, item.Node.SharePort())); err != nil {
 			log.Printf("[Bot] VLESS TXT send failed for node %s: %v", item.Node.Tag, err)
 			s.sendAlert(chatID, tr(s.cfg.Language, "export.txtfail", item.Node.Tag, item.Node.Port, err.Error()))
 			return false
 		}
 		return true
 	}
-	msg := tgbotapi.NewMessage(chatID, payload)
-	msg.DisableWebPagePreview = true
 	// Plain text is essential: post-quantum query parameters often contain
 	// Markdown metacharacters. Never trim, reformat or Markdown-escape the URI.
-	if _, err := s.bot.Send(msg); err != nil {
+	if _, err := s.tg.sendText(chatID, payload, "", nil, true); err != nil {
 		log.Printf("[Bot] VLESS text send failed for node %s: %v", item.Node.Tag, err)
 		s.sendAlert(chatID, tr(s.cfg.Language, "export.linkfail", item.Node.Tag, item.Node.Port, err.Error()))
 		return false
@@ -199,9 +194,8 @@ func (s *BotService) sendUserQR(chatID int64, item userExportEntry, email, uri s
 		s.sendAlert(chatID, tr(s.cfg.Language, "export.qrfail", item.Node.Tag, item.Node.Port, len(uri), err.Error()))
 		return false
 	}
-	photo := tgbotapi.NewPhoto(chatID, tgbotapi.FileBytes{Name: fmt.Sprintf("freedom-qr-%s-%d.png", userCallbackKey(item.Node.Tag)[:8], item.Node.SharePort()), Bytes: png})
-	photo.Caption = tr(s.cfg.Language, "export.qrcaption", item.Node.Tag, item.Node.SharePort(), email)
-	if _, err = s.bot.Send(photo); err != nil {
+	name := fmt.Sprintf("freedom-qr-%s-%d.png", userCallbackKey(item.Node.Tag)[:8], item.Node.SharePort())
+	if err = s.tg.sendPhoto(chatID, name, png, tr(s.cfg.Language, "export.qrcaption", item.Node.Tag, item.Node.SharePort(), email)); err != nil {
 		log.Printf("[Bot] QR send failed for node %s: %v", item.Node.Tag, err)
 		s.sendAlert(chatID, tr(s.cfg.Language, "export.qrsendfail", item.Node.Tag, item.Node.Port, err.Error()))
 		return false
@@ -255,12 +249,8 @@ func (s *BotService) exportAllUserNodes(chatID int64, email string, items []user
 		s.sendAlert(chatID, tr(s.cfg.Language, "export.noexportable", strings.Join(localized, "; ")))
 		return
 	}
-	doc := tgbotapi.NewDocument(chatID, tgbotapi.FileBytes{
-		Name:  "freedom-vless-" + userCallbackKey(email) + ".txt",
-		Bytes: []byte(data),
-	})
-	doc.Caption = tr(s.cfg.Language, "export.batchcaption", email, len(items)-len(issues), len(items))
-	if _, err := s.bot.Send(doc); err != nil {
+	caption := tr(s.cfg.Language, "export.batchcaption", email, len(items)-len(issues), len(items))
+	if err := s.tg.sendDocument(chatID, "freedom-vless-"+userCallbackKey(email)+".txt", []byte(data), caption); err != nil {
 		log.Printf("[Bot] batch VLESS TXT failed for user %s: %v", email, err)
 		s.sendAlert(chatID, tr(s.cfg.Language, "export.batchfail", err.Error()))
 		return

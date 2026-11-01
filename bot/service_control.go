@@ -10,8 +10,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // All service controls share the configuration lock with config transactions.
@@ -57,7 +55,7 @@ var pendingServiceActions = struct {
 	items map[string]pendingServiceAction
 }{items: map[string]pendingServiceAction{}}
 
-func (s *BotService) askServiceAction(cb *tgbotapi.CallbackQuery, action string) {
+func (s *BotService) askServiceAction(cb *tgCallback, action string) {
 	if cb.Message == nil || cb.From == nil || (action != "start" && action != "stop" && action != "collector") {
 		return
 	}
@@ -80,13 +78,13 @@ func (s *BotService) askServiceAction(cb *tgbotapi.CallbackQuery, action string)
 	}
 	pendingServiceActions.items[key] = pendingServiceAction{chatID: chatID, adminID: cb.From.ID, action: action, expires: time.Now().Add(3 * time.Minute)}
 	pendingServiceActions.Unlock()
-	markup := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.confirm"), "service_confirm:"+key),
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.cancel"), "menu_status")))
+	markup := newKeyboard(newRow(
+		newButton(tr(s.cfg.Language, "common.confirm"), "service_confirm:"+key),
+		newButton(tr(s.cfg.Language, "common.cancel"), "menu_status")))
 	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "service.ask."+action), markup)
 }
 
-func (s *BotService) resolveServiceAction(cb *tgbotapi.CallbackQuery) {
+func (s *BotService) resolveServiceAction(cb *tgCallback) {
 	if cb.Message == nil || cb.From == nil {
 		return
 	}

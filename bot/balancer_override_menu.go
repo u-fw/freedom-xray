@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // Short action names keep the tag hash, state reference and target hash within
@@ -43,31 +41,31 @@ func (s *BotService) sendBalancerOverridePicker(chatID int64, msgID int, record 
 		current = tr(s.cfg.Language, "balancer.override.auto")
 	}
 	body := tr(s.cfg.Language, "balancer.override.picker", mdEsc(record.Tag), mdEsc(current))
-	var rows [][]tgbotapi.InlineKeyboardButton
+	var rows [][]tgButton
 	for _, target := range targets[offset:end] {
 		if target == status.Override {
 			continue
 		}
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(truncateLabel(target, 50), balancerOverrideCallback("op", record.Tag, status.StateETag, userCallbackKey(target)))))
+		rows = append(rows, newRow(newButton(truncateLabel(target, 50), balancerOverrideCallback("op", record.Tag, status.StateETag, userCallbackKey(target)))))
 	}
-	var pages []tgbotapi.InlineKeyboardButton
+	var pages []tgButton
 	if offset > 0 {
-		pages = append(pages, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.prev"), balancerOverrideCallback("ol", record.Tag, status.StateETag, strconv.Itoa(offset-routingPageSize))))
+		pages = append(pages, newButton(tr(s.cfg.Language, "common.prev"), balancerOverrideCallback("ol", record.Tag, status.StateETag, strconv.Itoa(offset-routingPageSize))))
 	}
 	if end < len(targets) {
-		pages = append(pages, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.next"), balancerOverrideCallback("ol", record.Tag, status.StateETag, strconv.Itoa(end))))
+		pages = append(pages, newButton(tr(s.cfg.Language, "common.next"), balancerOverrideCallback("ol", record.Tag, status.StateETag, strconv.Itoa(end))))
 	}
 	if len(pages) > 0 {
 		rows = append(rows, pages)
 	}
 	if status.Override != "" {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "balancer.override.restore"), balancerOverrideCallback("op", record.Tag, status.StateETag, "auto"))))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "balancer.override.restore"), balancerOverrideCallback("op", record.Tag, status.StateETag, "auto"))))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.back"), balancerCallback("live", record.Tag, record.ETag))))
-	s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "common.back"), balancerCallback("live", record.Tag, record.ETag))))
+	s.sendOrEdit(chatID, msgID, body, newKeyboard(rows...))
 }
 
-func (s *BotService) handleBalancerOverrideCallback(cb *tgbotapi.CallbackQuery) {
+func (s *BotService) handleBalancerOverrideCallback(cb *tgCallback) {
 	if cb.Message == nil || cb.Message.Chat == nil || cb.From == nil {
 		return
 	}

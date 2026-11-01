@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func nativeNetworkExportFixture(t *testing.T) map[string]any {
@@ -85,16 +83,16 @@ func TestNativeNetworkExportsAreRedactedUntilConfirmedAndRejectStaleObjects(t *t
 			capture.mu.Lock()
 			markup, text, sent := capture.markup, capture.text, len(capture.documents)
 			capture.mu.Unlock()
-			var keyboard tgbotapi.InlineKeyboardMarkup
-			if err := json.Unmarshal([]byte(markup), &keyboard); err != nil {
+			keyboard, err := decodeWireKeyboard(markup)
+			if err != nil {
 				t.Fatal(err)
 			}
 			export := nativeConfigExportCallback(kind, index, etag)
 			if !strings.Contains(strings.Join(keyboardCallbacks(t, keyboard), " "), export) || strings.Contains(text, "original-export-secret") || sent != 0 {
 				t.Fatal("detail omitted the export button or exposed a secret")
 			}
-			chat, admin := &tgbotapi.Chat{ID: 9580, Type: "private"}, &tgbotapi.User{ID: 17}
-			cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: export}
+			chat, admin := &tgChat{ID: 9580, Type: "private"}, &tgUser{ID: 17}
+			cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: export}
 			s.handleCallback(cb)
 			confirm := nativeExportCallback(t, capture)
 			switch kind {
@@ -179,11 +177,11 @@ func TestNativeConfigurationExportIsBoundToChatAndExpiry(t *testing.T) {
 	cfg.XrayConfigPath, cfg.AllowSensitiveBackup = h.config, true
 	s, capture := newNativeDocumentBot(t, cfg, nil)
 	index, etag := networkExportReference(t, root, "dns")
-	cb := &tgbotapi.CallbackQuery{From: &tgbotapi.User{ID: 17}, Message: &tgbotapi.Message{MessageID: 1, Chat: &tgbotapi.Chat{ID: 9581, Type: "private"}}, Data: nativeConfigExportCallback("dns", index, etag)}
+	cb := &tgCallback{From: &tgUser{ID: 17}, Message: &tgMessage{MessageID: 1, Chat: &tgChat{ID: 9581, Type: "private"}}, Data: nativeConfigExportCallback("dns", index, etag)}
 	s.handleCallback(cb)
 	confirm := nativeExportCallback(t, capture)
 	cb.Data = confirm
-	cb.Message.Chat = &tgbotapi.Chat{ID: 9582, Type: "private"}
+	cb.Message.Chat = &tgChat{ID: 9582, Type: "private"}
 	s.handleCallback(cb)
 	key := strings.TrimPrefix(confirm, "ni:exconfirm:")
 	pendingNativeConfigExports.Lock()
@@ -196,7 +194,7 @@ func TestNativeConfigurationExportIsBoundToChatAndExpiry(t *testing.T) {
 	if !exists {
 		t.Fatal("another chat consumed the sensitive export confirmation")
 	}
-	cb.Message.Chat = &tgbotapi.Chat{ID: 9581, Type: "private"}
+	cb.Message.Chat = &tgChat{ID: 9581, Type: "private"}
 	s.handleCallback(cb)
 	capture.mu.Lock()
 	sent := len(capture.documents)

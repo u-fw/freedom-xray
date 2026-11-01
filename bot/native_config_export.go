@@ -10,8 +10,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type nativeConfigExport struct {
@@ -134,7 +132,7 @@ func (s *BotService) returnNativeConfigExport(chatID int64, msgID int, pending n
 	}
 }
 
-func (s *BotService) handleNativeConfigExportCallback(cb *tgbotapi.CallbackQuery) {
+func (s *BotService) handleNativeConfigExportCallback(cb *tgCallback) {
 	if cb.Message == nil || cb.Message.Chat == nil || cb.From == nil {
 		return
 	}
@@ -150,7 +148,7 @@ func (s *BotService) handleNativeConfigExportCallback(cb *tgbotapi.CallbackQuery
 	s.askNativeConfigExport(cb, parts[1], index, parts[3])
 }
 
-func (s *BotService) askNativeConfigExport(cb *tgbotapi.CallbackQuery, kind string, index int, etag string) {
+func (s *BotService) askNativeConfigExport(cb *tgCallback, kind string, index int, etag string) {
 	chatID, msgID := cb.Message.Chat.ID, cb.Message.MessageID
 	if !s.cfg.AllowSensitiveBackup {
 		s.sendAlert(chatID, tr(s.cfg.Language, "backup.disabled"))
@@ -178,9 +176,9 @@ func (s *BotService) askNativeConfigExport(cb *tgbotapi.CallbackQuery, kind stri
 	}
 	pendingNativeConfigExports.items[key] = nativeConfigExport{ChatID: chatID, AdminID: cb.From.ID, Kind: kind, Index: index, ETag: etag, Expires: time.Now().Add(3 * time.Minute)}
 	pendingNativeConfigExports.Unlock()
-	markup := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.confirm"), "ni:exconfirm:"+key),
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.cancel"), "ni:excancel:"+key)))
+	markup := newKeyboard(newRow(
+		newButton(tr(s.cfg.Language, "common.confirm"), "ni:exconfirm:"+key),
+		newButton(tr(s.cfg.Language, "common.cancel"), "ni:excancel:"+key)))
 	var label string
 	if kind == "dns" {
 		label = tr(s.cfg.Language, "config.export.kind.dns")
@@ -194,7 +192,7 @@ func (s *BotService) askNativeConfigExport(cb *tgbotapi.CallbackQuery, kind stri
 	s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "config.export.confirm", mdEsc(label)), markup)
 }
 
-func (s *BotService) resolveNativeConfigExport(cb *tgbotapi.CallbackQuery, key string, confirm bool) {
+func (s *BotService) resolveNativeConfigExport(cb *tgCallback, key string, confirm bool) {
 	chatID, msgID := cb.Message.Chat.ID, cb.Message.MessageID
 	pendingNativeConfigExports.Lock()
 	pending, ok := pendingNativeConfigExports.items[key]
@@ -232,9 +230,7 @@ func (s *BotService) resolveNativeConfigExport(cb *tgbotapi.CallbackQuery, key s
 		s.sendAlert(chatID, tr(s.cfg.Language, "config.export.failed"))
 		return
 	}
-	doc := tgbotapi.NewDocument(chatID, tgbotapi.FileBytes{Name: "xray-" + pending.Kind + ".json", Bytes: append(data, '\n')})
-	doc.Caption = tr(s.cfg.Language, "config.export.caption")
-	if _, err := s.bot.Send(doc); err != nil {
+	if err := s.tg.sendDocument(chatID, "xray-"+pending.Kind+".json", append(data, '\n'), tr(s.cfg.Language, "config.export.caption")); err != nil {
 		s.sendAlert(chatID, tr(s.cfg.Language, "config.export.failed"))
 		return
 	}

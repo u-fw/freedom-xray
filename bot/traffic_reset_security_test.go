@@ -11,8 +11,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func TestAllTrafficResetRequiresMutationPermission(t *testing.T) {
@@ -21,28 +19,24 @@ func TestAllTrafficResetRequiresMutationPermission(t *testing.T) {
 		fmt.Fprint(w, `{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"test","message_id":1}}`)
 	}))
 	defer server.Close()
-	bot, err := tgbotapi.NewBotAPIWithClient("test", server.URL+"/bot%s/%s", server.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
 	dir := t.TempDir()
 	config := filepath.Join(dir, "config.json")
 	marker := filepath.Join(dir, "called")
 	bin := filepath.Join(dir, "xray")
 	script := "#!/bin/sh\nprintf called > '" + marker + "'\nprintf '%s\\n' '{\"stat\":[]}'\n"
-	if err = os.WriteFile(bin, []byte(script), 0700); err != nil {
+	if err := os.WriteFile(bin, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err = saveTrafficStore(config, trafficStore{Users: map[string]trafficCounter{"alice": {TotalUp: 123}}}); err != nil {
+	if err := saveTrafficStore(config, trafficStore{Users: map[string]trafficCounter{"alice": {TotalUp: 123}}}); err != nil {
 		t.Fatal(err)
 	}
 	cfg := DefaultConfig()
 	cfg.XrayConfigPath = config
 	cfg.XrayBinPath = bin
-	service := &BotService{cfg: cfg, bot: bot}
+	service := &BotService{cfg: cfg, tg: newTestTelegramClient(t, testBotToken, server.URL, server.Client())}
 	service.askTrafficReset(123, 0)
 	service.doTrafficReset(123, 0) // Covers stale confirmation buttons too.
-	if _, err = os.Stat(marker); !os.IsNotExist(err) {
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatal("Xray reset ran with mutations disabled")
 	}
 	state, err := loadTrafficStore(config)

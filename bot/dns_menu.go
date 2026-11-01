@@ -7,8 +7,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type dnsWizard struct {
@@ -53,10 +51,10 @@ func getDNSWizard(chatID, adminID int64) (dnsWizard, bool) {
 	return state, ok && state.AdminID == adminID
 }
 
-func dnsBackMarkup(lang string) tgbotapi.InlineKeyboardMarkup {
-	return tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(lang, "dns.back"), "dn:page:0"),
-		tgbotapi.NewInlineKeyboardButtonData(tr(lang, "routing.guide.back"), "rt:page:0")))
+func dnsBackMarkup(lang string) tgKeyboard {
+	return newKeyboard(newRow(
+		newButton(tr(lang, "dns.back"), "dn:page:0"),
+		newButton(tr(lang, "routing.guide.back"), "rt:page:0")))
 }
 
 func dnsCallback(action string, index int, etag string) string {
@@ -120,41 +118,41 @@ func (s *BotService) sendDNSPage(chatID int64, msgID, offset int, notice string)
 	if notice != "" {
 		body += "\n" + mdEsc(notice) + "\n"
 	}
-	var rows [][]tgbotapi.InlineKeyboardButton
+	var rows [][]tgButton
 	for _, server := range view.Servers[offset:end] {
 		label := fmt.Sprintf("%d. %s", server.Index, server.Address)
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(truncateLabel(label, 64), dnsCallback("v", server.Index, view.ETag))))
+		rows = append(rows, newRow(newButton(truncateLabel(label, 64), dnsCallback("v", server.Index, view.ETag))))
 	}
-	var pages []tgbotapi.InlineKeyboardButton
+	var pages []tgButton
 	if offset > 0 {
-		pages = append(pages, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.prev"), fmt.Sprintf("dn:page:%d", offset-routingPageSize)))
+		pages = append(pages, newButton(tr(s.cfg.Language, "common.prev"), fmt.Sprintf("dn:page:%d", offset-routingPageSize)))
 	}
 	if end < len(view.Servers) {
-		pages = append(pages, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.next"), fmt.Sprintf("dn:page:%d", end)))
+		pages = append(pages, newButton(tr(s.cfg.Language, "common.next"), fmt.Sprintf("dn:page:%d", end)))
 	}
 	if len(pages) > 0 {
 		rows = append(rows, pages)
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "dns.hosts.button"), "dh:page:0")))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "dns.hosts.button"), "dh:page:0")))
 	if s.cfg.AllowMutations {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "dns.add"), "dn:add:"+view.ETag)))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "dns.add"), "dn:add:"+view.ETag)))
 		if view.Configured && !view.ScriptConfigured {
-			rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "dns.strategy"), "dn:strategy:"+view.ETag)))
+			rows = append(rows, newRow(newButton(tr(s.cfg.Language, "dns.strategy"), "dn:strategy:"+view.ETag)))
 			for _, pair := range [][]string{{"cache", "fallback"}, {"match"}, {"parallel", "hosts"}} {
-				var buttons []tgbotapi.InlineKeyboardButton
+				var buttons []tgButton
 				for _, code := range pair {
-					buttons = append(buttons, tgbotapi.NewInlineKeyboardButtonData(dnsSwitchLabel(s.cfg.Language, code, view.Flags[dnsFlagCodes[code]]), "dn:f:"+code+":"+view.ETag))
+					buttons = append(buttons, newButton(dnsSwitchLabel(s.cfg.Language, code, view.Flags[dnsFlagCodes[code]]), "dn:f:"+code+":"+view.ETag))
 				}
 				rows = append(rows, buttons)
 			}
 		}
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "dns.advanced"), "routing_manage:dns_put")))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "dns.advanced"), "routing_manage:dns_put")))
 	}
 	if view.Configured {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "config.export.button"), nativeConfigExportCallback("dns", 0, view.ETag))))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "config.export.button"), nativeConfigExportCallback("dns", 0, view.ETag))))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.refresh"), fmt.Sprintf("dn:page:%d", offset)), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "routing.guide.back"), "rt:page:0")))
-	s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "common.refresh"), fmt.Sprintf("dn:page:%d", offset)), newButton(tr(s.cfg.Language, "routing.guide.back"), "rt:page:0")))
+	s.sendOrEdit(chatID, msgID, body, newKeyboard(rows...))
 }
 
 func (s *BotService) sendDNSServerDetail(chatID int64, msgID, index int, etag string) {
@@ -176,22 +174,22 @@ func (s *BotService) sendDNSServerDetail(chatID int64, msgID, index int, etag st
 	if view.ScriptConfigured {
 		body += tr(s.cfg.Language, "dns.script")
 	}
-	var rows [][]tgbotapi.InlineKeyboardButton
+	var rows [][]tgButton
 	if s.cfg.AllowMutations {
-		buttons := []tgbotapi.InlineKeyboardButton{tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "dns.edit"), dnsCallback("edit", index, etag))}
+		buttons := []tgButton{newButton(tr(s.cfg.Language, "dns.edit"), dnsCallback("edit", index, etag))}
 		if !view.ScriptConfigured {
-			buttons = append(buttons, tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "dns.delete"), dnsCallback("delete", index, etag)))
+			buttons = append(buttons, newButton(tr(s.cfg.Language, "dns.delete"), dnsCallback("delete", index, etag)))
 		}
 		rows = append(rows, buttons)
 		if !view.ScriptConfigured {
-			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "dns.up"), dnsCallback("up", index, etag)),
-				tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "dns.down"), dnsCallback("down", index, etag))))
+			rows = append(rows, newRow(
+				newButton(tr(s.cfg.Language, "dns.up"), dnsCallback("up", index, etag)),
+				newButton(tr(s.cfg.Language, "dns.down"), dnsCallback("down", index, etag))))
 		}
 	}
 	offset := ((index - 1) / routingPageSize) * routingPageSize
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "dns.back"), fmt.Sprintf("dn:page:%d", offset)), tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "menu.home"), "menu_main")))
-	s.sendOrEdit(chatID, msgID, body, tgbotapi.NewInlineKeyboardMarkup(rows...))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "dns.back"), fmt.Sprintf("dn:page:%d", offset)), newButton(tr(s.cfg.Language, "menu.home"), "menu_main")))
+	s.sendOrEdit(chatID, msgID, body, newKeyboard(rows...))
 }
 
 func (s *BotService) offerDNSChange(chatID, adminID int64, msgID int, change dnsChange) {
@@ -251,7 +249,7 @@ func (s *BotService) offerDNSChange(chatID, adminID int64, msgID int, change dns
 	s.queueGuidedRoutingChange(chatID, adminID, msgID, pendingRoutingChange{DNS: &change}, body)
 }
 
-func (s *BotService) handleDNSInput(msg *tgbotapi.Message) bool {
+func (s *BotService) handleDNSInput(msg *tgMessage) bool {
 	if msg.Chat == nil || msg.From == nil {
 		return false
 	}
@@ -294,7 +292,7 @@ func (s *BotService) handleDNSInput(msg *tgbotapi.Message) bool {
 	return true
 }
 
-func (s *BotService) handleDNSCallback(cb *tgbotapi.CallbackQuery) {
+func (s *BotService) handleDNSCallback(cb *tgCallback) {
 	if cb.Message == nil || cb.Message.Chat == nil || cb.From == nil {
 		return
 	}
@@ -381,20 +379,20 @@ func (s *BotService) handleDNSCallback(cb *tgbotapi.CallbackQuery) {
 		if len(parts) != 3 {
 			return
 		}
-		var rows [][]tgbotapi.InlineKeyboardButton
+		var rows [][]tgButton
 		for _, pair := range [][]string{{"UseIP", "UseIPv4"}, {"UseIPv6", "UseSystem"}, {"default"}} {
-			var buttons []tgbotapi.InlineKeyboardButton
+			var buttons []tgButton
 			for _, value := range pair {
 				label := value
 				if value == "default" {
 					label = tr(s.cfg.Language, "node.default")
 				}
-				buttons = append(buttons, tgbotapi.NewInlineKeyboardButtonData(label, "dn:s:"+value+":"+etag))
+				buttons = append(buttons, newButton(label, "dn:s:"+value+":"+etag))
 			}
 			rows = append(rows, buttons)
 		}
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "dns.back"), "dn:page:0")))
-		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "dns.strategy_prompt"), tgbotapi.NewInlineKeyboardMarkup(rows...))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "dns.back"), "dn:page:0")))
+		s.sendOrEdit(chatID, msgID, tr(s.cfg.Language, "dns.strategy_prompt"), newKeyboard(rows...))
 	case "s":
 		if len(parts) != 4 {
 			return

@@ -7,8 +7,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type routingWizard struct {
@@ -82,7 +80,7 @@ func networkChangeETag(root map[string]any, kind string) (string, error) {
 	return outboundListETag(root)
 }
 
-func (s *BotService) beginRoutingWizard(cb *tgbotapi.CallbackQuery) {
+func (s *BotService) beginRoutingWizard(cb *tgCallback) {
 	if cb.Message == nil {
 		return
 	}
@@ -124,7 +122,7 @@ func (s *BotService) beginRoutingWizard(cb *tgbotapi.CallbackQuery) {
 	s.sendOrEdit(chatID, msgID, prompt, s.backToMainMarkup())
 }
 
-func (s *BotService) handleRoutingInput(msg *tgbotapi.Message) bool {
+func (s *BotService) handleRoutingInput(msg *tgMessage) bool {
 	chatID := msg.Chat.ID
 	routingWizards.Lock()
 	state, ok := routingWizards.items[chatID]
@@ -169,7 +167,7 @@ func (s *BotService) handleRoutingInput(msg *tgbotapi.Message) bool {
 	input := []byte(msg.Text)
 	if msg.Document != nil && jsonInput {
 		var err error
-		input, err = readTelegramJSONDocument(s.bot, msg.Document)
+		input, err = readTelegramJSONDocument(s.tg, msg.Document)
 		if err != nil {
 			s.sendAlert(chatID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
 			return true
@@ -261,9 +259,9 @@ func (s *BotService) handleRoutingInput(msg *tgbotapi.Message) bool {
 	}
 	pendingRoutingChanges.items[key] = pendingRoutingChange{ChatID: chatID, AdminID: msg.From.ID, Change: change, Network: network, Host: host, ExpectedLegacyRouting: expectedRouting, ExpectedNetwork: expectedNetwork, Expires: time.Now().Add(3 * time.Minute)}
 	pendingRoutingChanges.Unlock()
-	markup := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.confirm"), "routing_confirm:"+key),
-		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.cancel"), "routing_cancel:"+key)))
+	markup := newKeyboard(newRow(
+		newButton(tr(s.cfg.Language, "common.confirm"), "routing_confirm:"+key),
+		newButton(tr(s.cfg.Language, "common.cancel"), "routing_cancel:"+key)))
 	label, kind := change.RuleTag, change.Kind
 	if network != nil {
 		label, kind = network.Tag, network.Kind
@@ -283,7 +281,7 @@ func (s *BotService) handleRoutingInput(msg *tgbotapi.Message) bool {
 	return true
 }
 
-func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bool) {
+func (s *BotService) resolveRoutingChange(cb *tgCallback, confirm bool) {
 	if cb.Message == nil {
 		return
 	}

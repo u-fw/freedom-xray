@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func TestNodeDeleteConfirmationIsBoundFreshAndSingleUse(t *testing.T) {
@@ -17,9 +15,9 @@ func TestNodeDeleteConfirmationIsBoundFreshAndSingleUse(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.XrayConfigPath, cfg.XrayBinPath, cfg.AllowMutations = h.config, h.xray, true
 	s, capture := newCapturedRoutingBot(t, cfg)
-	chat := &tgbotapi.Chat{ID: 9541, Type: "private"}
-	admin := &tgbotapi.User{ID: 17}
-	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}}
+	chat := &tgChat{ID: 9541, Type: "private"}
+	admin := &tgUser{ID: 17}
+	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}}
 	show := func() string {
 		t.Helper()
 		s.showNodeDeleteConfirm(chat.ID, admin.ID, 1, userCallbackKey("raw"))
@@ -36,7 +34,7 @@ func TestNodeDeleteConfirmationIsBoundFreshAndSingleUse(t *testing.T) {
 		return ""
 	}
 	first := show()
-	cb.Data, cb.From = first, &tgbotapi.User{ID: 18}
+	cb.Data, cb.From = first, &tgUser{ID: 18}
 	before, _ := os.ReadFile(h.config)
 	s.confirmNodeDelete(cb, true)
 	if !strings.HasSuffix(capture.lastMethod(), "/sendMessage") {
@@ -160,8 +158,8 @@ func TestConfirmationOwnerCannotBeDisplaced(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.AllowMutations = false
 	s, capture := newCapturedRoutingBot(t, cfg)
-	chat := &tgbotapi.Chat{ID: 9542, Type: "private"}
-	cb := &tgbotapi.CallbackQuery{From: &tgbotapi.User{ID: 18}, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}}
+	chat := &tgChat{ID: 9542, Type: "private"}
+	cb := &tgCallback{From: &tgUser{ID: 18}, Message: &tgMessage{MessageID: 1, Chat: chat}}
 	expires := time.Now().Add(time.Minute)
 	tests := []struct {
 		name    string
@@ -250,8 +248,8 @@ func TestConfirmationOwnerCannotBeDisplaced(t *testing.T) {
 func TestWizardOwnerCannotBeDisplaced(t *testing.T) {
 	cfg := DefaultConfig()
 	s, capture := newCapturedRoutingBot(t, cfg)
-	chat := &tgbotapi.Chat{ID: 9543, Type: "private"}
-	msg := &tgbotapi.Message{Chat: chat, From: &tgbotapi.User{ID: 18}, Text: "/cancel", Entities: []tgbotapi.MessageEntity{{Type: "bot_command", Offset: 0, Length: 7}}}
+	chat := &tgChat{ID: 9543, Type: "private"}
+	msg := &tgMessage{Chat: chat, From: &tgUser{ID: 18}, Text: "/cancel", Entities: []tgEntity{{Type: "bot_command", Offset: 0, Length: 7}}}
 	expires := time.Now().Add(time.Minute)
 	tests := []struct {
 		name    string
@@ -316,7 +314,7 @@ func TestWizardOwnerCannotBeDisplaced(t *testing.T) {
 	nodeCreateStates.Lock()
 	nodeCreateStates.items[chat.ID] = nodeCreateState{AdminID: 17, Expires: expires, Step: "cert_source"}
 	nodeCreateStates.Unlock()
-	cb := &tgbotapi.CallbackQuery{From: &tgbotapi.User{ID: 18}, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: "node_cert_source:existing"}
+	cb := &tgCallback{From: &tgUser{ID: 18}, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: "node_cert_source:existing"}
 	s.handleNodeCertSource(cb)
 	nodeCreateStates.Lock()
 	state, ok := nodeCreateStates.items[chat.ID]
@@ -332,8 +330,8 @@ func TestUserTrafficResetConfirmationCannotBeReplayed(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.XrayConfigPath, cfg.XrayBinPath, cfg.AllowMutations = h.config, h.xray, true
 	s, capture := newCapturedRoutingBot(t, cfg)
-	chat, admin := &tgbotapi.Chat{ID: 9544, Type: "private"}, &tgbotapi.User{ID: 17}
-	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: "manage_traffic:" + userCallbackKey("alice")}
+	chat, admin := &tgChat{ID: 9544, Type: "private"}, &tgUser{ID: 17}
+	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: "manage_traffic:" + userCallbackKey("alice")}
 	if err := saveTrafficStore(h.config, trafficStore{Users: map[string]trafficCounter{"alice": {TotalDown: 100}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +352,7 @@ func TestUserTrafficResetConfirmationCannotBeReplayed(t *testing.T) {
 		return ""
 	}
 	first := ask()
-	cb.Data, cb.From = first, &tgbotapi.User{ID: 18}
+	cb.Data, cb.From = first, &tgUser{ID: 18}
 	s.resolveUserTrafficReset(cb, true)
 	if !strings.HasSuffix(capture.lastMethod(), "/sendMessage") {
 		t.Fatal("another admin replaced the reset confirmation")

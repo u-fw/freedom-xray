@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func TestAdvancedNetworkWizardRetriesAndAcceptsJSONDocument(t *testing.T) {
@@ -17,11 +15,11 @@ func TestAdvancedNetworkWizardRetriesAndAcceptsJSONDocument(t *testing.T) {
 	cfg.XrayConfigPath, cfg.XrayBinPath, cfg.AllowMutations = h.config, h.xray, true
 	payload, _ := json.Marshal(map[string]any{"tag": "uploaded", "protocol": "freedom", "settings": map[string]any{"extension": strings.Repeat("x", 5000)}})
 	s, _ := newNativeDocumentBot(t, cfg, payload)
-	chat, admin := &tgbotapi.Chat{ID: 9565, Type: "private"}, &tgbotapi.User{ID: 17}
-	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: "routing_manage:outbound_put"}
+	chat, admin := &tgChat{ID: 9565, Type: "private"}, &tgUser{ID: 17}
+	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: "routing_manage:outbound_put"}
 	s.beginRoutingWizard(cb)
 	before, _ := os.ReadFile(h.config)
-	if !s.handleRoutingInput(&tgbotapi.Message{From: admin, Chat: chat, Text: "{"}) {
+	if !s.handleRoutingInput(&tgMessage{From: admin, Chat: chat, Text: "{"}) {
 		t.Fatal("invalid JSON was not handled")
 	}
 	routingWizards.Lock()
@@ -30,7 +28,7 @@ func TestAdvancedNetworkWizardRetriesAndAcceptsJSONDocument(t *testing.T) {
 	if !retained {
 		t.Fatal("invalid input discarded the current step")
 	}
-	if !s.handleRoutingInput(&tgbotapi.Message{From: admin, Chat: chat, Document: &tgbotapi.Document{FileID: "test-file"}}) {
+	if !s.handleRoutingInput(&tgMessage{From: admin, Chat: chat, Document: &tgDocument{FileID: "test-file"}}) {
 		t.Fatal("JSON document was not handled")
 	}
 	after, _ := os.ReadFile(h.config)
@@ -52,8 +50,8 @@ func TestAdvancedRoutingAndNetworkConfirmationsRejectStaleState(t *testing.T) {
 			cfg := DefaultConfig()
 			cfg.XrayConfigPath, cfg.XrayBinPath, cfg.AllowMutations = h.config, h.xray, true
 			s := testRemoteBot(t, cfg)
-			chat, admin := &tgbotapi.Chat{ID: 9570, Type: "private"}, &tgbotapi.User{ID: 17}
-			cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: "routing_manage:" + kind}
+			chat, admin := &tgChat{ID: 9570, Type: "private"}, &tgUser{ID: 17}
+			cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: "routing_manage:" + kind}
 			s.beginRoutingWizard(cb)
 			input := `{"ruleTag":"ads","domain":["domain:example.com"],"outboundTag":"block"}`
 			if kind == "outbound_put" {
@@ -61,7 +59,7 @@ func TestAdvancedRoutingAndNetworkConfirmationsRejectStaleState(t *testing.T) {
 			} else if kind == "dns_put" {
 				input = `{"servers":["localhost"]}`
 			}
-			if !s.handleRoutingInput(&tgbotapi.Message{From: admin, Chat: chat, Text: input}) {
+			if !s.handleRoutingInput(&tgMessage{From: admin, Chat: chat, Text: input}) {
 				t.Fatal("wizard did not accept input")
 			}
 			cb.Data = "routing_confirm:" + pendingRoutingToken(t, chat.ID)
@@ -96,12 +94,12 @@ func TestCancellingAdvancedWizardDuringDownloadPreventsConfirmation(t *testing.T
 	transport.started, transport.release = make(chan struct{}, 1), make(chan struct{})
 	started, release := transport.started, transport.release
 	transport.mu.Unlock()
-	chat, admin := &tgbotapi.Chat{ID: 9566, Type: "private"}, &tgbotapi.User{ID: 17}
-	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: "routing_manage:outbound_put"}
+	chat, admin := &tgChat{ID: 9566, Type: "private"}, &tgUser{ID: 17}
+	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: "routing_manage:outbound_put"}
 	s.beginRoutingWizard(cb)
 	done := make(chan bool, 1)
 	go func() {
-		done <- s.handleRoutingInput(&tgbotapi.Message{From: admin, Chat: chat, Document: &tgbotapi.Document{FileID: "test-file"}})
+		done <- s.handleRoutingInput(&tgMessage{From: admin, Chat: chat, Document: &tgDocument{FileID: "test-file"}})
 	}()
 	select {
 	case <-started:

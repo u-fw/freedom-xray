@@ -9,8 +9,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 const telegramJSONDocumentLimit = 1 << 20
@@ -19,29 +17,17 @@ var telegramDocumentPath = regexp.MustCompile(`^[A-Za-z0-9_./-]+$`)
 
 // Telegram download URLs contain the Bot token. Reject redirects and never
 // return network errors or URLs to callers, logs or chat messages.
-func readTelegramJSONDocument(bot *tgbotapi.BotAPI, document *tgbotapi.Document) ([]byte, error) {
+func readTelegramJSONDocument(tg *telegramClient, document *tgDocument) ([]byte, error) {
 	if document == nil || document.FileID == "" {
 		return nil, errors.New("a JSON document is required")
 	}
 	if document.FileSize > telegramJSONDocumentLimit {
 		return nil, errors.New("JSON document exceeds 1 MiB")
 	}
-	client := &http.Client{}
-	if configured, ok := bot.Client.(*http.Client); ok {
-		*client = *configured
-	}
-	if client.Timeout == 0 || client.Timeout > 15*time.Second {
-		client.Timeout = 15 * time.Second
-	}
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	api := *bot
-	api.Client = client
-	api.Debug = false
-	file, err := api.GetFile(tgbotapi.FileConfig{FileID: document.FileID})
-	if err != nil || file.FileSize > telegramJSONDocumentLimit {
+	filePath, fileSize, url, err := tg.fileURL(document.FileID)
+	if err != nil || fileSize > telegramJSONDocumentLimit {
 		return nil, errors.New("unable to retrieve the JSON document")
 	}
-	filePath := file.FilePath
 	if len(filePath) > 1024 || !telegramDocumentPath.MatchString(filePath) || strings.HasPrefix(filePath, "/") || path.Clean(filePath) != filePath || filePath == "." {
 		return nil, errors.New("unable to retrieve the JSON document")
 	}
@@ -50,9 +36,17 @@ func readTelegramJSONDocument(bot *tgbotapi.BotAPI, document *tgbotapi.Document)
 			return nil, errors.New("unable to retrieve the JSON document")
 		}
 	}
+	client := &http.Client{}
+	if tg.http != nil {
+		*client = *tg.http
+	}
+	if client.Timeout == 0 || client.Timeout > 15*time.Second {
+		client.Timeout = 15 * time.Second
+	}
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, file.Link(bot.Token), nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, errors.New("unable to retrieve the JSON document")
 	}

@@ -6,8 +6,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func TestDNSBotEditPreservesSettingsAndHidesSecrets(t *testing.T) {
@@ -18,7 +16,7 @@ func TestDNSBotEditPreservesSettingsAndHidesSecrets(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.XrayConfigPath, cfg.XrayBinPath, cfg.AllowMutations = h.config, h.xray, true
 	s, capture := newCapturedRoutingBot(t, cfg)
-	chat, admin := &tgbotapi.Chat{ID: 9521, Type: "private"}, &tgbotapi.User{ID: 17}
+	chat, admin := &tgChat{ID: 9521, Type: "private"}, &tgUser{ID: 17}
 	view, _ := dnsView(root)
 	s.sendDNSPage(chat.ID, 1, 0, "")
 	body, markup := capture.card(t)
@@ -33,10 +31,10 @@ func TestDNSBotEditPreservesSettingsAndHidesSecrets(t *testing.T) {
 	if strings.Contains(body, "password") || strings.Contains(body, "token=one") || !strings.Contains(strings.Join(keyboardCallbacks(t, markup), " "), "dn:up:") {
 		t.Fatal("unsafe or incomplete DNS detail")
 	}
-	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: dnsCallback("edit", 1, view.ETag)}
+	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: dnsCallback("edit", 1, view.ETag)}
 	s.handleDNSCallback(cb)
 	before, _ := os.ReadFile(h.config)
-	if !s.handleDNSInput(&tgbotapi.Message{From: admin, Chat: chat, Text: "https://other.example/dns-query?token=two"}) {
+	if !s.handleDNSInput(&tgMessage{From: admin, Chat: chat, Text: "https://other.example/dns-query?token=two"}) {
 		t.Fatal("DNS input not handled")
 	}
 	body, _ = capture.card(t)
@@ -48,7 +46,7 @@ func TestDNSBotEditPreservesSettingsAndHidesSecrets(t *testing.T) {
 		t.Fatal("DNS changed before confirmation")
 	}
 	cb.Data = "routing_confirm:" + pendingRoutingToken(t, chat.ID)
-	cb.From = &tgbotapi.User{ID: 18}
+	cb.From = &tgUser{ID: 18}
 	s.resolveRoutingChange(cb, true)
 	after, _ = os.ReadFile(h.config)
 	if !bytes.Equal(before, after) {
@@ -70,12 +68,12 @@ func TestDNSBotCreateSwitchAndStaleConfirmation(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.XrayConfigPath, cfg.XrayBinPath, cfg.AllowMutations = h.config, h.xray, true
 	s, capture := newCapturedRoutingBot(t, cfg)
-	chat, admin := &tgbotapi.Chat{ID: 9522, Type: "private"}, &tgbotapi.User{ID: 17}
+	chat, admin := &tgChat{ID: 9522, Type: "private"}, &tgUser{ID: 17}
 	root, _ := decodeBindingMigrationConfig(h.config)
 	view, _ := dnsView(root)
-	cb := &tgbotapi.CallbackQuery{From: admin, Message: &tgbotapi.Message{MessageID: 1, Chat: chat}, Data: "dn:add:" + view.ETag}
+	cb := &tgCallback{From: admin, Message: &tgMessage{MessageID: 1, Chat: chat}, Data: "dn:add:" + view.ETag}
 	s.handleDNSCallback(cb)
-	if !s.handleDNSInput(&tgbotapi.Message{From: admin, Chat: chat, Text: "1.1.1.1"}) {
+	if !s.handleDNSInput(&tgMessage{From: admin, Chat: chat, Text: "1.1.1.1"}) {
 		t.Fatal("DNS server input not handled")
 	}
 	cb.Data = "routing_confirm:" + pendingRoutingToken(t, chat.ID)

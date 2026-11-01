@@ -4,8 +4,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type managementWizard struct {
@@ -32,7 +30,7 @@ func (s *BotService) beginUserWizard(chatID, adminID int64, msgID int, stage, us
 	s.sendOrEdit(chatID, msgID, prompt, s.backToMainMarkup())
 }
 
-func (s *BotService) handleWizardMessage(msg *tgbotapi.Message) bool {
+func (s *BotService) handleWizardMessage(msg *tgMessage) bool {
 	chatID := msg.Chat.ID
 	managementWizards.Lock()
 	state, ok := managementWizards.states[chatID]
@@ -71,25 +69,25 @@ func (s *BotService) handleWizardMessage(msg *tgbotapi.Message) bool {
 		s.sendAlert(chatID, tr(s.cfg.Language, "manage.inboundsfailed", err.Error()))
 		return true
 	}
-	var rows [][]tgbotapi.InlineKeyboardButton
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "wizard.createonly"), "manage_scope:unbound")))
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "wizard.assignall"), "manage_scope:all")))
+	var rows [][]tgButton
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "wizard.createonly"), "manage_scope:unbound")))
+	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "wizard.assignall"), "manage_scope:all")))
 	for _, n := range nodes {
 		if n.Protocol != "vless" || n.Tag == "" {
 			continue
 		}
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(truncateLabel(n.Tag, 48), "manage_scope:"+userCallbackKey(n.Tag)),
+		rows = append(rows, newRow(
+			newButton(truncateLabel(n.Tag, 48), "manage_scope:"+userCallbackKey(n.Tag)),
 		))
 	}
 	managementWizards.Lock()
 	managementWizards.states[chatID] = managementWizard{AdminID: msg.From.ID, Expires: time.Now().Add(5 * time.Minute), Stage: "scope", User: input}
 	managementWizards.Unlock()
-	s.sendOrEdit(chatID, 0, tr(s.cfg.Language, "wizard.scopebody", input), tgbotapi.NewInlineKeyboardMarkup(rows...))
+	s.sendOrEdit(chatID, 0, tr(s.cfg.Language, "wizard.scopebody", input), newKeyboard(rows...))
 	return true
 }
 
-func (s *BotService) handleWizardScope(cb *tgbotapi.CallbackQuery) {
+func (s *BotService) handleWizardScope(cb *tgCallback) {
 	if cb.Message == nil {
 		return
 	}
