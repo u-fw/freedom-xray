@@ -17,24 +17,26 @@ type routingWizard struct {
 	Expires time.Time
 }
 type pendingRoutingChange struct {
-	ChatID           int64
-	AdminID          int64
-	Change           routingChange
-	Network          *networkChange
-	Host             *string
-	RuleEdit         *routingRuleEdit
-	Balancer         *balancerChange
-	Observatory      *observatoryChange
-	Outbound         *outboundChange
-	DNS              *dnsChange
-	DNSHost          *dnsHostChange
-	NativeInbound    *nativeInboundChange
-	NativeClient     *nativeClientChange
-	EnableRoutingAPI bool
-	LiveBalancerTag  string
-	LiveBalancerETag string
-	ExpectedRules    string
-	Expires          time.Time
+	ChatID                int64
+	AdminID               int64
+	Change                routingChange
+	Network               *networkChange
+	Host                  *string
+	RuleEdit              *routingRuleEdit
+	Balancer              *balancerChange
+	Observatory           *observatoryChange
+	Outbound              *outboundChange
+	DNS                   *dnsChange
+	DNSHost               *dnsHostChange
+	NativeInbound         *nativeInboundChange
+	NativeClient          *nativeClientChange
+	EnableRoutingAPI      bool
+	LiveBalancerTag       string
+	LiveBalancerETag      string
+	ExpectedRules         string
+	ExpectedLegacyRouting string
+	ExpectedNetwork       string
+	Expires               time.Time
 }
 
 var routingWizards = struct {
@@ -55,6 +57,24 @@ func clearRoutingWizard(chatID int64) {
 	clearOutboundWizard(chatID)
 	clearDNSWizard(chatID)
 	clearNativeInboundWizard(chatID)
+}
+
+func consumeRoutingWizard(chatID int64, expected routingWizard) bool {
+	routingWizards.Lock()
+	defer routingWizards.Unlock()
+	current, ok := routingWizards.items[chatID]
+	if !ok || current != expected {
+		return false
+	}
+	delete(routingWizards.items, chatID)
+	return time.Now().Before(current.Expires)
+}
+
+func networkChangeETag(root map[string]any, kind string) (string, error) {
+	if kind == "dns.put" {
+		return dnsETag(root)
+	}
+	return outboundListETag(root)
 }
 
 func (s *BotService) beginRoutingWizard(cb *tgbotapi.CallbackQuery) {
@@ -126,10 +146,27 @@ func (s *BotService) handleRoutingInput(msg *tgbotapi.Message) bool {
 		routingWizards.Unlock()
 		return false
 	}
-	delete(routingWizards.items, chatID)
 	routingWizards.Unlock()
 	if !s.cfg.AllowMutations {
+		consumeRoutingWizard(chatID, state)
 		s.sendAlert(chatID, tr(s.cfg.Language, "manage.writesdisabled"))
+		return true
+	}
+	jsonInput := state.Kind == "add" || state.Kind == "update" || state.Kind == "outbound_put" || state.Kind == "dns_put"
+	input := []byte(msg.Text)
+	if msg.Document != nil && jsonInput {
+		var err error
+		input, err = readTelegramJSONDocument(s.bot, msg.Document)
+		if err != nil {
+			s.sendAlert(chatID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
+			return true
+		}
+	} else if msg.Document != nil || msg.Text == "" {
+		s.sendAlert(chatID, tr(s.cfg.Language, "wizard.text_required"))
+		return true
+	}
+	if jsonInput && len(input) > telegramJSONDocumentLimit {
+		s.sendAlert(chatID, tr(s.cfg.Language, "routing.guide.retry", "JSON document exceeds 1 MiB"))
 		return true
 	}
 	change := routingChange{Kind: state.Kind}
@@ -149,7 +186,7 @@ func (s *BotService) handleRoutingInput(msg *tgbotapi.Message) bool {
 	} else if state.Kind == "outbound_delete" {
 		network = &networkChange{Kind: "outbounds.delete", Tag: strings.TrimSpace(msg.Text)}
 	} else if state.Kind == "outbound_put" || state.Kind == "dns_put" {
-		value, err := decodeNetworkObject([]byte(msg.Text))
+		value, err := decodeNetworkObject(input)
 		if err != nil {
 			s.sendAlert(chatID, tr(s.cfg.Language, "routing.edit.invalid", mdEsc(err.Error())))
 			return true
@@ -163,7 +200,7 @@ func (s *BotService) handleRoutingInput(msg *tgbotapi.Message) bool {
 	} else if state.Kind == "delete" {
 		change.RuleTag = strings.TrimSpace(msg.Text)
 	} else {
-		rule, err := decodeRoutingRule([]byte(msg.Text))
+		rule, err := decodeRoutingRule(input)
 		if err != nil {
 			s.sendAlert(chatID, tr(s.cfg.Language, "routing.edit.invalid", err.Error()))
 			return true
@@ -172,14 +209,21 @@ func (s *BotService) handleRoutingInput(msg *tgbotapi.Message) bool {
 		change.RuleTag, _ = rule["ruleTag"].(string)
 	}
 	var err error
+	var expectedRouting, expectedNetwork string
 	if host == nil {
 		var root map[string]any
 		root, err = decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
 		if err == nil {
 			if network != nil {
-				_, err = applyNetworkChange(root, *network)
+				expectedNetwork, err = networkChangeETag(root, network.Kind)
+				if err == nil {
+					_, err = applyNetworkChange(root, *network)
+				}
 			} else {
-				_, err = applyRoutingChange(root, change)
+				expectedRouting, err = routingListETag(root)
+				if err == nil {
+					_, err = applyRoutingChange(root, change)
+				}
 			}
 		}
 	}
@@ -192,6 +236,9 @@ func (s *BotService) handleRoutingInput(msg *tgbotapi.Message) bool {
 		s.sendAlert(chatID, tr(s.cfg.Language, "node.tokenerror"))
 		return true
 	}
+	if !consumeRoutingWizard(chatID, state) {
+		return true
+	}
 	key := hex.EncodeToString(token[:])
 	pendingRoutingChanges.Lock()
 	for k, value := range pendingRoutingChanges.items {
@@ -199,7 +246,7 @@ func (s *BotService) handleRoutingInput(msg *tgbotapi.Message) bool {
 			delete(pendingRoutingChanges.items, k)
 		}
 	}
-	pendingRoutingChanges.items[key] = pendingRoutingChange{ChatID: chatID, AdminID: msg.From.ID, Change: change, Network: network, Host: host, Expires: time.Now().Add(3 * time.Minute)}
+	pendingRoutingChanges.items[key] = pendingRoutingChange{ChatID: chatID, AdminID: msg.From.ID, Change: change, Network: network, Host: host, ExpectedLegacyRouting: expectedRouting, ExpectedNetwork: expectedNetwork, Expires: time.Now().Add(3 * time.Minute)}
 	pendingRoutingChanges.Unlock()
 	markup := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
 		tgbotapi.NewInlineKeyboardButtonData(tr(s.cfg.Language, "common.confirm"), "routing_confirm:"+key),
@@ -317,6 +364,32 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 			}
 			return applyGuidedRoutingAdd(root, pending.Change)
 		})
+	} else if pending.ExpectedLegacyRouting != "" {
+		message, err = commitManagedConfig(s.cfg.XrayConfigPath, s.cfg.XrayBinPath, s.cfg.StatsAPIServer, func(root map[string]any) (string, error) {
+			current, e := routingListETag(root)
+			if e != nil {
+				return "", e
+			}
+			if current != pending.ExpectedLegacyRouting {
+				return "", errRoutingRuleChanged
+			}
+			return applyRoutingChange(root, pending.Change)
+		})
+	} else if pending.Network != nil && pending.ExpectedNetwork != "" {
+		message, err = commitManagedConfig(s.cfg.XrayConfigPath, s.cfg.XrayBinPath, s.cfg.StatsAPIServer, func(root map[string]any) (string, error) {
+			current, e := networkChangeETag(root, pending.Network.Kind)
+			if e != nil {
+				return "", e
+			}
+			if current != pending.ExpectedNetwork {
+				if pending.Network.Kind == "dns.put" {
+					return "", errDNSChanged
+				}
+				return "", errOutboundChanged
+			}
+			return applyNetworkChange(root, *pending.Network)
+		})
+		err = sanitizeNetworkChangeError(err)
 	} else if pending.Network != nil {
 		message, err = changeNetworkConfig(s.cfg, *pending.Network)
 	} else {

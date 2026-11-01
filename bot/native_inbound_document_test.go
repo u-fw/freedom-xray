@@ -24,17 +24,24 @@ type nativeDocumentTransport struct {
 	foreign   int
 	markup    string
 	documents [][]byte
+	started   chan struct{}
+	release   chan struct{}
 }
 
 func (m *nativeDocumentTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	if request.URL.Host == "api.telegram.org" {
 		m.mu.Lock()
-		defer m.mu.Unlock()
 		m.downloads++
-		if m.redirect {
+		redirect, payload, started, release := m.redirect, m.payload, m.started, m.release
+		m.mu.Unlock()
+		if started != nil {
+			started <- struct{}{}
+			<-release
+		}
+		if redirect {
 			return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": []string{"https://attacker.invalid/"}}, Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
 		}
-		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), ContentLength: -1, Body: io.NopCloser(bytes.NewReader(m.payload)), Request: request}, nil
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), ContentLength: -1, Body: io.NopCloser(bytes.NewReader(payload)), Request: request}, nil
 	}
 	if request.URL.Host == "attacker.invalid" {
 		m.mu.Lock()
@@ -203,7 +210,7 @@ func TestNativeInboundDocumentDownloadIsBoundedAndDoesNotFollowRedirects(t *test
 	cfg := DefaultConfig()
 	s, transport := newNativeDocumentBot(t, cfg, []byte(`{"protocol":"socks"}`))
 	document := &tgbotapi.Document{FileID: "test-file"}
-	data, err := readNativeInboundDocument(s.bot, document)
+	data, err := readTelegramJSONDocument(s.bot, document)
 	if err != nil || !bytes.Contains(data, []byte("socks")) {
 		t.Fatalf("document download failed: %v", err)
 	}
@@ -212,7 +219,7 @@ func TestNativeInboundDocumentDownloadIsBoundedAndDoesNotFollowRedirects(t *test
 		transport.filePath = unsafePath
 		before := transport.downloads
 		transport.mu.Unlock()
-		if _, err := readNativeInboundDocument(s.bot, document); err == nil || strings.Contains(err.Error(), "secret-test-token") {
+		if _, err := readTelegramJSONDocument(s.bot, document); err == nil || strings.Contains(err.Error(), "secret-test-token") {
 			t.Fatalf("accepted unsafe path or exposed a token: %q %v", unsafePath, err)
 		}
 		transport.mu.Lock()
@@ -225,7 +232,7 @@ func TestNativeInboundDocumentDownloadIsBoundedAndDoesNotFollowRedirects(t *test
 	transport.mu.Lock()
 	transport.filePath, transport.redirect = "documents/input.json", true
 	transport.mu.Unlock()
-	if _, err := readNativeInboundDocument(s.bot, document); err == nil || strings.Contains(err.Error(), "secret-test-token") {
+	if _, err := readTelegramJSONDocument(s.bot, document); err == nil || strings.Contains(err.Error(), "secret-test-token") {
 		t.Fatalf("accepted redirect or exposed token: %v", err)
 	}
 	transport.mu.Lock()
@@ -233,12 +240,12 @@ func TestNativeInboundDocumentDownloadIsBoundedAndDoesNotFollowRedirects(t *test
 		t.Fatal("followed a redirect containing the Bot token")
 	}
 	transport.redirect = false
-	transport.payload = bytes.Repeat([]byte("x"), nativeInboundJSONLimit+1)
+	transport.payload = bytes.Repeat([]byte("x"), telegramJSONDocumentLimit+1)
 	transport.mu.Unlock()
-	if _, err := readNativeInboundDocument(s.bot, document); err == nil {
+	if _, err := readTelegramJSONDocument(s.bot, document); err == nil {
 		t.Fatal("accepted an oversized streaming response")
 	}
-	if _, err := readNativeInboundDocument(s.bot, &tgbotapi.Document{FileID: "test-file", FileSize: nativeInboundJSONLimit + 1}); err == nil {
+	if _, err := readTelegramJSONDocument(s.bot, &tgbotapi.Document{FileID: "test-file", FileSize: telegramJSONDocumentLimit + 1}); err == nil {
 		t.Fatal("accepted an oversized Telegram document")
 	}
 }

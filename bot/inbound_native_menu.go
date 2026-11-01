@@ -286,13 +286,13 @@ func (s *BotService) handleNativeInboundInput(msg *tgbotapi.Message) bool {
 		input := []byte(msg.Text)
 		if msg.Document != nil {
 			var err error
-			input, err = readNativeInboundDocument(s.bot, msg.Document)
+			input, err = readTelegramJSONDocument(s.bot, msg.Document)
 			if err != nil {
 				s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", err.Error()))
 				return true
 			}
 		}
-		if len(input) > nativeInboundJSONLimit {
+		if len(input) > telegramJSONDocumentLimit {
 			s.sendAlert(msg.Chat.ID, tr(s.cfg.Language, "routing.guide.retry", "JSON document exceeds 1 MiB"))
 			return true
 		}

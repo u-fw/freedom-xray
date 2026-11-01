@@ -91,7 +91,7 @@ func (s *BotService) resolveNativeInboundExport(cb *tgbotapi.CallbackQuery, key 
 		return
 	}
 	data, err := json.MarshalIndent(inbound, "", "  ")
-	if err != nil || len(data)+1 > nativeInboundJSONLimit {
+	if err != nil || len(data)+1 > telegramJSONDocumentLimit {
 		s.sendAlert(chatID, tr(s.cfg.Language, "inbound.native.export_failed"))
 		return
 	}
