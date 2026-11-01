@@ -232,6 +232,9 @@ func (s *BotService) handleMessage(msg *tgbotapi.Message) {
 	case "routing":
 		clearOtherRoutingInputs(msg.Chat.ID)
 		s.sendRoutingCard(msg.Chat.ID, 0)
+	case "xrayconfig":
+		clearOtherRoutingInputs(msg.Chat.ID)
+		s.sendXraySectionsPage(msg.Chat.ID, 0, "")
 	case "traffic", "usage":
 		s.sendTrafficCard(msg.Chat.ID, 0)
 	case "inboundtraffic":
@@ -324,6 +327,8 @@ func (s *BotService) handleCallback(cb *tgbotapi.CallbackQuery) {
 		s.handleDNSHostCallback(cb)
 	case strings.HasPrefix(data,"ce:"):
 		s.handleNativeConfigExportCallback(cb)
+	case strings.HasPrefix(data,"xs:"):
+		s.handleXraySectionCallback(cb)
 	case strings.HasPrefix(data,"ni:"):
 		s.handleNativeInboundCallback(cb)
 	case strings.HasPrefix(data,"nc:"):

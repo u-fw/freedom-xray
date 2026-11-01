@@ -25,6 +25,7 @@ func (s *BotService) sendToolsCard(chatID int64, msgID int) {
 		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(lang, "menu.update"), "menu_update_center"), tgbotapi.NewInlineKeyboardButtonData(tr(lang, "menu.version"), "menu_version")),
 		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(lang, "menu.stats"), "menu_stats"), tgbotapi.NewInlineKeyboardButtonData(tr(lang, "menu.onlinedoctor"), "menu_online_doctor")),
 		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(lang, "serverhost.button"), "routing_manage:server_host"), tgbotapi.NewInlineKeyboardButtonData(tr(lang, "menu.backup"), "menu_backup")),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(lang, "xray.section.menu"), "xs:page")),
 		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(languageButtonLabel("en", lang), "lang_set:en"), tgbotapi.NewInlineKeyboardButtonData(languageButtonLabel("zh-CN", lang), "lang_set:zh-CN")),
 		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(tr(lang, "menu.help"), "menu_help"), tgbotapi.NewInlineKeyboardButtonData(tr(lang, "menu.home"), "menu_main")),
 	)

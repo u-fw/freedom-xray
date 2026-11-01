@@ -32,7 +32,7 @@ func nativeConfigExportCallback(kind string, index int, etag string) string {
 	return fmt.Sprintf("ce:%s:%d:%s", kind, index, etag)
 }
 
-func nativeConfigExportObject(root map[string]any, kind string, index int, etag string) (map[string]any, error) {
+func nativeConfigExportObject(root map[string]any, kind string, index int, etag string) (any, error) {
 	switch kind {
 	case "inbound":
 		return lookupNativeInbound(root, index, etag)
@@ -40,6 +40,15 @@ func nativeConfigExportObject(root map[string]any, kind string, index int, etag 
 		return lookupOutbound(root, index, etag)
 	case "rule":
 		return lookupRoutingRule(root, routingRuleRef{Index: index, ETag: etag})
+	case "section":
+		if index < 1 || index > len(xraySectionNames) {
+			return nil, errors.New("unknown section")
+		}
+		value, present, err := lookupXraySection(root, xraySectionNames[index-1], etag)
+		if err == nil && !present {
+			err = errors.New("section is not configured")
+		}
+		return value, err
 	case "dns":
 		actual, err := dnsETag(root)
 		if err != nil {
@@ -60,6 +69,12 @@ func nativeConfigExportObject(root map[string]any, kind string, index int, etag 
 
 func (s *BotService) returnNativeConfigExport(chatID int64, msgID int, pending nativeConfigExport, changed bool) {
 	switch pending.Kind {
+	case "section":
+		if changed || pending.Index < 1 || pending.Index > len(xraySectionNames) {
+			s.sendXraySectionsPage(chatID, msgID, tr(s.cfg.Language, "xray.section.changed"))
+		} else {
+			s.sendXraySectionDetail(chatID, msgID, xraySectionNames[pending.Index-1], pending.ETag, "")
+		}
 	case "outbound":
 		if changed {
 			s.sendOutboundPage(chatID, msgID, 0, tr(s.cfg.Language, "outbound.changed"))
@@ -137,6 +152,8 @@ func (s *BotService) askNativeConfigExport(cb *tgbotapi.CallbackQuery, kind stri
 	var label string
 	if kind == "dns" {
 		label = tr(s.cfg.Language, "config.export.kind.dns")
+	} else if kind == "section" {
+		label = tr(s.cfg.Language, "xray.section."+xraySectionNames[index-1])
 	} else {
 		label = tr(s.cfg.Language, "config.export.kind."+kind, index)
 	}
@@ -168,7 +185,7 @@ func (s *BotService) resolveNativeConfigExport(cb *tgbotapi.CallbackQuery, key s
 		return
 	}
 	root, err := decodeBindingMigrationConfig(s.cfg.XrayConfigPath)
-	var object map[string]any
+	var object any
 	if err == nil {
 		object, err = nativeConfigExportObject(root, pending.Kind, pending.Index, pending.ETag)
 	}

@@ -75,6 +75,11 @@ var agentOperations = []agentOperation{
 	{"bindings.revert", false, true, false, "Revert per-inbound client identities"},
 	{"stats.inspect", false, false, false, "Inspect statistics policy and API settings"},
 	{"stats.repair", false, true, false, "Repair loopback statistics API and policy switches"},
+	{"xray.sections", false, false, false, "List advanced log, policy and FakeDNS sections without their values"},
+	{"xray.section.inspect", true, false, false, "Inspect common log, policy and FakeDNS values without paths or extensions"},
+	{"xray.section.get", true, false, true, "Export one complete advanced Xray section"},
+	{"xray.section.put", true, true, false, "Create or replace log, policy or FakeDNS configuration"},
+	{"xray.section.reset", true, true, false, "Restore section defaults while retaining required statistics policies"},
 	{"routing.read", false, false, false, "Read routing, outbound and balancer summaries"},
 	{"routing.rules", false, false, false, "Read routing rules and edit references; extensions hidden unless requested"},
 	{"routing.rule.get", true, false, true, "Export one complete native routing rule including hidden extensions"},
@@ -701,6 +706,14 @@ func executeAgentOperation(cfg *BotConfig, operation agentOperation, raw []byte,
 			return nil, err
 		}
 		return inspectStatsSwitches(cfg.XrayConfigPath, cfg.StatsAPIServer)
+	case "xray.sections":
+		root, err := decodeBindingMigrationConfig(cfg.XrayConfigPath)
+		if err != nil {
+			return nil, err
+		}
+		return xraySectionRecords(root)
+	case "xray.section.get", "xray.section.inspect", "xray.section.put", "xray.section.reset":
+		return agentXraySection(cfg, name, raw, apply)
 	case "routing.read":
 		return LoadRouting(cfg.XrayConfigPath)
 	case "routing.rules":

@@ -14,6 +14,8 @@ import (
 type routingWizard struct {
 	AdminID int64
 	Kind    string
+	Section string
+	ETag    string
 	Expires time.Time
 }
 type pendingRoutingChange struct {
@@ -30,6 +32,7 @@ type pendingRoutingChange struct {
 	DNSHost               *dnsHostChange
 	NativeInbound         *nativeInboundChange
 	NativeClient          *nativeClientChange
+	XraySection           *xraySectionChange
 	EnableRoutingAPI      bool
 	LiveBalancerTag       string
 	LiveBalancerETag      string
@@ -135,6 +138,10 @@ func (s *BotService) handleRoutingInput(msg *tgbotapi.Message) bool {
 	if msg.From == nil || msg.From.ID != state.AdminID {
 		routingWizards.Unlock()
 		return false
+	}
+	if state.Kind == "xray_section" {
+		routingWizards.Unlock()
+		return s.handleXraySectionInput(msg, state)
 	}
 	if msg.Command() == "cancel" {
 		delete(routingWizards.items, chatID)
@@ -293,6 +300,8 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 	if !confirm {
 		if pending.EnableRoutingAPI {
 			s.returnToBalancerLive(chatID, msgID, pending.LiveBalancerTag, pending.LiveBalancerETag)
+		} else if pending.XraySection != nil {
+			s.returnXraySection(chatID, msgID, pending.XraySection.Name, "")
 		} else if pending.NativeClient != nil {
 			s.returnNativeClientList(chatID, msgID, pending.NativeClient.InboundIndex, "")
 		} else if pending.NativeInbound != nil {
@@ -337,6 +346,8 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 		}
 	} else if pending.EnableRoutingAPI {
 		message, err = enableRoutingService(s.cfg)
+	} else if pending.XraySection != nil {
+		message, err = changeXraySectionConfig(s.cfg, *pending.XraySection)
 	} else if pending.NativeClient != nil {
 		message, err = changeNativeClientConfig(s.cfg, *pending.NativeClient)
 	} else if pending.NativeInbound != nil {
@@ -396,6 +407,10 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 		message, err = changeRoutingConfig(s.cfg.XrayConfigPath, s.cfg.XrayBinPath, s.cfg.StatsAPIServer, pending.Change)
 	}
 	if err != nil {
+		if pending.XraySection != nil && errors.Is(err, errXraySectionChanged) {
+			s.returnXraySection(chatID, msgID, pending.XraySection.Name, tr(s.cfg.Language, "xray.section.changed"))
+			return
+		}
 		if pending.NativeClient != nil && (errors.Is(err, errNativeInboundChanged) || errors.Is(err, errRoutingRuleChanged)) {
 			s.returnNativeClientList(chatID, msgID, pending.NativeClient.InboundIndex, tr(s.cfg.Language, "inbound.client.changed"))
 			return
@@ -431,6 +446,8 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 		markup := s.backToMainMarkup()
 		if pending.EnableRoutingAPI {
 			markup = balancerBackMarkup(s.cfg.Language)
+		} else if pending.XraySection != nil {
+			markup = xraySectionsBackMarkup(s.cfg.Language)
 		} else if pending.NativeClient != nil || pending.NativeInbound != nil {
 			markup = nativeInboundBackMarkup(s.cfg.Language)
 		} else if pending.DNSHost != nil {
@@ -451,6 +468,10 @@ func (s *BotService) resolveRoutingChange(cb *tgbotapi.CallbackQuery, confirm bo
 	}
 	if pending.EnableRoutingAPI {
 		s.returnToBalancerLive(chatID, msgID, pending.LiveBalancerTag, pending.LiveBalancerETag)
+		return
+	}
+	if pending.XraySection != nil {
+		s.returnXraySection(chatID, msgID, pending.XraySection.Name, tr(s.cfg.Language, "xray.section.done"))
 		return
 	}
 	if pending.NativeClient != nil {

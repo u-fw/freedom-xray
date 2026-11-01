@@ -73,6 +73,11 @@ Most traffic reads initialize or migrate the local SQLite ledger on first use, w
 | `traffic.reset-all` | — | Reset all runtime and persistent user counters. |
 | `collector.install` | — | Install/refresh and start the independent systemd sampler; may restart Xray to enable policies. Execute the installed `/usr/local/bin/freedom-bot`. |
 | `bindings.migrate`, `bindings.revert` | — | Preview or perform per-inbound accounting identity migration/reversion. |
+| `xray.sections` | — | List advanced `log`, `policy` and `fakedns` sections with edit references and presence/type information. |
+| `xray.section.inspect` | `{"name":"policy","etag":"<etag>"}` | Read common settings with file paths, unknown extensions and malformed values hidden; large collections are summarized. |
+| `xray.section.get` | `{"name":"log","etag":"<etag>"}` | Export one complete native section value; requires `--include-sensitive`. |
+| `xray.section.put` | `{"name":"log","etag":"<etag>","value":{"loglevel":"warning","dnsLog":false}}` | Create or replace a supported native section. |
+| `xray.section.reset` | `{"name":"policy","etag":"<etag>"}` | Remove custom section settings; policy reset retains manager-required statistics switches. |
 | `routing.read` | — | Read summarized rules, outbound tags and balancers. |
 | `routing.rules` | — | List rules, positions, content references and list references. Unknown or potentially credential-bearing extensions are redacted unless `--include-sensitive` is supplied. |
 | `routing.rule.get` | `{"index":2,"etag":"<etag>"}` | Export one complete native rule including hidden extensions; requires `--include-sensitive`. |
@@ -144,6 +149,12 @@ Xray keys user statistics by email across protocols. Creating or replacing a nat
 `dns.view` returns an `etag` based on the entire native DNS object, even though URL paths, queries and credentials are hidden. Supply the current reference to every guided DNS operation; updates, moves and deletions use a 1-based server index. Changing an object server's address preserves its per-server settings. Allowlisted flags are `disableCache`, `disableFallback`, `disableFallbackIfMatch`, `enableParallelQuery` and `useSystemHosts`; support depends on the installed Xray version. With a DNS script, server deletion and changes to built-in ordering, strategy or flags are refused because the script controls query behavior and may reference servers dynamically. Full native DNS configuration and advanced server settings remain available through `dns.get` and `dns.put`.
 
 `dns.hosts` uses the same `etag` as `dns.view`; any DNS change invalidates it. A mapping can target one IP, replacement domain or `#` response code, or multiple IPs. Xray checks static mappings before DNS server queries, even with a DNS script; traffic must actually use Xray's built-in DNS for these mappings to take effect. Matches and targets are operational data. Unsupported or malformed native mappings are hidden from the guided view and remain available through sensitive `dns.get` and native JSON.
+
+## Advanced Xray sections
+
+Use `name` and `etag` from `xray.sections`. Supply the section value in `value`, without an additional section-name wrapper. Logging and policy values must be objects; FakeDNS accepts one pool object or a non-empty array. Each pool requires a CIDR `ipPool` and an explicit positive integer `poolSize`, smaller than the subnet address count. The tested Xray core fails to start with an omitted size or a pool occupying the whole subnet.
+
+Replacing or resetting `policy` keeps user counters and online statistics enabled for level 0 and active client levels, plus the required inbound counters. Reset clears custom timeouts, buffers and other policy settings. Resetting logging leaves existing log files intact. Resetting FakeDNS removes explicit pools; Xray can initialize defaults if DNS still selects `fakedns`. Unique case variants are recognized, while ambiguous duplicate variants are refused. Applies recheck the section reference under the config lock, test the candidate with the installed core and restart with rollback. The Bot provides these workflows in `/xrayconfig`, including text/document input and protected complete-section export. `xray.section.get` requires `--include-sensitive`.
 
 ## Node inputs
 

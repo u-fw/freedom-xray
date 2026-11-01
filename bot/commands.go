@@ -26,6 +26,7 @@ func (s *BotService) registerAdminCommands(chatID int64){
   {Command:"onlinedoctor",Description:tr(s.cfg.Language,"command.onlinedoctor")},
   {Command:"stats",Description:tr(s.cfg.Language,"command.stats")},
   {Command:"routing",Description:tr(s.cfg.Language,"command.routing")},
+  {Command:"xrayconfig",Description:tr(s.cfg.Language,"command.xrayconfig")},
   {Command:"inboundtraffic",Description:tr(s.cfg.Language,"command.inboundtraffic")},
   {Command:"status",Description:tr(s.cfg.Language,"command.status")},
   {Command:"version",Description:tr(s.cfg.Language,"command.version")},

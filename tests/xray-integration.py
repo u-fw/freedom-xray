@@ -8,11 +8,13 @@ All listeners bind to loopback and all configuration is created in a temp dir.
 
 import fcntl
 import http.server
+import ipaddress
 import json
 import os
 from pathlib import Path
 import socket
 import subprocess
+import struct
 import tempfile
 import threading
 import time
@@ -41,6 +43,46 @@ def wait_for_port(port, process):
         except OSError:
             time.sleep(0.05)
     raise RuntimeError(f"listener {port} did not start")
+
+
+def query_fake_dns(port, process):
+    labels = b"".join(bytes([len(label)]) + label.encode("ascii") for label in "freedom-fake.invalid".split(".")) + b"\x00"
+    request = struct.pack("!HHHHHH", 0xF123, 0x0100, 1, 0, 0, 0) + labels + struct.pack("!HH", 1, 1)
+
+    def skip_name(packet, offset):
+        while True:
+            size = packet[offset]
+            offset += 1
+            if size == 0:
+                return offset
+            if size & 0xC0 == 0xC0:
+                return offset + 1
+            offset += size
+
+    deadline = time.monotonic() + 5
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.settimeout(0.2)
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                raise RuntimeError("isolated FakeDNS core exited early")
+            sock.sendto(request, ("127.0.0.1", port))
+            try:
+                response, _ = sock.recvfrom(4096)
+            except socket.timeout:
+                continue
+            identifier, flags, questions, answers, _, _ = struct.unpack("!HHHHHH", response[:12])
+            assert identifier == 0xF123 and flags & 0x000F == 0 and answers > 0
+            offset = 12
+            for _ in range(questions):
+                offset = skip_name(response, offset) + 4
+            for _ in range(answers):
+                offset = skip_name(response, offset)
+                record_type, record_class, _, length = struct.unpack("!HHIH", response[offset:offset + 10])
+                offset += 10
+                if record_type == 1 and record_class == 1 and length == 4:
+                    return ipaddress.IPv4Address(response[offset:offset + 4])
+                offset += length
+    raise RuntimeError("isolated FakeDNS did not answer an A query")
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -354,6 +396,26 @@ def main():
                 impact = agent("inbounds.clients.patch", rename)["preview"]
                 assert agent("inbounds.clients.patch", {**rename, "routing_etag": impact["routing_etag"]}, "--apply")["applied"]
 
+            def section_ref(name):
+                entry = next(item for item in agent("xray.sections") if item["name"] == name)
+                return {"name": name, "etag": entry["etag"]}
+
+            for name, value in (
+                ("log", {"loglevel": "warning", "access": "none"}),
+                ("policy", {"levels": {"0": {"handshake": 8}}}),
+                ("fakedns", [{"ipPool": "198.18.0.0/24", "poolSize": 64}]),
+            ):
+                change = {**section_ref(name), "value": value}
+                assert not agent("xray.section.put", change)["applied"]
+                assert agent("xray.section.put", change, "--apply")["applied"]
+            policy = agent("xray.section.get", section_ref("policy"), "--include-sensitive")["value"]
+            assert policy["levels"]["0"]["handshake"] == 8 and policy["levels"]["5"]["statsUserDownlink"]
+            assert agent("xray.section.reset", section_ref("policy"), "--apply")["applied"]
+            policy = agent("xray.section.get", section_ref("policy"), "--include-sensitive")["value"]
+            assert "handshake" not in policy["levels"]["0"] and policy["levels"]["5"]["statsUserDownlink"]
+            fake_summary = agent("xray.section.inspect", section_ref("fakedns"))
+            assert fake_summary["summary"]["pools"][0]["poolSize"] == 64
+
             server.terminate()
             server.wait(timeout=5)
             server_config = json.loads((directory / "config.json").read_text(encoding="utf-8"))
@@ -375,7 +437,22 @@ def main():
                 wait_for_port(listen_port, process)
                 subprocess.run(["curl", "-fsS", "--max-time", "10", "--noproxy", "", "--socks5-hostname",
                                 f"127.0.0.1:{listen_port}", f"http://127.0.0.1:{httpd.server_port}/", "-o", os.devnull], check=True)
-            print("Real Xray native client CRUD and authenticated VMess/Trojan traffic, DNS, balancing and isolated traffic reset passed")
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as reservation:
+                reservation.bind(("127.0.0.1", 0))
+                fake_dns_port = reservation.getsockname()[1]
+            fake_pools = agent("xray.section.get", section_ref("fakedns"), "--include-sensitive")["value"]
+            fake_config = {"log": {"loglevel": "warning"}, "fakedns": fake_pools,
+                           "dns": {"servers": ["fakedns"], "queryStrategy": "UseIPv4"},
+                           "inbounds": [{"tag": "fake-dns-input", "listen": "127.0.0.1", "port": fake_dns_port,
+                                         "protocol": "dokodemo-door", "settings": {"address": "127.0.0.1", "port": 53, "network": "udp"}}],
+                           "outbounds": [{"tag": "dns", "protocol": "dns", "settings": {}}]}
+            fake_core = start_xray(fake_config, directory, "fake-dns-runtime")
+            processes.append(fake_core)
+            fake_ip = query_fake_dns(fake_dns_port, fake_core)
+            assert fake_ip in ipaddress.ip_network("198.18.0.0/24"), fake_ip
+            assert agent("xray.section.reset", section_ref("fakedns"), "--apply")["applied"]
+            assert agent("xray.section.reset", section_ref("log"), "--apply")["applied"]
+            print("Real Xray advanced sections, FakeDNS responses, native client CRUD, authenticated VMess/Trojan traffic, balancing and isolated traffic reset passed")
         except Exception:
             for index, process in enumerate(processes):
                 process.terminate()

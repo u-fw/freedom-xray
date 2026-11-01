@@ -34,6 +34,7 @@ Run `sudo freedom` to open the terminal menu. The Telegram submenu can install t
 | Per-user traffic quota and expiry with automatic suspension and admin notices | Local metadata | Yes |
 | Online users, source IPs and last-online information | Via collector | `/online`, `/onlinedoctor` and user details |
 | Routing rules, outbounds, balancers and DNS | Config file or agent CLI | `/routing` manages rules, outbound endpoints, balancers, DNS servers and static host mappings; live balancer diagnostics use a local Xray API; advanced objects use JSON |
+| Logging, connection policies and FakeDNS pools | Agent CLI, including preview and guarded apply | `/xrayconfig`: inspect common values, export, replace native JSON or restore defaults |
 | Xray start, stop and restart; statistics repair | Yes | Status and diagnostics menus (confirmation required) |
 | Bot and manager updates; Xray upgrades and rollback | Yes | Permission-gated |
 | Public subscription service and full web dashboard | Not provided | Not provided |
@@ -66,6 +67,7 @@ Traffic quotas and expiry dates are stored in `freedom-user-limits.json` (mode 0
 /online                    Online users and recent source IPs (v1.3.0)
 /onlinedoctor              Diagnose online statistics and repair the policy
 /routing                   Inspect and edit routing rules; manage outbounds and DNS
+/xrayconfig                Logging, connection policies and FakeDNS settings
 /status                    Server status
 /version                   Installed and upstream component versions
 /update                    Update the manager and bot
@@ -91,7 +93,7 @@ The dashboard groups less frequent actions under **Tools**; the public link addr
 
 ### Agent CLI
 
-The local `freedom-bot agent` interface supports non-interactive JSON input and output. Mutations preview by default and execute only with `--apply`; exporting links or full outbound/DNS objects requires `--include-sensitive`. For the operation list, examples, input formats and current limitations, see [Agent CLI](docs/AGENT_CLI.md).
+The local `freedom-bot agent` interface supports non-interactive JSON input and output. Mutations preview by default and execute only with `--apply`; exporting links or complete native objects requires `--include-sensitive`. For the operation list, examples, input formats and current limitations, see [Agent CLI](docs/AGENT_CLI.md) and the [panel-free coverage matrix](docs/PANELLESS_COVERAGE.md).
 
 ### Public server address in client links
 
