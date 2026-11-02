@@ -269,6 +269,8 @@ type agentNameInput struct {
 	User    string `json:"user"`
 	Node    string `json:"node,omitempty"`
 	NewName string `json:"new_name,omitempty"`
+	// Nodes assigns a new user to several inbounds in one users.add change.
+	Nodes []string `json:"nodes,omitempty"`
 }
 type agentTagInput struct {
 	Tag string `json:"tag"`
@@ -547,7 +549,7 @@ func executeAgentOperation(cfg *BotConfig, operation agentOperation, raw []byte,
 		if !managedUserName.MatchString(input.User) {
 			return nil, errors.New("invalid user identifier")
 		}
-		if input.Node != "" || input.NewName != "" {
+		if input.Node != "" || input.NewName != "" || len(input.Nodes) > 0 {
 			return nil, errors.New("this operation accepts only user")
 		}
 		if name == "users.export" {
@@ -592,10 +594,18 @@ func executeAgentOperation(cfg *BotConfig, operation agentOperation, raw []byte,
 				return nil, err
 			}
 		}
+		if len(input.Nodes) > 0 && (kind != "add" || input.Node == "all" || len(input.Nodes) > 64) {
+			return nil, errors.New("nodes is only valid for users.add, without node \"all\", and with at most 64 inbounds")
+		}
+		for _, node := range input.Nodes {
+			if err := validateNodeTag(node); err != nil {
+				return nil, err
+			}
+		}
 		if !apply {
 			return agentPreview(name, input), nil
 		}
-		_, err := changeManagedUser(cfg.XrayConfigPath, cfg.XrayBinPath, cfg.StatsAPIServer, UserChange{Kind: kind, User: input.User, Node: input.Node, NewName: input.NewName})
+		_, err := changeManagedUser(cfg.XrayConfigPath, cfg.XrayBinPath, cfg.StatsAPIServer, UserChange{Kind: kind, User: input.User, Node: input.Node, NewName: input.NewName, Nodes: input.Nodes})
 		if err != nil {
 			return nil, err
 		}
@@ -621,7 +631,7 @@ func executeAgentOperation(cfg *BotConfig, operation agentOperation, raw []byte,
 		if !managedUserName.MatchString(input.User) {
 			return nil, errors.New("invalid user identifier")
 		}
-		if input.Node != "" || input.NewName != "" {
+		if input.Node != "" || input.NewName != "" || len(input.Nodes) > 0 {
 			return nil, errors.New("traffic.reset-user accepts only user")
 		}
 		if !apply {

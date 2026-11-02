@@ -409,6 +409,8 @@ func (s *BotService) handleCallback(cb *tgCallback) {
 		s.enableDisabledUserCallback(cb)
 	case data == "manage_add":
 		s.beginUserWizard(chatID, cb.From.ID, msgID, "name", "")
+	case strings.HasPrefix(data, "manage_pick:"):
+		s.handleWizardPick(cb)
 	case strings.HasPrefix(data, "manage_scope:"):
 		s.handleWizardScope(cb)
 	case strings.HasPrefix(data, "manage_rename:"):

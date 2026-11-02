@@ -28,6 +28,8 @@ type UserChange struct {
 	User    string
 	NewName string
 	Node    string
+	// Nodes adds a new user to each listed inbound in one change.
+	Nodes []string
 }
 
 func newManagedUUID() (string, error) {

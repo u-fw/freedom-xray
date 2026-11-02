@@ -46,7 +46,9 @@ func (s *BotService) offerUserChange(chatID, adminID int64, messageID int, chang
 	var description string
 	switch change.Kind {
 	case "add":
-		if change.Node == "" {
+		if len(change.Nodes) > 0 {
+			description = tr(s.cfg.Language, "manage.add.node", change.User, strings.Join(change.Nodes, ", "))
+		} else if change.Node == "" {
 			description = tr(s.cfg.Language, "manage.add.unbound", change.User)
 		} else {
 			description = tr(s.cfg.Language, "manage.add.node", change.User, scopeLabel(change.Node, s.cfg.Language))

@@ -11,6 +11,8 @@ type managementWizard struct {
 	Expires time.Time
 	Stage   string
 	User    string
+	// Picked holds the inbounds chosen for a new user on the scope screen.
+	Picked []string
 }
 
 var managementWizards = struct {
@@ -72,22 +74,89 @@ func (s *BotService) handleWizardMessage(msg *tgMessage) bool {
 		s.sendAlert(chatID, trh(s.cfg.Language, "manage.inboundsfailed", err.Error()))
 		return true
 	}
+	state = managementWizard{AdminID: msg.From.ID, Expires: time.Now().Add(5 * time.Minute), Stage: "scope", User: input}
+	managementWizards.Lock()
+	managementWizards.states[chatID] = state
+	managementWizards.Unlock()
+	s.sendUserScope(chatID, 0, state, nodes)
+	return true
+}
+
+// sendUserScope lets the admin choose the inbounds a new user may use.
+func (s *BotService) sendUserScope(chatID int64, msgID int, state managementWizard, nodes []InboundDetails) {
+	lang := s.cfg.Language
+	picked := map[string]bool{}
+	for _, tag := range state.Picked {
+		picked[tag] = true
+	}
 	var rows [][]tgButton
-	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "wizard.createonly"), "manage_scope:unbound")))
-	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "wizard.assignall"), "manage_scope:all")))
 	for _, n := range nodes {
 		if n.Protocol != "vless" || n.Tag == "" {
 			continue
 		}
-		rows = append(rows, newRow(
-			newButton(truncateLabel(n.Tag, 48), "manage_scope:"+userCallbackKey(n.Tag)),
-		))
+		mark := "☐ "
+		if picked[n.Tag] {
+			mark = "☑ "
+		}
+		rows = append(rows, newRow(newButton(mark+truncateLabel(n.Tag, 44), "manage_pick:"+userCallbackKey(n.Tag))))
+	}
+	if len(state.Picked) > 0 {
+		rows = append(rows, newRow(newButton(tr(lang, "wizard.pickcontinue", len(state.Picked)), "manage_scope:picked")))
+	}
+	rows = append(rows, newRow(newButton(tr(lang, "wizard.createonly"), "manage_scope:unbound")))
+	rows = append(rows, newRow(newButton(tr(lang, "wizard.assignall"), "manage_scope:all")))
+	s.sendOrEdit(chatID, msgID, trh(lang, "wizard.scopebody", state.User), newKeyboard(rows...))
+}
+
+// handleWizardPick toggles one inbound for the user being created.
+func (s *BotService) handleWizardPick(cb *tgCallback) {
+	if cb.Message == nil || cb.Message.Chat == nil || cb.From == nil {
+		return
+	}
+	chatID, msgID := cb.Message.Chat.ID, cb.Message.MessageID
+	nodes, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
+	if err != nil {
+		s.sendAlert(chatID, trh(s.cfg.Language, "wizard.inboundread"))
+		return
+	}
+	key := strings.TrimPrefix(cb.Data, "manage_pick:")
+	tag := ""
+	for _, n := range nodes {
+		if n.Protocol == "vless" && n.Tag != "" && userCallbackKey(n.Tag) == key {
+			tag = n.Tag
+			break
+		}
 	}
 	managementWizards.Lock()
-	managementWizards.states[chatID] = managementWizard{AdminID: msg.From.ID, Expires: time.Now().Add(5 * time.Minute), Stage: "scope", User: input}
+	state, ok := managementWizards.states[chatID]
+	valid := ok && state.AdminID == cb.From.ID && state.Stage == "scope" && time.Now().Before(state.Expires)
+	if valid && tag != "" {
+		picked := make([]string, 0, len(state.Picked)+1)
+		removed := false
+		for _, existing := range state.Picked {
+			if existing == tag {
+				removed = true
+				continue
+			}
+			picked = append(picked, existing)
+		}
+		if !removed {
+			picked = append(picked, tag)
+		}
+		state.Picked = picked
+		state.Expires = time.Now().Add(5 * time.Minute)
+		managementWizards.states[chatID] = state
+	}
 	managementWizards.Unlock()
-	s.sendOrEdit(chatID, 0, trh(s.cfg.Language, "wizard.scopebody", input), newKeyboard(rows...))
-	return true
+	if !valid {
+		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "wizard.expired"), s.backToMainMarkup())
+		return
+	}
+	if tag == "" {
+		s.sendAlert(chatID, trh(s.cfg.Language, "wizard.inboundchanged"))
+		return
+	}
+	s.sendUserScope(chatID, msgID, state, nodes)
 }
 
 func (s *BotService) handleWizardScope(cb *tgCallback) {
@@ -109,6 +178,14 @@ func (s *BotService) handleWizardScope(cb *tgCallback) {
 		return
 	}
 	key := strings.TrimPrefix(cb.Data, "manage_scope:")
+	if key == "picked" {
+		if len(state.Picked) == 0 {
+			s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "wizard.expired"), s.backToMainMarkup())
+			return
+		}
+		s.offerUserChange(chatID, cb.From.ID, msgID, UserChange{Kind: "add", User: state.User, Nodes: state.Picked})
+		return
+	}
 	target := ""
 	if key == "all" {
 		target = "all"

@@ -154,10 +154,14 @@ func applyDirectoryUserChange(root map[string]any, dir *userDirectory, change Us
 		if err != nil {
 			return "", err
 		}
+		requested := change.Nodes
 		if change.Node != "" && change.Node != "all" {
+			requested = append([]string{change.Node}, requested...)
+		}
+		for _, node := range requested {
 			found := false
 			for _, in := range inbounds {
-				if in["tag"] == change.Node {
+				if in["tag"] == node {
 					found = true
 				}
 			}
@@ -165,12 +169,24 @@ func applyDirectoryUserChange(root map[string]any, dir *userDirectory, change Us
 				return "", errors.New("Target inbound does not exist")
 			}
 		}
+		// targeted reports whether the new user joins an inbound.
+		targeted := func(tag any) bool {
+			if change.Node == "all" {
+				return true
+			}
+			for _, node := range requested {
+				if tag == node {
+					return true
+				}
+			}
+			return false
+		}
 		dir.Users[change.User] = directoryUser{ID: uuid}
-		if change.Node == "" {
+		if change.Node == "" && len(change.Nodes) == 0 {
 			return "Created independent user " + change.User + "; no inbound assigned, UUID: " + uuid, nil
 		}
 		for _, in := range inbounds {
-			if change.Node != "all" && in["tag"] != change.Node {
+			if !targeted(in["tag"]) {
 				continue
 			}
 			tag, _ := in["tag"].(string)
@@ -180,7 +196,7 @@ func applyDirectoryUserChange(root map[string]any, dir *userDirectory, change Us
 		}
 		affected := 0
 		for _, in := range inbounds {
-			if change.Node != "all" && in["tag"] != change.Node {
+			if !targeted(in["tag"]) {
 				continue
 			}
 			tag, _ := in["tag"].(string)
@@ -390,7 +406,7 @@ func changeDirectoryUser(configPath, xrayBinary, statsServer string, change User
 		}
 	}
 	perNodeEmails := true
-	if (change.Kind == "add" && change.Node != "") || change.Kind == "assign" || change.Kind == "rename" {
+	if (change.Kind == "add" && (change.Node != "" || len(change.Nodes) > 0)) || change.Kind == "assign" || change.Kind == "rename" {
 		marker, markerErr := trafficMetaValue(configPath, bindingEmailsMarker)
 		if markerErr != nil {
 			return "", fmt.Errorf("read binding migration mode: %w", markerErr)

@@ -59,7 +59,7 @@ Most traffic reads initialize or migrate the local SQLite ledger on first use, w
 | `inbounds.clients.rotate`, `inbounds.clients.remove` | `{"index":2,"etag":"<etag>","client_index":1}` | Rotate credentials or preview removal; applying removal requires the preview's `routing_etag`. |
 | `users.list` | — | Users, assignments, suspension, usage and limits. |
 | `users.get`, `users.export` | `{"user":"phone"}` | Read one user, or explicitly export sensitive VLESS links. |
-| `users.add` | `{"user":"phone","node":"raw"}` | Create a user; omit `node` for no assignment, or use `"all"` for every eligible inbound. |
+| `users.add` | `{"user":"phone","node":"raw"}` or `{"user":"phone","nodes":["raw","cdn"]}` | Create a user; omit `node` for no assignment, use `"all"` for every eligible inbound, or list several inbounds in `nodes` to assign them in one change. |
 | `users.rename` | `{"user":"phone","new_name":"phone2"}` | Rename a user, preserving supported metadata. |
 | `users.rotate`, `users.delete`, `users.disable`, `users.enable` | `{"user":"phone"}` | Rotate UUID, delete, suspend or restore. |
 | `users.assign`, `users.unassign` | `{"user":"phone","node":"raw"}` | Add or remove a specific binding. |
