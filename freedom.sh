@@ -28,7 +28,7 @@ NC='\033[0m'
 
 export PATH="$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
 
-SCRIPT_VERSION="v13.6.0"
+SCRIPT_VERSION="v13.6.1"
 # Optional client-side ECH configuration for XHTTP/TLS links; does not modify origin TLS.
 XHTTP_CDN_ECH_CONFIG="cloudflare-ech.com+https://dns.alidns.com/dns-query"
 DEFAULT_SNI="www.nvidia.com"
@@ -510,11 +510,11 @@ benchmark_and_diagnose_system_tuning() {
     [[ "$cur_limit" == *"1000000"* || "$cur_limit" == *"unlimited"* ]] && ((score += 15))
 
     if ((score >= 85)); then
-      ok "Score ${score}/100：Performance tuning ready"
+      ok "Score ${score}/100: Performance tuning ready"
     elif ((score >= 25)); then
-      warn "Score ${score}/100：Basic (BBR only; no large buffers or bidirectional TFO)"
+      warn "Score ${score}/100: Basic (BBR only; no large buffers or bidirectional TFO)"
     else
-      warn "Score ${score}/100：Not tuned"
+      warn "Score ${score}/100: Not tuned"
     fi
 
     local bk_info="Not created"
@@ -584,35 +584,48 @@ auto_open_firewall_port() {
   local tag="${3:-xray}"
 
   [[ -z "$port" ]] && return 0
-  local handled=0
+  # Report each firewall's real outcome; a failed rule must not look applied.
+  local detected=0
 
   # 1. Detect an active ufw firewall.
   if command -v ufw >/dev/null 2>&1; then
     if ufw status 2>/dev/null | grep -qi "Status: active"; then
-      ufw allow "${port}/${proto}" comment "Xray node ${tag}" >/dev/null 2>&1 && handled=1
-      ok "Firewall (ufw): allowed port ${port}/${proto}"
+      detected=1
+      if ufw allow "${port}/${proto}" comment "Xray node ${tag}" >/dev/null 2>&1; then
+        ok "Firewall (ufw): allowed port ${port}/${proto}"
+      else
+        warn "Firewall (ufw): could not allow port ${port}/${proto}; add the rule manually."
+      fi
     fi
   fi
 
   # 2. Detect an active firewalld firewall.
   if command -v firewall-cmd >/dev/null 2>&1; then
     if systemctl is-active --quiet firewalld 2>/dev/null; then
-      firewall-cmd --zone=public --add-port="${port}/${proto}" --permanent >/dev/null 2>&1 && \
-      firewall-cmd --reload >/dev/null 2>&1 && handled=1
-      ok "Firewall (firewalld): allowed port ${port}/${proto}"
+      detected=1
+      if firewall-cmd --zone=public --add-port="${port}/${proto}" --permanent >/dev/null 2>&1 && \
+        firewall-cmd --reload >/dev/null 2>&1; then
+        ok "Firewall (firewalld): allowed port ${port}/${proto}"
+      else
+        warn "Firewall (firewalld): could not allow port ${port}/${proto}; add the rule manually."
+      fi
     fi
   fi
 
   # 3. Add an allow rule when iptables policy would otherwise block the listener.
   if command -v iptables >/dev/null 2>&1; then
     if iptables -L INPUT -n 2>/dev/null | grep -q "Chain INPUT (policy DROP)"; then
-      iptables -C INPUT -p "${proto}" --dport "${port}" -j ACCEPT 2>/dev/null || \
-      iptables -I INPUT -p "${proto}" --dport "${port}" -j ACCEPT 2>/dev/null && handled=1
-      ok "Firewall (iptables): added allow rule for ${port}/${proto}"
+      detected=1
+      if iptables -C INPUT -p "${proto}" --dport "${port}" -j ACCEPT 2>/dev/null || \
+        iptables -I INPUT -p "${proto}" --dport "${port}" -j ACCEPT 2>/dev/null; then
+        ok "Firewall (iptables): added allow rule for ${port}/${proto}"
+      else
+        warn "Firewall (iptables): could not add an allow rule for ${port}/${proto}; add it manually."
+      fi
     fi
   fi
 
-  if (( handled == 0 )); then
+  if (( detected == 0 )); then
     info "No active firewall detected; port ${port} requires no additional local allow rule."
   fi
 }
@@ -1293,7 +1306,7 @@ setup_tls_certificate() {
   TLS_KEY_FILE=""
 
   echo
-  echo -e "${BOLD}Choose a TLS certificate source for domain: ${domain}）：${NC}"
+  echo -e "${BOLD}Choose a TLS certificate source for domain ${domain}:${NC}"
   echo "1) Generate a self-signed ECC certificate (fast; Cloudflare Full mode; no HTTP-01 validation)"
   echo "2) Use existing certificate and private key files"
   echo "3) Issue a free certificate using acme.sh (requires port 80 and DNS pointing to this VPS)"
@@ -2230,7 +2243,7 @@ reset_traffic_stats_interactive() {
           ok "Xray counters and persisted traffic totals reset."
           echo && read -rp "Press Enter to continue..." _dummy
           ;;
-        *) info "Cancelled。" ;;
+        *) info "Cancelled." ;;
       esac
       ;;
     2)
@@ -2356,7 +2369,7 @@ manage_user_node_binding_interactive() {
   read -r -p "Run $action for inbound $node? [y/N]: " confirm || confirm="N"
   case "$confirm" in
     y|Y|yes|YES) "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-user-action "$action" -local-user "$name" -local-node "$node" ;;
-    *) info "Cancelled。" ;;
+    *) info "Cancelled." ;;
   esac
 }
 
@@ -2414,7 +2427,7 @@ toggle_user_status_interactive() {
   case "$confirm" in
     y|Y|yes|YES)
       "$BOT_BIN_PATH" -c "$BOT_CONFIG_PATH" -local-user-action "$operation" -local-user "$selected" || warn "Operation failed. Check the local configuration or logs." ;;
-    *) info "Cancelled。" ;;
+    *) info "Cancelled." ;;
   esac
 }
 show_inbound_traffic() {
@@ -2781,7 +2794,7 @@ upgrade_xray_core_official() {
 
   local new_ver
   new_ver="$("$BIN" version 2>&1 | head -n1 || true)"
-  ok "Xray-core successfully updated to: ${new_ver:-Unknown version}！"
+  ok "Xray-core successfully updated to: ${new_ver:-Unknown version}"
 }
 
 update_rule_assets_interactive() {
@@ -3208,7 +3221,7 @@ add_new_node_interactive() {
   echo "————————————————————————————————————————————————"
   echo -e "  ${GREEN}1.${NC} VLESS + TCP + REALITY + Vision (direct)"
   echo -e "  ${GREEN}2.${NC} VLESS + XHTTP + REALITY (no domain required)"
-  echo -e "  ${GREEN}3.${NC} VLESS + XHTTP + TLS（CDN）"
+  echo -e "  ${GREEN}3.${NC} VLESS + XHTTP + TLS (CDN)"
   echo -e "  ${GREEN}0.${NC} Back to main menu"
   echo "————————————————————————————————————————————————"
 
@@ -4337,8 +4350,10 @@ main_menu() {
     echo -e " ${GREEN}11.${NC} $(cli_message language)"
     echo "------------------------------------------------"
 
+    # End of input exits; an accidental Enter only redraws the menu.
     read -r -p "$(cli_message prompt)" menu_choice || menu_choice="0"
-    case "${menu_choice:-0}" in
+    case "$menu_choice" in
+      "") continue ;;
       1) list_and_show_nodes || true ;;
       2) locked_config_operation add_new_node_interactive || true ;;
       3) locked_config_operation delete_node_interactive || true ;;

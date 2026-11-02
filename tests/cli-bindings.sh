@@ -111,4 +111,16 @@ fails backup_matches_live_config
 BIN=""
 fails commit_config '{"inbounds":[]}' 2>/dev/null
 
+# A failed firewall rule is reported as a failure, never as applied.
+(
+  systemctl() { return 1; }
+  iptables() { return 1; }
+  ufw() { [[ "$1" == "status" ]] && { echo "Status: active"; return 0; }; return 1; }
+  out="$(auto_open_firewall_port 8443 tcp test 2>&1)"
+  [[ "$out" == *"could not allow port 8443/tcp"* && "$out" != *"[OK]"* && "$out" != *"No active firewall"* ]]
+  ufw() { [[ "$1" == "status" ]] && echo "Status: active"; return 0; }
+  out="$(auto_open_firewall_port 8443 tcp test 2>&1)"
+  [[ "$out" == *"[OK] Firewall (ufw): allowed port 8443/tcp"* ]]
+)
+
 echo 'CLI binding compatibility checks passed'
