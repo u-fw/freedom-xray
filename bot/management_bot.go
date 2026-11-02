@@ -120,7 +120,15 @@ func (s *BotService) resolveUserChange(cb *tgCallback, confirm bool) {
 		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.changefailed", err.Error()), s.backToMainMarkup())
 		return
 	}
-	s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.completed", msg), s.backToMainMarkup())
+	notice := trh(s.cfg.Language, "manage.completed", msg)
+	switch request.Change.Kind {
+	case "delete", "disable":
+		s.sendOrEdit(chatID, msgID, notice, newKeyboard(newRow(newButton(tr(s.cfg.Language, "account.list"), "menu_users"), newButton(tr(s.cfg.Language, "menu.home"), "menu_main"))))
+	case "rename":
+		s.sendUserManageCardNotice(chatID, msgID, userCallbackKey(request.Change.NewName), notice)
+	default:
+		s.sendUserManageCardNotice(chatID, msgID, userCallbackKey(request.Change.User), notice)
+	}
 }
 
 func (s *BotService) handleUserManagementCommand(msg *tgMessage) bool {
@@ -193,6 +201,12 @@ func lookupManagedUserEmail(nodes []InboundDetails, key string) string {
 }
 
 func (s *BotService) sendUserManageCard(chatID int64, msgID int, key string) {
+	s.sendUserManageCardNotice(chatID, msgID, key, "")
+}
+
+// sendUserManageCardNotice shows a user's card, optionally with the outcome of
+// the admin's last action above it so the next step is one tap away.
+func (s *BotService) sendUserManageCardNotice(chatID int64, msgID int, key string, notice htmlText) {
 	nodes, err := LoadXrayInbounds(s.cfg.XrayConfigPath)
 	if err != nil {
 		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "nodes.failure", err.Error()), s.backToMainMarkup())
@@ -203,9 +217,12 @@ func (s *BotService) sendUserManageCard(chatID int64, msgID int, key string) {
 		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "users.empty"), s.backToMainMarkup())
 		return
 	}
-	var rows [][]tgButton
+	var nodeRows [][]tgButton
 	var content htmlBuilder
 	var usedBytes uint64
+	if notice != "" {
+		content.Add(notice, "\n\n")
+	}
 	content.Add(trh(s.cfg.Language, "account.title", email))
 	if root, e := decodeBindingMigrationConfig(s.cfg.XrayConfigPath); e == nil {
 		if ambiguous, e := trafficAmbiguities(s.cfg.XrayConfigPath, root); e == nil && ambiguous[email] {
@@ -261,15 +278,18 @@ func (s *BotService) sendUserManageCard(chatID int64, msgID int, key string) {
 		content.Add(trh(s.cfg.Language, "account.error", e.Error()))
 	}
 	limits, limitErr := snapshotUserLimits(s.cfg.XrayConfigPath)
+	hasLimits := false
 	if limitErr != nil {
 		content.Add(trh(s.cfg.Language, "account.limits.error", limitErr.Error()))
 	} else if limit, ok := limits[email]; ok && !limit.empty() {
+		hasLimits = true
 		content.Add(trh(s.cfg.Language, "account.limits.header"))
 		if limit.QuotaBytes > 0 {
 			content.Add(trh(s.cfg.Language, "account.limits.quota", FormatBytes(uint64(limit.QuotaBytes)), FormatBytes(usedBytes)))
+			content.Add(usageMeter(usedBytes, uint64(limit.QuotaBytes)), "\n")
 		}
 		if limit.ExpiryUnix > 0 {
-			content.Add(trh(s.cfg.Language, "account.limits.expiry", expiryLabel(limit, s.cfg.Language)))
+			content.Add(trh(s.cfg.Language, "account.limits.expiry", expiryLabel(limit, s.cfg.Language)+expiryCountdown(limit, time.Now(), s.cfg.Language)))
 		}
 	} else {
 		content.Add(trh(s.cfg.Language, "account.limits.none"))
@@ -296,35 +316,28 @@ func (s *BotService) sendUserManageCard(chatID int64, msgID int, key string) {
 			status = tr(s.cfg.Language, "account.assigned")
 		}
 		content.Add(esc(fmt.Sprintf("• %s (%d): %s\n", node.Tag, node.Port, status)))
-		rows = append(rows, newRow(
+		nodeRows = append(nodeRows, newRow(
 			newButton(mark+" "+truncateLabel(node.Tag, 28), "manage_node:"+op+":"+key+":"+userCallbackKey(node.Tag)),
 		))
 	}
-	rows = append(rows, newRow(
-		newButton(tr(s.cfg.Language, "account.refresh"), "manage_user:"+key),
-		newButton(tr(s.cfg.Language, "account.export"), "user_links:"+key),
-		newButton(tr(s.cfg.Language, "account.rename"), "manage_rename:"+key),
-	))
-	rows = append(rows, newRow(
-		newButton(tr(s.cfg.Language, "account.rotate"), "manage_rotate:"+key),
-	))
-	rows = append(rows, newRow(
-		newButton(tr(s.cfg.Language, "account.suspend"), "manage_disable:"+key),
-	))
-	rows = append(rows, newRow(
-		newButton(tr(s.cfg.Language, "account.quota"), "manage_quota:"+key),
-		newButton(tr(s.cfg.Language, "account.expiry"), "manage_expiry:"+key),
-	))
-	rows = append(rows, newRow(
-		newButton(tr(s.cfg.Language, "account.limitsclear"), "manage_limitclear:"+key),
-	))
-	rows = append(rows, newRow(
-		newButton(tr(s.cfg.Language, "account.trafficreset"), "manage_traffic:"+key),
-	))
-	rows = append(rows, newRow(
-		newButton(tr(s.cfg.Language, "account.delete"), "manage_delete:"+key),
-		newButton(tr(s.cfg.Language, "account.list"), "menu_users"),
-	))
+	lang := s.cfg.Language
+	// Sharing is the most frequent action; changes are hidden when remote
+	// changes are disabled instead of offering buttons that always fail.
+	rows := [][]tgButton{newRow(newButton(tr(lang, "account.export"), "user_links:"+key))}
+	if s.cfg.AllowMutations {
+		rows = append(rows, nodeRows...)
+		rows = append(rows,
+			newRow(newButton(tr(lang, "account.quota"), "manage_quota:"+key), newButton(tr(lang, "account.expiry"), "manage_expiry:"+key)),
+			newRow(newButton(tr(lang, "account.rename"), "manage_rename:"+key), newButton(tr(lang, "account.rotate"), "manage_rotate:"+key)),
+			newRow(newButton(tr(lang, "account.suspend"), "manage_disable:"+key), newButton(tr(lang, "account.trafficreset"), "manage_traffic:"+key)),
+		)
+		last := []tgButton{}
+		if hasLimits {
+			last = append(last, newButton(tr(lang, "account.limitsclear"), "manage_limitclear:"+key))
+		}
+		rows = append(rows, append(last, newButton(tr(lang, "account.delete"), "manage_delete:"+key)))
+	}
+	rows = append(rows, newRow(newButton(tr(lang, "account.list"), "menu_users"), newButton(tr(lang, "account.refresh"), "manage_user:"+key), newButton(tr(lang, "menu.home"), "menu_main")))
 	content.Add(trh(s.cfg.Language, "account.footer"))
 	s.sendOrEdit(chatID, msgID, content.HTML(), newKeyboard(rows...))
 }

@@ -124,6 +124,28 @@ func quotaLabel(limit userLimit, lang string) string {
 	return FormatBytes(uint64(limit.QuotaBytes))
 }
 
+// usageMeter draws a ten-segment meter of used against a quota.
+func usageMeter(used, quota uint64) htmlText {
+	if quota == 0 {
+		return ""
+	}
+	percent := float64(used) * 100 / float64(quota)
+	filled := min(int(percent/10), 10)
+	return code(strings.Repeat("▰", filled)+strings.Repeat("▱", 10-filled)) + esc(fmt.Sprintf(" %.0f%%", percent))
+}
+
+// expiryCountdown describes how far away an expiry date is.
+func expiryCountdown(limit userLimit, now time.Time, lang string) string {
+	if limit.ExpiryUnix <= 0 {
+		return ""
+	}
+	remaining := time.Unix(limit.ExpiryUnix, 0).Sub(now)
+	if remaining <= 0 {
+		return tr(lang, "account.limits.expired")
+	}
+	return tr(lang, "account.limits.daysleft", int(math.Ceil(remaining.Hours()/24)))
+}
+
 func expiryLabel(limit userLimit, lang string) string {
 	if limit.ExpiryUnix <= 0 {
 		return tr(lang, "limit.never")
