@@ -28,7 +28,7 @@ NC='\033[0m'
 
 export PATH="$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
 
-SCRIPT_VERSION="v13.6.1"
+SCRIPT_VERSION="v13.6.2"
 # Optional client-side ECH configuration for XHTTP/TLS links; does not modify origin TLS.
 XHTTP_CDN_ECH_CONFIG="cloudflare-ech.com+https://dns.alidns.com/dns-query"
 DEFAULT_SNI="www.nvidia.com"
@@ -53,6 +53,8 @@ BACKUP_FILE=""
 # SHA-256 of the live config this manager last snapshotted or committed. The
 # snapshot is only offered for restore while the live file still matches it.
 BACKUP_TRACKED_SHA=""
+# Uninstall archives the configuration directory here before removing it.
+UNINSTALL_BACKUP_DIR="/root"
 
 BOT_BIN_PATH="/usr/local/bin/freedom-bot"
 BOT_CONFIG_PATH="$CONFIG_DIR/bot.json"
@@ -4186,18 +4188,39 @@ uninstall_xray_completely() {
   read -r -p "Permanently uninstall Xray and its configuration? [y/N]: " u_ans || u_ans="N"
   case "${u_ans:-N}" in
     y|Y|yes|YES)
-      systemctl stop "$BOT_SERVICE" 2>/dev/null || true
-      systemctl disable "$BOT_SERVICE" 2>/dev/null || true
-      rm -f "$BOT_SERVICE_FILE" "$BOT_BIN_PATH"
-
-      systemctl stop "$SERVICE_NAME" 2>/dev/null || true
-      systemctl disable "$SERVICE_NAME" 2>/dev/null || true
-      if [[ -x "/usr/local/bin/xray" ]]; then
-        bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove --purge 2>/dev/null || true
+      # Users, credentials and accounting live in the configuration directory;
+      # keep a private archive so an accidental uninstall stays recoverable.
+      if [[ -d "$CONFIG_DIR" ]]; then
+        local archive="${UNINSTALL_BACKUP_DIR}/freedom-xray-backup-$(date +%Y%m%d%H%M%S).tar.gz"
+        if (umask 077 && tar -czf "$archive" -C "$(dirname "$CONFIG_DIR")" "$(basename "$CONFIG_DIR")"); then
+          ok "Configuration archived to ${archive} (contains credentials; mode 0600)."
+        else
+          rm -f "$archive"
+          warn "Could not archive ${CONFIG_DIR}; uninstall stopped and nothing was removed."
+          return 1
+        fi
       fi
-      rm -rf "$CONFIG_DIR" "/etc/systemd/system/xray.service.d"
+      # Offer to undo kernel tuning while its original snapshot still exists.
+      if [[ -f /etc/sysctl.d/99-xray-tuning.conf ]]; then
+        restore_linux_kernel_tuning || true
+      fi
+      local unit
+      for unit in "$BOT_SERVICE" freedom-stats "$SERVICE_NAME" "xray@*"; do
+        systemctl stop "$unit" 2>/dev/null || true
+        systemctl disable "$unit" 2>/dev/null || true
+      done
+      rm -f "$BOT_SERVICE_FILE" "$BOT_BIN_PATH" /etc/systemd/system/freedom-stats.service
+      # Remove the core locally instead of downloading and running the installer.
+      rm -rf /usr/local/bin/xray /usr/local/share/xray /var/log/xray \
+        /etc/systemd/system/xray.service /etc/systemd/system/xray@.service \
+        /etc/systemd/system/xray.service.d /etc/systemd/system/xray@.service.d \
+        "$CONFIG_DIR"
       systemctl daemon-reload 2>/dev/null || true
-      ok "Xray and Freedom Bot have been completely uninstalled."
+      ok "Xray, Freedom Bot and the statistics collector have been uninstalled."
+      info "Kept: the 'freedom' command. Remove it with: rm /usr/local/bin/freedom"
+      if [[ -f /etc/sysctl.d/99-xray-tuning.conf ]]; then
+        info "Kernel tuning remains; undo it with: rm /etc/sysctl.d/99-xray-tuning.conf && sysctl --system"
+      fi
       exit 0
       ;;
     *) info "Uninstall cancelled." ;;

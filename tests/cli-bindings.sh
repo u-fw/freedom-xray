@@ -123,4 +123,21 @@ fails commit_config '{"inbounds":[]}' 2>/dev/null
   [[ "$out" == *"[OK] Firewall (ufw): allowed port 8443/tcp"* ]]
 )
 
+# Uninstall archives the configuration first and never runs a remote script.
+(
+  backup_dir="$(mktemp -d)"
+  trap 'rm -rf -- "$backup_dir"' EXIT
+  UNINSTALL_BACKUP_DIR="$backup_dir"
+  rm() { printf '%s\n' "$*" >> "$backup_dir/rm-args"; }
+  systemctl() { :; }
+  curl() { echo "curl must not run" >&2; return 1; }
+  restore_linux_kernel_tuning() { :; }
+  out="$(uninstall_xray_completely <<< 'y' 2>&1)" || true
+  archive="$(find "$backup_dir" -name 'freedom-xray-backup-*.tar.gz')"
+  [[ -n "$archive" && "$(stat -c %a "$archive")" == 600 ]]
+  tar -tzf "$archive" | grep -q 'config.json'
+  grep -q -- '-rf /usr/local/bin/xray' "$backup_dir/rm-args"
+  [[ "$out" != *'curl must not run'* && "$out" == *'Configuration archived to'* ]]
+)
+
 echo 'CLI binding compatibility checks passed'
