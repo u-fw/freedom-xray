@@ -36,6 +36,10 @@ func (s *BotService) sendToolsCard(chatID int64, msgID int) {
 
 // Version diagnostics are read-only and remain available even when updates are disabled.
 func (s *BotService) sendVersionCard(chatID int64, msgID int) {
+	s.renderLater(chatID, msgID, trh(s.cfg.Language, "update.checking"), s.versionScreen)
+}
+
+func (s *BotService) versionScreen() (htmlText, tgKeyboard) {
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cancel()
 	var body htmlBuilder
@@ -67,7 +71,7 @@ func (s *BotService) sendVersionCard(chatID int64, msgID int) {
 		newRow(newButton(tr(s.cfg.Language, "version.refresh"), "menu_version")),
 		toolsNavRow(s.cfg.Language),
 	)
-	s.sendOrEdit(chatID, msgID, body.HTML(), keyboard)
+	return body.HTML(), keyboard
 }
 
 func (s *BotService) sendHelpCard(chatID int64, msgID int) {

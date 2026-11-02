@@ -426,7 +426,7 @@ func (s *BotService) handleCallback(cb *tgCallback) {
 	case strings.HasPrefix(data, "lang_set:"):
 		s.setLanguage(chatID, msgID, strings.TrimPrefix(data, "lang_set:"))
 	case data == "update_all":
-		s.runSafeUpdates(chatID, msgID, []string{"script", "bot"})
+		s.askUpdateAll(chatID, cb.From.ID, msgID)
 	case strings.HasPrefix(data, "update_ask:"):
 		s.askUpdate(cb, strings.TrimPrefix(data, "update_ask:"))
 	case strings.HasPrefix(data, "update_confirm:"):
@@ -612,26 +612,32 @@ func (s *BotService) sendTextChunks(chatID int64, text htmlText) {
 // Bodies longer than one Telegram message are split; the first part stays in
 // the edited/sent message and the remainder are tracked continuations.
 func (s *BotService) sendOrEdit(chatID int64, msgID int, text htmlText, markup tgKeyboard) {
+	s.showScreen(chatID, msgID, text, markup)
+}
+
+// showScreen is sendOrEdit that also reports the message now showing the screen
+// and its render number, or zero when nothing could be delivered.
+func (s *BotService) showScreen(chatID int64, msgID int, text htmlText, markup tgKeyboard) (int, uint64) {
 	chunks := splitTelegramHTML(text, telegramChunkLimit)
 	if msgID > 0 {
 		if err := s.tg.editText(chatID, msgID, string(chunks[0]), "HTML", &markup); err == nil {
 			s.deleteChunkTail(chatID, msgID)
 			s.sendChunkTail(chatID, msgID, chunks[1:])
-			return
+			return msgID, markScreenRender(chatID, msgID)
 		} else if strings.Contains(err.Error(), "message is not modified") {
 			// User pressed the same refresh button twice; the card is already
 			// up to date, so there is nothing to resend.
-			return
+			return msgID, markScreenRender(chatID, msgID)
 		} else {
 			log.Printf("[Bot] edit message failed: %v", err)
 		}
 
-		// Malformed Markdown must not duplicate the card; retry the same
+		// Malformed HTML must not duplicate the card; retry the same
 		// message as plain text before falling back to a new message.
 		if err := s.tg.editText(chatID, msgID, plainHTML(chunks[0]), "", &markup); err == nil {
 			s.deleteChunkTail(chatID, msgID)
 			s.sendChunkTail(chatID, msgID, chunks[1:])
-			return
+			return msgID, markScreenRender(chatID, msgID)
 		} else {
 			log.Printf("[Bot] plain-text edit failed: %v", err)
 		}
@@ -640,14 +646,15 @@ func (s *BotService) sendOrEdit(chatID int64, msgID int, text htmlText, markup t
 	sent, err := s.tg.sendText(chatID, string(chunks[0]), "HTML", &markup, false)
 	if err != nil {
 		log.Printf("[Bot] send message failed: %v", err)
-		// A malformed Markdown entity must not swallow the whole card; resend
+		// A malformed HTML entity must not swallow the whole card; resend
 		// as plain text without parse mode.
 		if sent, err = s.tg.sendText(chatID, plainHTML(chunks[0]), "", &markup, false); err != nil {
 			log.Printf("[Bot] plain-text fallback failed: %v", err)
-			return
+			return 0, 0
 		}
 	}
 	s.sendChunkTail(chatID, sent, chunks[1:])
+	return sent, markScreenRender(chatID, sent)
 }
 
 func (s *BotService) sendMainMenu(chatID int64, msgID int) {
