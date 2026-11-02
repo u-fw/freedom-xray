@@ -355,6 +355,9 @@ func (s *BotService) handleCallback(cb *tgCallback) {
 		s.resolveRoutingChange(cb, true)
 	case strings.HasPrefix(data, "routing_cancel:"):
 		s.resolveRoutingChange(cb, false)
+	case strings.HasPrefix(data, "traffic_page:"):
+		offset, _ := strconv.Atoi(strings.TrimPrefix(data, "traffic_page:"))
+		s.sendTrafficPage(chatID, msgID, offset)
 	case data == "menu_traffic":
 		s.sendTrafficCard(chatID, msgID)
 	case data == "menu_inbound_traffic":
@@ -729,7 +732,15 @@ func (s *BotService) sendStatusCard(chatID int64, msgID int) {
 	s.sendOrEdit(chatID, msgID, text, markup)
 }
 
+// trafficPageSize keeps a page well inside one Telegram message, so the
+// buttons stay directly under the rows they act on.
+const trafficPageSize = 15
+
 func (s *BotService) sendTrafficCard(chatID int64, msgID int) {
+	s.sendTrafficPage(chatID, msgID, 0)
+}
+
+func (s *BotService) sendTrafficPage(chatID int64, msgID, offset int) {
 	state, err := snapshotTraffic(s.cfg.XrayConfigPath, s.cfg.XrayBinPath, s.cfg.StatsAPIServer)
 	if err != nil {
 		cached, readErr := loadTrafficStore(s.cfg.XrayConfigPath)
@@ -754,12 +765,29 @@ func (s *BotService) sendTrafficCard(chatID int64, msgID int) {
 		sb.Add(trh(s.cfg.Language, "traffic.stale", err.Error()))
 	}
 
+	var pages []tgButton
 	if len(traffics) == 0 {
 		sb.Add(trh(s.cfg.Language, "traffic.empty"))
 	} else {
 		var totalAll uint64
 		for _, u := range traffics {
 			totalAll += u.Total
+		}
+		if offset < 0 || offset >= len(traffics) {
+			offset = 0
+		}
+		offset -= offset % trafficPageSize
+		end := min(offset+trafficPageSize, len(traffics))
+		if len(traffics) > trafficPageSize {
+			sb.Add(trh(s.cfg.Language, "users.page", offset/trafficPageSize+1, (len(traffics)+trafficPageSize-1)/trafficPageSize, len(traffics)))
+			if offset > 0 {
+				pages = append(pages, newButton(tr(s.cfg.Language, "common.prev"), fmt.Sprintf("traffic_page:%d", offset-trafficPageSize)))
+			}
+			if end < len(traffics) {
+				pages = append(pages, newButton(tr(s.cfg.Language, "common.next"), fmt.Sprintf("traffic_page:%d", end)))
+			}
+		}
+		for _, u := range traffics[offset:end] {
 			sb.Add(trh(s.cfg.Language, "traffic.row",
 				u.Email,
 				FormatBytes(u.Uplink),
@@ -779,18 +807,22 @@ func (s *BotService) sendTrafficCard(chatID int64, msgID int) {
 		}
 	}
 	trafficActions := []tgButton{
-		newButton(tr(s.cfg.Language, "common.refresh"), "menu_traffic"),
+		newButton(tr(s.cfg.Language, "common.refresh"), fmt.Sprintf("traffic_page:%d", offset)),
 	}
 	if s.cfg.AllowMutations {
 		trafficActions = append(trafficActions, newButton(tr(s.cfg.Language, "traffic.reset"), "traffic_reset_ask"))
 	}
-	rows := [][]tgButton{
+	var rows [][]tgButton
+	if len(pages) > 0 {
+		rows = append(rows, pages)
+	}
+	rows = append(rows,
 		newRow(trafficActions...),
 		newRow(
 			newButton(tr(s.cfg.Language, "traffic.inbounds"), "menu_inbound_traffic"),
 			newButton(tr(s.cfg.Language, "menu.home"), "menu_main"),
 		),
-	}
+	)
 	if len(trafficMissing) > 0 {
 		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "stats.open"), "menu_stats")))
 	}
