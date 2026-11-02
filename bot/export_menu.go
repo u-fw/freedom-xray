@@ -163,12 +163,14 @@ func (s *BotService) handleUserExportCallback(cb *tgCallback, mode string) {
 }
 
 func (s *BotService) sendUserLink(chatID int64, item userExportEntry, email, uri string) bool {
-	label := tr(s.cfg.Language, "export.linklabel", item.Node.Tag, item.Node.SharePort(), email, item.Node.Network, item.Node.Security)
+	label := trh(s.cfg.Language, "export.linklabel", item.Node.Tag, item.Node.SharePort(), email, item.Node.Network, item.Node.Security)
 	if item.Node.SharePort() != item.Node.Port {
-		label += tr(s.cfg.Language, "export.originport", item.Node.Port)
+		label += trh(s.cfg.Language, "export.originport", item.Node.Port)
 	}
-	payload := label + uri
-	if len(payload) > 3500 {
+	// Telegram undoes the HTML escaping, so the tap-to-copy code span holds
+	// exactly the generated URI. Never trim or reformat it.
+	payload := label + code(uri)
+	if len(payload) > telegramChunkLimit {
 		name := fmt.Sprintf("freedom-node-%s-%d.txt", userCallbackKey(item.Node.Tag)[:8], item.Node.SharePort())
 		if err := s.tg.sendDocument(chatID, name, []byte(uri+"\n"), tr(s.cfg.Language, "export.txtcaption", item.Node.Tag, item.Node.SharePort())); err != nil {
 			log.Printf("[Bot] VLESS TXT send failed for node %s: %v", item.Node.Tag, err)
@@ -177,9 +179,15 @@ func (s *BotService) sendUserLink(chatID int64, item userExportEntry, email, uri
 		}
 		return true
 	}
-	// Plain text is essential: post-quantum query parameters often contain
-	// Markdown metacharacters. Never trim, reformat or Markdown-escape the URI.
-	if _, err := s.tg.sendText(chatID, payload, "", nil, true); err != nil {
+	var keyboard *tgKeyboard
+	if len(uri) <= telegramCopyTextLimit {
+		copyButton := newKeyboard(newRow(tgButton{Text: tr(s.cfg.Language, "export.copy"), Copy: uri}))
+		keyboard = &copyButton
+	}
+	if _, err := s.tg.sendText(chatID, string(payload), "HTML", keyboard, true); err == nil {
+		return true
+	}
+	if _, err := s.tg.sendText(chatID, plainHTML(label)+uri, "", nil, true); err != nil {
 		log.Printf("[Bot] VLESS text send failed for node %s: %v", item.Node.Tag, err)
 		s.sendAlert(chatID, trh(s.cfg.Language, "export.linkfail", item.Node.Tag, item.Node.Port, err.Error()))
 		return false

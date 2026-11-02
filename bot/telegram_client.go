@@ -19,6 +19,8 @@ const (
 	// Keep long polling below the HTTP client timeout so an idle poll ends
 	// normally instead of as a client timeout.
 	telegramPollSeconds = 25
+	// Telegram copies at most this many characters from a copy_text button.
+	telegramCopyTextLimit = 256
 )
 
 // telegramClient is the only component that uses the Bot API library.
