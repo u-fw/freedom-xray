@@ -685,7 +685,7 @@ func (s *BotService) sendMainMenuNotice(chatID int64, msgID int, notice htmlText
 	if s.cfg.AllowUpdates {
 		updateState = tr(s.cfg.Language, "menu.updates.enabled")
 	}
-	content := trh(s.cfg.Language, "menu.dashboard", hostname, state, status, len(nodes), userCount, Version, updateState)
+	content := trh(s.cfg.Language, "menu.dashboard", hostname, state, status, len(nodes), userCount, Version, updateState, dashboardSummary(s.cfg.Language, s.cfg.XrayConfigPath, time.Now()))
 	if notice != "" {
 		content = notice + "\n\n" + content
 	}
