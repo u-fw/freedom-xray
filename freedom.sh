@@ -28,7 +28,7 @@ NC='\033[0m'
 
 export PATH="$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
 
-SCRIPT_VERSION="v13.6.2"
+SCRIPT_VERSION="v13.6.3"
 # Optional client-side ECH configuration for XHTTP/TLS links; does not modify origin TLS.
 XHTTP_CDN_ECH_CONFIG="cloudflare-ech.com+https://dns.alidns.com/dns-query"
 DEFAULT_SNI="www.nvidia.com"
@@ -2990,6 +2990,10 @@ list_and_show_nodes() {
   echo "—————————————————————————————————————————————————————————————————"
 
   local i=0
+  # With the Bot installed, links are exported per user through its agent;
+  # this overview then shows inbound settings without anyone's credentials.
+  local per_user_links=0
+  [[ -x "$BOT_BIN_PATH" ]] && per_user_links=1
   while ((i < count)); do
     local ib_json
     ib_json="$(echo "$nodes_json" | jq -c --argjson idx "$i" '.[$idx]')"
@@ -3073,16 +3077,23 @@ list_and_show_nodes() {
       info "ECH parameters are included in the client link. The CDN must publish valid ECH DNS records and the client must support ECH; remove ECH when troubleshooting."
     fi
 
-    if [[ "$enc_param" != "none" ]]; then
+    if [[ "$enc_param" != "none" ]] && (( per_user_links == 0 )); then
       echo "  - Post-quantum encryption: ML-KEM-768 (Paired client encryption was included in the sharing link)"
     fi
 
-    if [[ -n "$link" ]]; then
+    if [[ -n "$link" ]] && (( per_user_links == 0 )); then
       echo -e "  - ${GREEN}${BOLD}VLESS link:${NC}\n    ${link}"
     fi
 
     i=$((i + 1))
   done
+
+  if (( per_user_links == 1 )); then
+    echo
+    info "Links belong to users: open 5) Manage users, then 1) View user links and QR codes."
+    echo && read -rp "Press Enter to continue..." _dummy
+    return 0
+  fi
 
   echo
   read -r -p "Generate a terminal QR code? Choose inbound 1-${count}, or press Enter to skip: " qr_idx || qr_idx=""

@@ -140,4 +140,16 @@ fails commit_config '{"inbounds":[]}' 2>/dev/null
   [[ "$out" != *'curl must not run'* && "$out" == *'Configuration archived to'* ]]
 )
 
+# With the Bot installed, the inbound overview shows nobody's credentials.
+(
+  ensure_config_scaffold() { :; }
+  cat > "$CONFIG_PATH" <<'JSON'
+{"inbounds":[{"tag":"raw","port":443,"protocol":"vless","settings":{"clients":[{"id":"test-uuid","email":"alice+cmF3","flow":"xtls-rprx-vision"}]},"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"serverNames":["example.com"],"shortIds":["abcd"],"privateKey":"key"}}}]}
+JSON
+  out="$(BOT_BIN_PATH="$agent_bot" list_and_show_nodes <<< $'\n' 2>&1)"
+  [[ "$out" == *'raw'* && "$out" != *'vless://'* && "$out" == *'Links belong to users'* ]]
+  out="$(BOT_BIN_PATH="$work_dir/missing-bot" list_and_show_nodes <<< $'\n\n' 2>&1)"
+  [[ "$out" == *'vless://test-uuid@'* ]]
+)
+
 echo 'CLI binding compatibility checks passed'
