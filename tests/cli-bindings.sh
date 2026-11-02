@@ -33,10 +33,25 @@ export CONFIG_DIR
 
 get_public_ip() { printf '%s' '203.0.113.1'; }
 derive_reality_public_key() { printf '%s' 'public-key'; }
-links="$(show_user_node_links alice test-uuid <<< $'\n')"
+# Without the Bot binary the terminal still builds links locally.
+links="$(BOT_BIN_PATH="$work_dir/missing-bot" show_user_node_links alice test-uuid <<< $'\n' 2>/dev/null)"
 [[ "$links" == *'vless://test-uuid@203.0.113.1:443?'* ]]
 [[ "$links" == *'vless://test-uuid@example.com:8443?'* ]]
 [[ "$links" != *'not assigned to the inbound'* ]]
+
+# With the Bot binary, links come from its agent, exactly as Telegram exports them.
+agent_bot="$work_dir/agent-bot"
+cat > "$agent_bot" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$CONFIG_DIR/agent-args"
+cat > "$CONFIG_DIR/agent-input"
+printf '%s\n' '{"schema_version":1,"operation":"users.export","ok":true,"data":[{"tag":"raw","uri":"vless://agent-link@vpn.example.com:443?security=reality#raw"}]}'
+SH
+chmod 700 "$agent_bot"
+links="$(BOT_BIN_PATH="$agent_bot" show_user_node_links alice test-uuid <<< $'\n')"
+[[ "$links" == *'vless://agent-link@vpn.example.com:443?security=reality#raw'* && "$links" != *'203.0.113.1'* ]]
+[[ "$(cat "$CONFIG_DIR/agent-args")" == "agent users.export --include-sensitive --config $BOT_CONFIG_PATH" ]]
+[[ "$(jq -c . "$CONFIG_DIR/agent-input")" == '{"user":"alice"}' ]]
 
 manage_user_node_binding_interactive alice <<< $'1\ny\n' >/dev/null
 grep -q -- '-local-user-action unassign -local-user alice -local-node raw' "$CONFIG_DIR/bot-args"

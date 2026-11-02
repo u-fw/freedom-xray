@@ -28,7 +28,7 @@ NC='\033[0m'
 
 export PATH="$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
 
-SCRIPT_VERSION="v13.5.3"
+SCRIPT_VERSION="v13.6.0"
 # Optional client-side ECH configuration for XHTTP/TLS links; does not modify origin TLS.
 XHTTP_CDN_ECH_CONFIG="cloudflare-ech.com+https://dns.alidns.com/dns-query"
 DEFAULT_SNI="www.nvidia.com"
@@ -1951,6 +1951,53 @@ public_share_port_for_inbound() {
   if [[ "$mapped" =~ ^[0-9]+$ ]]; then printf "%s" "$mapped"; else printf "%s" "$listen"; fi
 }
 
+show_terminal_qr() {
+  local link="$1"
+  if ! command -v qrencode >/dev/null 2>&1; then
+    install_packages qrencode || true
+  fi
+  if command -v qrencode >/dev/null 2>&1; then
+    echo
+    qrencode -t ANSIUTF8 "$link" || warn "QR output failed; import using the VLESS link instead."
+  fi
+}
+
+# Print a user's links from the Bot agent and offer a terminal QR code.
+show_agent_user_links() {
+  local user="$1" response
+  response="$(jq -cn --arg user "$user" '{user: $user}' | "$BOT_BIN_PATH" agent users.export --include-sensitive --config "$BOT_CONFIG_PATH" 2>/dev/null)" || true
+  if [[ "$(jq -r '.ok // false' <<< "$response" 2>/dev/null)" != "true" ]]; then
+    warn "Link export failed: $(jq -r '.error.message // "the Bot agent returned no result"' <<< "$response" 2>/dev/null || echo "the Bot agent returned no result")"
+    echo && read -rp "Press Enter to continue..." _dummy
+    return 0
+  fi
+  local -a tags=() uris=()
+  local tag uri
+  while IFS=$'\t' read -r tag uri; do
+    [[ -n "$uri" ]] || continue
+    tags+=("$tag")
+    uris+=("$uri")
+  done < <(jq -r '.data[]? | [.tag, .uri] | @tsv' <<< "$response")
+  if ((${#uris[@]} == 0)); then
+    warn "User ${user} has no exportable links."
+    echo && read -rp "Press Enter to continue..." _dummy
+    return 0
+  fi
+  local i
+  for i in "${!uris[@]}"; do
+    echo
+    echo -e "${BOLD}${CYAN}[Inbound $((i+1))] ${tags[$i]}${NC}"
+    echo -e "  - ${GREEN}${BOLD}VLESS import link:${NC}\n    ${uris[$i]}"
+  done
+  echo
+  local qr_idx qr_index
+  read -r -p "Generate a terminal QR code for an inbound? Choose 1-${#uris[@]}, or press Enter to skip: " qr_idx || qr_idx=""
+  if qr_index="$(menu_index "$qr_idx" "${#uris[@]}")"; then
+    show_terminal_qr "${uris[$qr_index]}"
+  fi
+  echo && read -rp "Press Enter to continue..." _dummy
+}
+
 show_user_node_links() {
   local users
   users="$(get_all_system_users)"
@@ -1985,6 +2032,14 @@ show_user_node_links() {
     sel_email="${chosen%%|*}"
     sel_uuid="${chosen##*|}"
   fi
+
+  # The Bot's agent builds links exactly like Telegram exports, including
+  # server_host, public ports, TLS server names and REALITY parameters.
+  if [[ -x "$BOT_BIN_PATH" ]]; then
+    show_agent_user_links "$sel_email"
+    return 0
+  fi
+  warn "Bot binary not installed; links are built locally and ignore server_host. Install the Bot for exact exports."
 
   local server_ip
   server_ip="$(get_public_ip)"
@@ -2093,15 +2148,7 @@ show_user_node_links() {
   local qr_index
   if qr_index="$(menu_index "$qr_idx" "$n_count")"; then
     local sel_link="${node_links[$qr_index]}"
-    if [[ -n "$sel_link" ]]; then
-      if ! command -v qrencode >/dev/null 2>&1; then
-        install_packages qrencode || true
-      fi
-      if command -v qrencode >/dev/null 2>&1; then
-        echo
-        qrencode -t ANSIUTF8 "$sel_link" || warn "QR output failed; import using the VLESS link instead."
-      fi
-    fi
+    [[ -z "$sel_link" ]] || show_terminal_qr "$sel_link"
   fi
   echo && read -rp "Press Enter to continue..." _dummy
 }
