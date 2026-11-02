@@ -156,7 +156,9 @@ func (s *BotService) sendOutboundDetail(chatID int64, msgID, index int, etag str
 	if protected {
 		body += trh(s.cfg.Language, "routing.guide.protected")
 	}
-	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "config.export.button"), nativeConfigExportCallback("outbound", index, etag))))
+	if s.cfg.AllowSensitiveBackup {
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "config.export.button"), nativeConfigExportCallback("outbound", index, etag))))
+	}
 	offset := ((index - 1) / routingPageSize) * routingPageSize
 	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "outbound.back"), fmt.Sprintf("ob:page:%d", offset)), newButton(tr(s.cfg.Language, "menu.home"), "menu_main")))
 	s.sendOrEdit(chatID, msgID, body, newKeyboard(rows...))

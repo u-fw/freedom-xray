@@ -70,7 +70,7 @@ func (s *BotService) sendXraySectionDetail(chatID int64, msgID int, name, etag, 
 		body += "\n" + esc(notice)
 	}
 	var rows [][]tgButton
-	if record.Configured {
+	if record.Configured && s.cfg.AllowSensitiveBackup {
 		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "config.export.button"), nativeConfigExportCallback("section", xraySectionIndex(name), etag))))
 	}
 	if s.cfg.AllowMutations {

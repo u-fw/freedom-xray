@@ -23,10 +23,15 @@ func toolsNavRow(lang string) []tgButton {
 
 func (s *BotService) sendToolsCard(chatID int64, msgID int) {
 	lang := s.cfg.Language
+	// Backups contain credentials; offer them only when sensitive exports are allowed.
+	serverRow := newRow(newButton(tr(lang, "serverhost.button"), "routing_manage:server_host"))
+	if s.cfg.AllowSensitiveBackup {
+		serverRow = append(serverRow, newButton(tr(lang, "menu.backup"), "menu_backup"))
+	}
 	markup := newKeyboard(
 		newRow(newButton(tr(lang, "menu.update"), "menu_update_center"), newButton(tr(lang, "menu.version"), "menu_version")),
 		newRow(newButton(tr(lang, "menu.stats"), "menu_stats"), newButton(tr(lang, "menu.onlinedoctor"), "menu_online_doctor")),
-		newRow(newButton(tr(lang, "serverhost.button"), "routing_manage:server_host"), newButton(tr(lang, "menu.backup"), "menu_backup")),
+		serverRow,
 		newRow(newButton(tr(lang, "xray.section.menu"), "xs:page")),
 		newRow(newButton(languageButtonLabel("en", lang), "lang_set:en"), newButton(languageButtonLabel("zh-CN", lang), "lang_set:zh-CN")),
 		newRow(newButton(tr(lang, "menu.help"), "menu_help"), newButton(tr(lang, "menu.home"), "menu_main")),
@@ -75,10 +80,19 @@ func (s *BotService) versionScreen() (htmlText, tgKeyboard) {
 }
 
 func (s *BotService) sendHelpCard(chatID int64, msgID int) {
-	msg := trh(s.cfg.Language, "help.body")
+	var msg htmlBuilder
+	msg.Add(trh(s.cfg.Language, "help.title"))
+	for _, command := range adminCommands(s.cfg.Language) {
+		usage := "/" + command.Command
+		if args := commandArguments[command.Command]; args != "" {
+			usage += " " + args
+		}
+		msg.Add(code(usage), " — ", esc(command.Description), "\n")
+	}
+	msg.Add(trh(s.cfg.Language, "help.footer"))
 	markup := newKeyboard(
 		newRow(newButton(tr(s.cfg.Language, "menu.users"), "menu_users"), newButton(tr(s.cfg.Language, "help.update"), "menu_update_center")),
 		toolsNavRow(s.cfg.Language),
 	)
-	s.sendOrEdit(chatID, msgID, msg, markup)
+	s.sendOrEdit(chatID, msgID, msg.HTML(), markup)
 }

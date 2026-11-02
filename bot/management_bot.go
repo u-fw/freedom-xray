@@ -510,12 +510,10 @@ func (s *BotService) resolveUserTrafficReset(cb *tgCallback, confirm bool) {
 	}
 	if err := resetUserTrafficWithIdentity(s.cfg.XrayConfigPath, s.cfg.XrayBinPath, s.cfg.StatsAPIServer, email, item.Identity); err != nil {
 		log.Printf("[Bot] user traffic reset for %s failed: %v", email, err)
-		s.sendAlert(chatID, trh(s.cfg.Language, "traffic.userreset.failed", err.Error()))
-		s.sendUserManageCard(chatID, msgID, key)
+		s.sendUserManageCardNotice(chatID, msgID, key, trh(s.cfg.Language, "traffic.userreset.failed", err.Error()))
 		return
 	}
-	s.sendAlert(chatID, trh(s.cfg.Language, "traffic.userreset.done", email))
-	s.sendUserManageCard(chatID, msgID, key)
+	s.sendUserManageCardNotice(chatID, msgID, key, trh(s.cfg.Language, "traffic.userreset.done", email))
 }
 
 func (s *BotService) sendDisabledUsersCard(chatID int64, msgID int) {

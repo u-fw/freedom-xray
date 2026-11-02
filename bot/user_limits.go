@@ -534,8 +534,7 @@ func (s *BotService) handleUserLimitInput(msg *tgMessage) bool {
 		if !clear {
 			label = FormatBytes(uint64(bytes))
 		}
-		s.sendAlert(chatID, trh(s.cfg.Language, "limit.quotaset", state.Email, label))
-		s.sendUserManageCard(chatID, 0, key)
+		s.sendUserManageCardNotice(chatID, 0, key, trh(s.cfg.Language, "limit.quotaset", state.Email, label))
 	case "expiry":
 		stamp, clear, err := parseExpiryInput(value, time.Now())
 		if err != nil {
@@ -567,8 +566,7 @@ func (s *BotService) handleUserLimitInput(msg *tgMessage) bool {
 		if !clear {
 			label = time.Unix(stamp, 0).UTC().Format("2006-01-02")
 		}
-		s.sendAlert(chatID, trh(s.cfg.Language, "limit.expiryset", state.Email, label))
-		s.sendUserManageCard(chatID, 0, key)
+		s.sendUserManageCardNotice(chatID, 0, key, trh(s.cfg.Language, "limit.expiryset", state.Email, label))
 	default:
 		endUserLimitInput(chatID)
 		s.sendAlert(chatID, trh(s.cfg.Language, "limit.unknown"))
@@ -593,8 +591,7 @@ func (s *BotService) clearUserLimits(chatID int64, msgID int, key, email string)
 		return
 	}
 	if _, ok := limits[email]; !ok {
-		s.sendAlert(chatID, trh(s.cfg.Language, "limit.none", email))
-		s.sendUserManageCard(chatID, msgID, key)
+		s.sendUserManageCardNotice(chatID, msgID, key, trh(s.cfg.Language, "limit.none", email))
 		return
 	}
 	err := updateUserLimits(s.cfg.XrayConfigPath, func(users map[string]userLimit) error {
@@ -605,8 +602,7 @@ func (s *BotService) clearUserLimits(chatID int64, msgID int, key, email string)
 		s.sendAlert(chatID, trh(s.cfg.Language, "limit.savefailed", err.Error()))
 		return
 	}
-	s.sendAlert(chatID, trh(s.cfg.Language, "limit.cleared", email))
-	s.sendUserManageCard(chatID, msgID, key)
+	s.sendUserManageCardNotice(chatID, msgID, key, trh(s.cfg.Language, "limit.cleared", email))
 }
 
 // moveUserLimit removes metadata for a deleted user or moves it on rename.

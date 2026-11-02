@@ -2,37 +2,35 @@ package main
 
 import "log"
 
+// adminCommandNames lists the commands offered in Telegram's command menu and
+// on the help card, in display order. Each has a "command.<name>" description.
+var adminCommandNames = []string{"start", "users", "adduser", "renameuser", "rotateuser", "removeuser", "disableuser", "enableuser", "assignuser", "unassignuser", "nodes", "traffic", "online", "onlinedoctor", "stats", "routing", "xrayconfig", "inboundtraffic", "status", "version", "update", "restart", "help", "cancel", "language"}
+
+// commandArguments documents the argument syntax of commands that take input.
+var commandArguments = map[string]string{
+	"adduser":      "<user> [inbound|all]",
+	"renameuser":   "<old> <new>",
+	"rotateuser":   "<user>",
+	"removeuser":   "<user>",
+	"disableuser":  "<user>",
+	"enableuser":   "<user>",
+	"assignuser":   "<user> <inbound>",
+	"unassignuser": "<user> <inbound>",
+	"language":     "en|zh-CN",
+}
+
+func adminCommands(lang string) []tgCommand {
+	commands := make([]tgCommand, 0, len(adminCommandNames))
+	for _, name := range adminCommandNames {
+		commands = append(commands, tgCommand{Command: name, Description: tr(lang, "command."+name)})
+	}
+	return commands
+}
+
 // Register Telegram slash-command suggestions only for an authorized private
 // chat. This does not change access control; every command is still checked.
 func (s *BotService) registerAdminCommands(chatID int64) {
-	commands := []tgCommand{
-		{Command: "start", Description: tr(s.cfg.Language, "command.start")},
-		{Command: "users", Description: tr(s.cfg.Language, "command.users")},
-		{Command: "adduser", Description: tr(s.cfg.Language, "command.adduser")},
-		{Command: "renameuser", Description: tr(s.cfg.Language, "command.renameuser")},
-		{Command: "rotateuser", Description: tr(s.cfg.Language, "command.rotateuser")},
-		{Command: "removeuser", Description: tr(s.cfg.Language, "command.removeuser")},
-		{Command: "disableuser", Description: tr(s.cfg.Language, "command.disableuser")},
-		{Command: "enableuser", Description: tr(s.cfg.Language, "command.enableuser")},
-		{Command: "assignuser", Description: tr(s.cfg.Language, "command.assignuser")},
-		{Command: "unassignuser", Description: tr(s.cfg.Language, "command.unassignuser")},
-		{Command: "nodes", Description: tr(s.cfg.Language, "command.nodes")},
-		{Command: "traffic", Description: tr(s.cfg.Language, "command.traffic")},
-		{Command: "online", Description: tr(s.cfg.Language, "command.online")},
-		{Command: "onlinedoctor", Description: tr(s.cfg.Language, "command.onlinedoctor")},
-		{Command: "stats", Description: tr(s.cfg.Language, "command.stats")},
-		{Command: "routing", Description: tr(s.cfg.Language, "command.routing")},
-		{Command: "xrayconfig", Description: tr(s.cfg.Language, "command.xrayconfig")},
-		{Command: "inboundtraffic", Description: tr(s.cfg.Language, "command.inboundtraffic")},
-		{Command: "status", Description: tr(s.cfg.Language, "command.status")},
-		{Command: "version", Description: tr(s.cfg.Language, "command.version")},
-		{Command: "update", Description: tr(s.cfg.Language, "command.update")},
-		{Command: "restart", Description: tr(s.cfg.Language, "command.restart")},
-		{Command: "help", Description: tr(s.cfg.Language, "command.help")},
-		{Command: "cancel", Description: tr(s.cfg.Language, "command.cancel")},
-		{Command: "language", Description: tr(s.cfg.Language, "command.language")},
-	}
-	if err := s.tg.setChatCommands(chatID, commands); err != nil {
+	if err := s.tg.setChatCommands(chatID, adminCommands(s.cfg.Language)); err != nil {
 		log.Printf("[Bot] admin command menu registration failed: %v", err)
 	}
 }

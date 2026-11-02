@@ -148,7 +148,7 @@ func (s *BotService) sendDNSPage(chatID int64, msgID, offset int, notice string)
 		}
 		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "dns.advanced"), "routing_manage:dns_put")))
 	}
-	if view.Configured {
+	if view.Configured && s.cfg.AllowSensitiveBackup {
 		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "config.export.button"), nativeConfigExportCallback("dns", 0, view.ETag))))
 	}
 	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "common.refresh"), fmt.Sprintf("dn:page:%d", offset)), newButton(tr(s.cfg.Language, "routing.guide.back"), "rt:page:0")))
