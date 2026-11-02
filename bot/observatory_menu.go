@@ -64,7 +64,7 @@ func (s *BotService) sendObservatoryPage(chatID int64, msgID int, notice string)
 		if record.Configured {
 			state = tr(s.cfg.Language, "monitor.configured")
 		}
-		rows = append(rows, newRow(newButton(record.Kind+" · "+state, observatoryCallback("v", record.Kind, observatoryRef(record)))))
+		rows = append(rows, newRow(newButton(tr(s.cfg.Language, "monitor.kind."+record.Kind)+" · "+state, observatoryCallback("v", record.Kind, observatoryRef(record)))))
 	}
 	rows = append(rows, newRow(newButton(tr(s.cfg.Language, "balancer.back"), "bl:page:0")))
 	s.sendOrEdit(chatID, msgID, body, newKeyboard(rows...))

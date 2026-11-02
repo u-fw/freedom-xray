@@ -632,7 +632,7 @@ func (s *BotService) handleBalancerCallback(cb *tgCallback) {
 		for _, choices := range [][]string{{"random", "roundRobin"}, {"leastPing", "leastLoad"}} {
 			var buttons []tgButton
 			for _, choice := range choices {
-				buttons = append(buttons, newButton(choice, balancerCallback("ss", record.Tag, record.ETag)+":"+choice))
+				buttons = append(buttons, newButton(tr(s.cfg.Language, "balancer.strategy."+choice), balancerCallback("ss", record.Tag, record.ETag)+":"+choice))
 			}
 			rows = append(rows, buttons)
 		}
