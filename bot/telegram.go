@@ -373,6 +373,8 @@ func (s *BotService) handleCallback(cb *tgCallback) {
 		s.sendNodeTemplatePicker(chatID, msgID)
 	case strings.HasPrefix(data, "node_new:"):
 		s.beginNodeCreate(chatID, cb.From.ID, msgID, NodeTemplate(strings.TrimPrefix(data, "node_new:")))
+	case strings.HasPrefix(data, "node_new_step:"):
+		s.handleNodeCreateStep(cb, strings.TrimPrefix(data, "node_new_step:"))
 	case strings.HasPrefix(data, "node_cert_source:"):
 		s.handleNodeCertSource(cb)
 	case strings.HasPrefix(data, "node_create_confirm:"):
