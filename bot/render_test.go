@@ -75,7 +75,7 @@ func TestLocaleTemplatesRenderBalancedHTML(t *testing.T) {
 func TestSplitTelegramHTMLKeepsTagsAndEntitiesIntact(t *testing.T) {
 	var body htmlText = "<b>Title</b>\n<pre>"
 	for i := 0; i < 40; i++ {
-		body += "line &amp; more &lt;text&gt; 中文\n"
+		body += "line &amp; more &lt;text&gt; текст\n"
 	}
 	body += "</pre>\n" + htmlText(strings.Repeat("x&amp;", 60)) + "\n<a href=\"https://example.com/x\">link</a>"
 	chunks := splitTelegramHTML(body, 200)

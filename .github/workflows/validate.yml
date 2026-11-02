@@ -18,6 +18,16 @@ jobs:
         run: |
           for script in 1stream.sh freedom.sh; do bash -n "$script"; done
           bash tests/cli-bindings.sh
+      - name: Require English-first default source
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          for path in [Path("README.md"), Path("freedom.sh"), *Path("bot").glob("*.go")]:
+              if re.search(r"[\u4e00-\u9fff]", path.read_text(encoding="utf-8")):
+                  raise SystemExit(f"Non-English text found in default source: {path}")
+          print("English-first source validation passed")
+          PY
 
   bot-test:
     runs-on: ubuntu-24.04
