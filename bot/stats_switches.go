@@ -234,14 +234,14 @@ func (s *BotService) sendStatsSwitches(chatID int64, msgID int) {
 	s.sendOrEdit(chatID, msgID, statsSwitchesText(s.cfg.Language, report, err), statsSwitchesMarkup(s.cfg.Language, report, err))
 }
 
-func (s *BotService) askStatsRepair(chatID int64, msgID int) {
+func (s *BotService) askStatsRepair(chatID, adminID int64, msgID int) {
 	if !s.cfg.AllowMutations {
 		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "online.doctor.mutations"), statsSwitchesBackMarkup(s.cfg.Language))
 		return
 	}
 	markup := newKeyboard(
 		newRow(
-			newButton(tr(s.cfg.Language, "common.confirm"), "stats_repair_confirm"),
+			newButton(tr(s.cfg.Language, "common.confirm"), confirmData("stats_repair_confirm", "stats_repair", chatID, adminID)),
 			newButton(tr(s.cfg.Language, "common.cancel"), "menu_stats"),
 		),
 	)

@@ -34,7 +34,7 @@ func TestAllTrafficResetRequiresMutationPermission(t *testing.T) {
 	cfg.XrayConfigPath = config
 	cfg.XrayBinPath = bin
 	service := &BotService{cfg: cfg, tg: newTestTelegramClient(t, testBotToken, server.URL, server.Client())}
-	service.askTrafficReset(123, 0)
+	service.askTrafficReset(123, 123, 0)
 	service.doTrafficReset(123, 0) // Covers stale confirmation buttons too.
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatal("Xray reset ran with mutations disabled")

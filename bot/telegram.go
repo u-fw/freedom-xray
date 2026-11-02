@@ -260,7 +260,7 @@ func (s *BotService) handleMessage(msg *tgMessage) {
 	case "users", "link":
 		s.sendUsersCard(msg.Chat.ID, 0)
 	case "restart":
-		s.askRestart(msg.Chat.ID, 0)
+		s.askRestart(msg.Chat.ID, msg.From.ID, 0)
 	case "backup":
 		s.sendBackupFile(msg.Chat.ID)
 	case "update":
@@ -316,17 +316,21 @@ func (s *BotService) handleCallback(cb *tgCallback) {
 	case data == "menu_online_doctor":
 		s.sendOnlineDiagnostics(chatID, msgID)
 	case data == "online_repair_ask":
-		s.askOnlineRepair(chatID, msgID)
-	case data == "online_repair_confirm":
-		s.doOnlineRepair(chatID, msgID)
+		s.askOnlineRepair(chatID, cb.From.ID, msgID)
+	case strings.HasPrefix(data, "online_repair_confirm"):
+		if s.takeConfirmation(cb, "online_repair_confirm", "online_repair") {
+			s.doOnlineRepair(chatID, msgID)
+		}
 	case data == "online_repair_cancel":
 		s.sendOnlineDiagnostics(chatID, msgID)
 	case data == "menu_stats":
 		s.sendStatsSwitches(chatID, msgID)
 	case data == "stats_repair_ask":
-		s.askStatsRepair(chatID, msgID)
-	case data == "stats_repair_confirm":
-		s.doStatsRepair(chatID, msgID)
+		s.askStatsRepair(chatID, cb.From.ID, msgID)
+	case strings.HasPrefix(data, "stats_repair_confirm"):
+		if s.takeConfirmation(cb, "stats_repair_confirm", "stats_repair") {
+			s.doStatsRepair(chatID, msgID)
+		}
 	case data == "menu_routing":
 		s.sendRoutingCard(chatID, msgID)
 	case strings.HasPrefix(data, "rt:"):
@@ -415,9 +419,11 @@ func (s *BotService) handleCallback(cb *tgCallback) {
 		}
 		s.beginUserWizard(chatID, cb.From.ID, msgID, "rename", email)
 	case data == "menu_restart_ask":
-		s.askRestart(chatID, msgID)
-	case data == "menu_restart_confirm":
-		s.doRestart(chatID, msgID)
+		s.askRestart(chatID, cb.From.ID, msgID)
+	case strings.HasPrefix(data, "menu_restart_confirm"):
+		if s.takeConfirmation(cb, "menu_restart_confirm", "restart") {
+			s.doRestart(chatID, msgID)
+		}
 	case data == "menu_backup":
 		s.sendBackupFile(chatID)
 	case data == "menu_update":
@@ -439,9 +445,11 @@ func (s *BotService) handleCallback(cb *tgCallback) {
 	case strings.HasPrefix(data, "update_cancel:"):
 		s.resolveUpdate(cb, false)
 	case data == "traffic_reset_ask":
-		s.askTrafficReset(chatID, msgID)
-	case data == "traffic_reset_confirm":
-		s.doTrafficReset(chatID, msgID)
+		s.askTrafficReset(chatID, cb.From.ID, msgID)
+	case strings.HasPrefix(data, "traffic_reset_confirm"):
+		if s.takeConfirmation(cb, "traffic_reset_confirm", "traffic_reset") {
+			s.doTrafficReset(chatID, msgID)
+		}
 	case strings.HasPrefix(data, "user_links:"):
 		s.handleUserLinksCallback(chatID, strings.TrimPrefix(data, "user_links:"))
 	case strings.HasPrefix(data, "user_export_one:"):
@@ -833,7 +841,7 @@ func (s *BotService) sendTrafficPage(chatID int64, msgID, offset int) {
 	s.sendOrEdit(chatID, msgID, sb.HTML(), markup)
 }
 
-func (s *BotService) askTrafficReset(chatID int64, msgID int) {
+func (s *BotService) askTrafficReset(chatID, adminID int64, msgID int) {
 	if !s.cfg.AllowMutations {
 		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
 		return
@@ -841,7 +849,7 @@ func (s *BotService) askTrafficReset(chatID int64, msgID int) {
 	text := trh(s.cfg.Language, "traffic.resetconfirm")
 	markup := newKeyboard(
 		newRow(
-			newButton(tr(s.cfg.Language, "traffic.resetbutton"), "traffic_reset_confirm"),
+			newButton(tr(s.cfg.Language, "traffic.resetbutton"), confirmData("traffic_reset_confirm", "traffic_reset", chatID, adminID)),
 			newButton(tr(s.cfg.Language, "common.cancel"), "menu_traffic"),
 		),
 	)
@@ -1074,7 +1082,7 @@ func (s *BotService) sendUserLinksAndQRs(chatID int64, email string) {
 	s.sendUserExportMenu(chatID, 0, email)
 }
 
-func (s *BotService) askRestart(chatID int64, msgID int) {
+func (s *BotService) askRestart(chatID, adminID int64, msgID int) {
 	if !s.cfg.AllowMutations {
 		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "manage.writesdisabled"), s.backToMainMarkup())
 		return
@@ -1082,7 +1090,7 @@ func (s *BotService) askRestart(chatID int64, msgID int) {
 	text := trh(s.cfg.Language, "restart.ask")
 	markup := newKeyboard(
 		newRow(
-			newButton(tr(s.cfg.Language, "restart.confirm"), "menu_restart_confirm"),
+			newButton(tr(s.cfg.Language, "restart.confirm"), confirmData("menu_restart_confirm", "restart", chatID, adminID)),
 			newButton(tr(s.cfg.Language, "common.cancel"), "menu_main"),
 		),
 	)

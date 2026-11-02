@@ -295,6 +295,7 @@
   "online.doctor.mutations": "Remote mutations are disabled. Enable allow_mutations on the VPS.",
   "online.doctor.back": "⬅️ Back to online",
   "common.confirm": "✅ Confirm",
+  "confirm.expired": "⌛ This confirmation expired or was already used. Open the action again.",
   "common.yes": "✅ Yes",
   "common.no": "❌ No",
   "common.tokenerror": "Unable to generate an operation token: %s",

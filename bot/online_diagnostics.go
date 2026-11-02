@@ -371,14 +371,14 @@ func (s *BotService) sendOnlineDiagnostics(chatID int64, msgID int) {
 	s.sendOrEdit(chatID, msgID, s.onlineDiagnosticText(), s.onlineDoctorMarkup())
 }
 
-func (s *BotService) askOnlineRepair(chatID int64, msgID int) {
+func (s *BotService) askOnlineRepair(chatID, adminID int64, msgID int) {
 	if !s.cfg.AllowMutations {
 		s.sendOrEdit(chatID, msgID, trh(s.cfg.Language, "online.doctor.mutations"), s.onlineDoctorMarkup())
 		return
 	}
 	markup := newKeyboard(
 		newRow(
-			newButton(tr(s.cfg.Language, "common.confirm"), "online_repair_confirm"),
+			newButton(tr(s.cfg.Language, "common.confirm"), confirmData("online_repair_confirm", "online_repair", chatID, adminID)),
 			newButton(tr(s.cfg.Language, "common.cancel"), "online_repair_cancel"),
 		),
 	)

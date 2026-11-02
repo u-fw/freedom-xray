@@ -295,6 +295,7 @@
   "online.doctor.mutations": "远程修改已禁用。请在 VPS 上启用 allow_mutations。",
   "online.doctor.back": "⬅️ 返回在线",
   "common.confirm": "✅ 确认",
+  "confirm.expired": "⌛ 该确认已过期或已使用，请重新发起操作。",
   "common.yes": "✅ 是",
   "common.no": "❌ 否",
   "common.tokenerror": "无法生成操作令牌：%s",
